@@ -1,0 +1,14 @@
+{
+  "name": "gossip_list_roles",
+  "description": "List all available specialist roles loaded dynamically from JSON in Markdown",
+  "parameters": {
+    "properties": {},
+    "required": [],
+    "type": "object"
+  },
+  "inputSchema": {
+    "properties": {},
+    "required": [],
+    "type": "object"
+  }
+}

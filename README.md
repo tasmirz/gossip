@@ -114,7 +114,7 @@ Gossip implements three built-in SOP templates with strict phase gates and artif
 
 ---
 
-## 🛠️ Complete MCP Tool Directory (47 Tools)
+## 🛠️ Complete MCP Tool Directory (66 Tools & Prompts)
 
 ### 1. Identity & Role Management
 - `gossip_register_agent`: Join the active gossip mesh with agent ID, role, capabilities, and active task. Supports multi-instance per role.
@@ -257,7 +257,19 @@ go build -ldflags="-s -w" -o bin/gossip ./cmd/gossip
 
 ---
 
-## ⚙️ Configuring MCP Clients
+## ⚙️ MCP Server Files & Client Configurations
+
+Gossip is packaged with all required configuration files and schemas for seamless integration into any AI IDE or MCP client:
+
+| File / Directory | Target Platform | Description |
+| :--- | :--- | :--- |
+| [`SKILL.md`](./SKILL.md) & [`skills/gossip/SKILL.md`](./skills/gossip/SKILL.md) | Antigravity / Claude Code / Cursor | Complete agent skill definition, SOP gates, and multi-agent directives |
+| [`mcp.json`](./mcp.json) | Standard MCP / Claude Code / Cursor | Root MCP client configuration connecting directly to `./bin/gossip-mcp` |
+| [`claude_desktop_config.json`](./claude_desktop_config.json) | Claude Desktop | Stdio MCP configuration with path and `.local/gossip` environment |
+| [`.cursor/mcp.json`](./.cursor/mcp.json) | Cursor IDE | Project-level MCP configuration using `${workspaceFolder}` |
+| [`.vscode/mcp.json`](./.vscode/mcp.json) | VS Code (Cline / Roo / Copilot) | VS Code MCP server configuration |
+| [`plugin.json`](./plugin.json) | Antigravity / Agent Marketplace | Full plugin manifest with metadata, capabilities, and keywords |
+| [`mcp/`](./mcp/) | Lazy MCP / Offline / Discovery | Exported JSON schemas for all 66 MCP tools + [`instructions.md`](./mcp/instructions.md) |
 
 ### Claude Desktop (`claude_desktop_config.json`)
 ```json
@@ -265,22 +277,31 @@ go build -ldflags="-s -w" -o bin/gossip ./cmd/gossip
   "mcpServers": {
     "gossip": {
       "command": "/absolute/path/to/gossip/bin/gossip-mcp",
-      "args": ["mcp"]
+      "args": ["serve"],
+      "env": {
+        "GOSSIP_DIR": ".local/gossip"
+      }
     }
   }
 }
 ```
 
-### Antigravity / Cursor / Windsurf (`~/.gemini/antigravity/mcp/` or project settings)
+### Antigravity / Cursor / Windsurf (`mcp.json` or project settings)
 ```json
 {
   "mcpServers": {
     "gossip": {
-      "command": "/absolute/path/to/gossip/bin/gossip-mcp",
-      "args": ["mcp", "--dir", "/absolute/path/to/your/project/.local/gossip"]
+      "command": "./bin/gossip-mcp",
+      "args": ["serve"]
     }
   }
 }
+```
+
+### Regenerating MCP Schemas
+To re-export all tool JSON schemas and `instructions.md`:
+```bash
+./bin/gossip export-mcp --out mcp
 ```
 
 ---

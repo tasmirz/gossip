@@ -1,0 +1,14 @@
+{
+  "name": "gossip_rag_clusters",
+  "description": "Detect modular architectural clusters and submodules in the knowledge graph (inspired by Graphify cluster.py)",
+  "parameters": {
+    "properties": {},
+    "required": [],
+    "type": "object"
+  },
+  "inputSchema": {
+    "properties": {},
+    "required": [],
+    "type": "object"
+  }
+}

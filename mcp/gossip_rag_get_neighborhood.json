@@ -1,0 +1,36 @@
+{
+  "name": "gossip_rag_get_neighborhood",
+  "description": "Extract connected subgraphs around a node within 1 to 3 hops to understand dependencies and impact",
+  "parameters": {
+    "properties": {
+      "depth": {
+        "description": "Radius in hops: 1 or 2 (default: 1)",
+        "type": "integer"
+      },
+      "node_id": {
+        "description": "Center node ID",
+        "type": "string"
+      }
+    },
+    "required": [
+      "node_id"
+    ],
+    "type": "object"
+  },
+  "inputSchema": {
+    "properties": {
+      "depth": {
+        "description": "Radius in hops: 1 or 2 (default: 1)",
+        "type": "integer"
+      },
+      "node_id": {
+        "description": "Center node ID",
+        "type": "string"
+      }
+    },
+    "required": [
+      "node_id"
+    ],
+    "type": "object"
+  }
+}

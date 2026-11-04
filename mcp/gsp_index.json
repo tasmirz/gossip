@@ -1,0 +1,24 @@
+{
+  "name": "gsp_index",
+  "description": "Alias for gossip_rag_index_codebase: parse AST and index codebase into RAG space",
+  "parameters": {
+    "properties": {
+      "root_path": {
+        "description": "Root directory of the project to index",
+        "type": "string"
+      }
+    },
+    "required": [],
+    "type": "object"
+  },
+  "inputSchema": {
+    "properties": {
+      "root_path": {
+        "description": "Root directory of the project to index",
+        "type": "string"
+      }
+    },
+    "required": [],
+    "type": "object"
+  }
+}

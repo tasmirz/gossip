@@ -1,0 +1,14 @@
+{
+  "name": "gossip_redteam_generate_audit_report",
+  "description": "Generate and save the executive AUDIT_REPORT.md summarizing all red-team security evaluations",
+  "parameters": {
+    "properties": {},
+    "required": [],
+    "type": "object"
+  },
+  "inputSchema": {
+    "properties": {},
+    "required": [],
+    "type": "object"
+  }
+}

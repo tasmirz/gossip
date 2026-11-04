@@ -1,0 +1,24 @@
+{
+  "name": "gossip_rag_repo_map",
+  "description": "Generate a compact, token-budgeted architectural map ranked by PageRank centrality (inspired by Aider repo-map)",
+  "parameters": {
+    "properties": {
+      "max_tokens": {
+        "description": "Token budget ceiling for the map (default: 1000)",
+        "type": "integer"
+      }
+    },
+    "required": [],
+    "type": "object"
+  },
+  "inputSchema": {
+    "properties": {
+      "max_tokens": {
+        "description": "Token budget ceiling for the map (default: 1000)",
+        "type": "integer"
+      }
+    },
+    "required": [],
+    "type": "object"
+  }
+}

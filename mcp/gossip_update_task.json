@@ -1,0 +1,60 @@
+{
+  "name": "gossip_update_task",
+  "description": "Update task status, assign an agent, append progress notes, or register result artifacts",
+  "parameters": {
+    "properties": {
+      "artifact": {
+        "description": "File path, PR, or deliverable produced",
+        "type": "string"
+      },
+      "assigned_to": {
+        "description": "Agent ID claiming or assigned to this task",
+        "type": "string"
+      },
+      "progress_note": {
+        "description": "Progress report, notes, or findings to append",
+        "type": "string"
+      },
+      "status": {
+        "description": "New status: 'todo', 'in_progress', 'blocked', 'in_review', 'completed', 'failed'",
+        "type": "string"
+      },
+      "task_id": {
+        "description": "Task ID to update",
+        "type": "string"
+      }
+    },
+    "required": [
+      "task_id"
+    ],
+    "type": "object"
+  },
+  "inputSchema": {
+    "properties": {
+      "artifact": {
+        "description": "File path, PR, or deliverable produced",
+        "type": "string"
+      },
+      "assigned_to": {
+        "description": "Agent ID claiming or assigned to this task",
+        "type": "string"
+      },
+      "progress_note": {
+        "description": "Progress report, notes, or findings to append",
+        "type": "string"
+      },
+      "status": {
+        "description": "New status: 'todo', 'in_progress', 'blocked', 'in_review', 'completed', 'failed'",
+        "type": "string"
+      },
+      "task_id": {
+        "description": "Task ID to update",
+        "type": "string"
+      }
+    },
+    "required": [
+      "task_id"
+    ],
+    "type": "object"
+  }
+}

@@ -1,0 +1,38 @@
+{
+  "name": "gossip_rag_find_path",
+  "description": "Find the shortest relationship path between two concepts/nodes to trace transitive dependencies or conflicts",
+  "parameters": {
+    "properties": {
+      "source": {
+        "description": "Source node ID",
+        "type": "string"
+      },
+      "target": {
+        "description": "Target node ID",
+        "type": "string"
+      }
+    },
+    "required": [
+      "source",
+      "target"
+    ],
+    "type": "object"
+  },
+  "inputSchema": {
+    "properties": {
+      "source": {
+        "description": "Source node ID",
+        "type": "string"
+      },
+      "target": {
+        "description": "Target node ID",
+        "type": "string"
+      }
+    },
+    "required": [
+      "source",
+      "target"
+    ],
+    "type": "object"
+  }
+}

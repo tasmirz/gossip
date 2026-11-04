@@ -1,0 +1,54 @@
+{
+  "name": "gossip_guardrails_validate_action",
+  "description": "Pre-flight inspection checking whether an action or file modification violates project cautions or forbidden rules",
+  "parameters": {
+    "properties": {
+      "action": {
+        "description": "Action name (e.g. 'write_file', 'bypass_race_detector', 'delete_table')",
+        "type": "string"
+      },
+      "payload": {
+        "description": "Optional payload or diff snippet to scan",
+        "type": "string"
+      },
+      "role": {
+        "description": "Executing agent role",
+        "type": "string"
+      },
+      "target_path": {
+        "description": "Target file or resource path",
+        "type": "string"
+      }
+    },
+    "required": [
+      "role",
+      "action"
+    ],
+    "type": "object"
+  },
+  "inputSchema": {
+    "properties": {
+      "action": {
+        "description": "Action name (e.g. 'write_file', 'bypass_race_detector', 'delete_table')",
+        "type": "string"
+      },
+      "payload": {
+        "description": "Optional payload or diff snippet to scan",
+        "type": "string"
+      },
+      "role": {
+        "description": "Executing agent role",
+        "type": "string"
+      },
+      "target_path": {
+        "description": "Target file or resource path",
+        "type": "string"
+      }
+    },
+    "required": [
+      "role",
+      "action"
+    ],
+    "type": "object"
+  }
+}

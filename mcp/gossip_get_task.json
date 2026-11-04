@@ -1,0 +1,28 @@
+{
+  "name": "gossip_get_task",
+  "description": "Retrieve full details, notes, blockers, and artifacts for a single task",
+  "parameters": {
+    "properties": {
+      "task_id": {
+        "description": "Task ID",
+        "type": "string"
+      }
+    },
+    "required": [
+      "task_id"
+    ],
+    "type": "object"
+  },
+  "inputSchema": {
+    "properties": {
+      "task_id": {
+        "description": "Task ID",
+        "type": "string"
+      }
+    },
+    "required": [
+      "task_id"
+    ],
+    "type": "object"
+  }
+}

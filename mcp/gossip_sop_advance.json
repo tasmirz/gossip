@@ -1,0 +1,48 @@
+{
+  "name": "gossip_sop_advance",
+  "description": "Advance an SOP workflow to the next phase gate, verifying that required deliverables and roles match",
+  "parameters": {
+    "properties": {
+      "agent_id": {
+        "description": "Caller Agent ID",
+        "type": "string"
+      },
+      "role": {
+        "description": "Caller Role (must match stage required role or orchestrator)",
+        "type": "string"
+      },
+      "workflow_id": {
+        "description": "Active SOP workflow ID",
+        "type": "string"
+      }
+    },
+    "required": [
+      "workflow_id",
+      "agent_id",
+      "role"
+    ],
+    "type": "object"
+  },
+  "inputSchema": {
+    "properties": {
+      "agent_id": {
+        "description": "Caller Agent ID",
+        "type": "string"
+      },
+      "role": {
+        "description": "Caller Role (must match stage required role or orchestrator)",
+        "type": "string"
+      },
+      "workflow_id": {
+        "description": "Active SOP workflow ID",
+        "type": "string"
+      }
+    },
+    "required": [
+      "workflow_id",
+      "agent_id",
+      "role"
+    ],
+    "type": "object"
+  }
+}

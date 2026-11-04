@@ -1,0 +1,98 @@
+{
+  "name": "gossip_register_custom_role",
+  "description": "Dynamically define and register a new custom agent role at runtime (stored in JSON)",
+  "parameters": {
+    "properties": {
+      "caller_role": {
+        "description": "Role of the agent registering the custom role (e.g. 'orchestrator')",
+        "type": "string"
+      },
+      "capability_tags": {
+        "description": "List of capability tags",
+        "type": "array"
+      },
+      "category": {
+        "description": "Category: 'management', 'engineering', 'specialist', 'assurance'",
+        "type": "string"
+      },
+      "description": {
+        "description": "Detailed description of role responsibilities",
+        "type": "string"
+      },
+      "directives": {
+        "description": "List of behavioral rules/directives",
+        "type": "array"
+      },
+      "id": {
+        "description": "Unique role identifier (e.g. 'devops_engineer', 'quantum_expert')",
+        "type": "string"
+      },
+      "recommended_tools": {
+        "description": "List of recommended MCP tools",
+        "type": "array"
+      },
+      "system_prompt": {
+        "description": "System prompt and operational persona",
+        "type": "string"
+      },
+      "title": {
+        "description": "Human-readable role title",
+        "type": "string"
+      }
+    },
+    "required": [
+      "id",
+      "title",
+      "description",
+      "system_prompt"
+    ],
+    "type": "object"
+  },
+  "inputSchema": {
+    "properties": {
+      "caller_role": {
+        "description": "Role of the agent registering the custom role (e.g. 'orchestrator')",
+        "type": "string"
+      },
+      "capability_tags": {
+        "description": "List of capability tags",
+        "type": "array"
+      },
+      "category": {
+        "description": "Category: 'management', 'engineering', 'specialist', 'assurance'",
+        "type": "string"
+      },
+      "description": {
+        "description": "Detailed description of role responsibilities",
+        "type": "string"
+      },
+      "directives": {
+        "description": "List of behavioral rules/directives",
+        "type": "array"
+      },
+      "id": {
+        "description": "Unique role identifier (e.g. 'devops_engineer', 'quantum_expert')",
+        "type": "string"
+      },
+      "recommended_tools": {
+        "description": "List of recommended MCP tools",
+        "type": "array"
+      },
+      "system_prompt": {
+        "description": "System prompt and operational persona",
+        "type": "string"
+      },
+      "title": {
+        "description": "Human-readable role title",
+        "type": "string"
+      }
+    },
+    "required": [
+      "id",
+      "title",
+      "description",
+      "system_prompt"
+    ],
+    "type": "object"
+  }
+}

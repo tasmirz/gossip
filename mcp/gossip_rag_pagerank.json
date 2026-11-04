@@ -1,0 +1,40 @@
+{
+  "name": "gossip_rag_pagerank",
+  "description": "Compute PageRank centrality scores across all knowledge nodes to identify architecturally critical components (inspired by Aider repo-map)",
+  "parameters": {
+    "properties": {
+      "damping": {
+        "description": "PageRank damping factor (default: 0.85)",
+        "type": "number"
+      },
+      "max_iterations": {
+        "description": "Max iterations for power-method convergence (default: 100)",
+        "type": "integer"
+      },
+      "tolerance": {
+        "description": "Convergence tolerance threshold (default: 0.00001)",
+        "type": "number"
+      }
+    },
+    "required": [],
+    "type": "object"
+  },
+  "inputSchema": {
+    "properties": {
+      "damping": {
+        "description": "PageRank damping factor (default: 0.85)",
+        "type": "number"
+      },
+      "max_iterations": {
+        "description": "Max iterations for power-method convergence (default: 100)",
+        "type": "integer"
+      },
+      "tolerance": {
+        "description": "Convergence tolerance threshold (default: 0.00001)",
+        "type": "number"
+      }
+    },
+    "required": [],
+    "type": "object"
+  }
+}

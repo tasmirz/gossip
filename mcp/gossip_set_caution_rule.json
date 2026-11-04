@@ -1,0 +1,76 @@
+{
+  "name": "gossip_set_caution_rule",
+  "description": "Add or update a safety caution rule, sensitive path pattern, or invariant in the project guardrail database",
+  "parameters": {
+    "properties": {
+      "category": {
+        "description": "Category: 'security_leak', 'data_loss', 'regression', 'concurrency'",
+        "type": "string"
+      },
+      "directive": {
+        "description": "Human/agent instruction to follow when triggered",
+        "type": "string"
+      },
+      "enforcement": {
+        "description": "Enforcement mode: 'block', 'require_peer_review', 'warn'",
+        "type": "string"
+      },
+      "id": {
+        "description": "Unique rule ID (auto-generated if omitted)",
+        "type": "string"
+      },
+      "level": {
+        "description": "Severity level: 'critical', 'warning', 'info'",
+        "type": "string"
+      },
+      "trigger_pattern": {
+        "description": "Filename pattern or keyword regex triggering this caution",
+        "type": "string"
+      }
+    },
+    "required": [
+      "category",
+      "level",
+      "trigger_pattern",
+      "directive",
+      "enforcement"
+    ],
+    "type": "object"
+  },
+  "inputSchema": {
+    "properties": {
+      "category": {
+        "description": "Category: 'security_leak', 'data_loss', 'regression', 'concurrency'",
+        "type": "string"
+      },
+      "directive": {
+        "description": "Human/agent instruction to follow when triggered",
+        "type": "string"
+      },
+      "enforcement": {
+        "description": "Enforcement mode: 'block', 'require_peer_review', 'warn'",
+        "type": "string"
+      },
+      "id": {
+        "description": "Unique rule ID (auto-generated if omitted)",
+        "type": "string"
+      },
+      "level": {
+        "description": "Severity level: 'critical', 'warning', 'info'",
+        "type": "string"
+      },
+      "trigger_pattern": {
+        "description": "Filename pattern or keyword regex triggering this caution",
+        "type": "string"
+      }
+    },
+    "required": [
+      "category",
+      "level",
+      "trigger_pattern",
+      "directive",
+      "enforcement"
+    ],
+    "type": "object"
+  }
+}

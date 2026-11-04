@@ -1,0 +1,38 @@
+{
+  "name": "gossip_mark_messages_read",
+  "description": "Mark messages as read for this agent",
+  "parameters": {
+    "properties": {
+      "agent_id": {
+        "description": "Agent ID marking the messages as read",
+        "type": "string"
+      },
+      "message_ids": {
+        "description": "List of message IDs to mark read",
+        "type": "array"
+      }
+    },
+    "required": [
+      "agent_id",
+      "message_ids"
+    ],
+    "type": "object"
+  },
+  "inputSchema": {
+    "properties": {
+      "agent_id": {
+        "description": "Agent ID marking the messages as read",
+        "type": "string"
+      },
+      "message_ids": {
+        "description": "List of message IDs to mark read",
+        "type": "array"
+      }
+    },
+    "required": [
+      "agent_id",
+      "message_ids"
+    ],
+    "type": "object"
+  }
+}

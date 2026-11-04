@@ -1,0 +1,40 @@
+{
+  "name": "gossip_list_tasks",
+  "description": "List tasks in the shared DAG with optional filtering by status, role, or assignee",
+  "parameters": {
+    "properties": {
+      "assigned_to": {
+        "description": "Filter by assigned agent ID",
+        "type": "string"
+      },
+      "role": {
+        "description": "Filter by target role",
+        "type": "string"
+      },
+      "status": {
+        "description": "Filter by status ('todo', 'in_progress', 'blocked', 'in_review', 'completed')",
+        "type": "string"
+      }
+    },
+    "required": [],
+    "type": "object"
+  },
+  "inputSchema": {
+    "properties": {
+      "assigned_to": {
+        "description": "Filter by assigned agent ID",
+        "type": "string"
+      },
+      "role": {
+        "description": "Filter by target role",
+        "type": "string"
+      },
+      "status": {
+        "description": "Filter by status ('todo', 'in_progress', 'blocked', 'in_review', 'completed')",
+        "type": "string"
+      }
+    },
+    "required": [],
+    "type": "object"
+  }
+}

@@ -1,0 +1,38 @@
+{
+  "name": "gossip_personal_todo_delete",
+  "description": "Delete an item from an agent's personal checklist",
+  "parameters": {
+    "properties": {
+      "agent_id": {
+        "description": "Agent ID",
+        "type": "string"
+      },
+      "item_id": {
+        "description": "Personal to-do item ID",
+        "type": "string"
+      }
+    },
+    "required": [
+      "agent_id",
+      "item_id"
+    ],
+    "type": "object"
+  },
+  "inputSchema": {
+    "properties": {
+      "agent_id": {
+        "description": "Agent ID",
+        "type": "string"
+      },
+      "item_id": {
+        "description": "Personal to-do item ID",
+        "type": "string"
+      }
+    },
+    "required": [
+      "agent_id",
+      "item_id"
+    ],
+    "type": "object"
+  }
+}

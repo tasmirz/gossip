@@ -1,0 +1,74 @@
+{
+  "name": "gossip_debate_ranked_vote",
+  "description": "Cast a ranked-choice ballot ordering multiple alternative candidates (Borda Count tallying)",
+  "parameters": {
+    "properties": {
+      "agent_id": {
+        "description": "Voter Agent ID",
+        "type": "string"
+      },
+      "confidence": {
+        "description": "Confidence level from 1 to 5 (default: 3)",
+        "type": "integer"
+      },
+      "debate_id": {
+        "description": "ID of the debate",
+        "type": "string"
+      },
+      "ranked_choices": {
+        "description": "Ordered list of candidate options from most preferred (1st) to least preferred",
+        "type": "array"
+      },
+      "reasoning": {
+        "description": "Rationale for this candidate ranking",
+        "type": "string"
+      },
+      "role": {
+        "description": "Voter Role",
+        "type": "string"
+      }
+    },
+    "required": [
+      "debate_id",
+      "agent_id",
+      "role",
+      "ranked_choices"
+    ],
+    "type": "object"
+  },
+  "inputSchema": {
+    "properties": {
+      "agent_id": {
+        "description": "Voter Agent ID",
+        "type": "string"
+      },
+      "confidence": {
+        "description": "Confidence level from 1 to 5 (default: 3)",
+        "type": "integer"
+      },
+      "debate_id": {
+        "description": "ID of the debate",
+        "type": "string"
+      },
+      "ranked_choices": {
+        "description": "Ordered list of candidate options from most preferred (1st) to least preferred",
+        "type": "array"
+      },
+      "reasoning": {
+        "description": "Rationale for this candidate ranking",
+        "type": "string"
+      },
+      "role": {
+        "description": "Voter Role",
+        "type": "string"
+      }
+    },
+    "required": [
+      "debate_id",
+      "agent_id",
+      "role",
+      "ranked_choices"
+    ],
+    "type": "object"
+  }
+}

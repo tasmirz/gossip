@@ -1,0 +1,14 @@
+{
+  "name": "gossip_get_guardrails",
+  "description": "Retrieve all project guardrails, active roles, forbidden actions, cautions, and invariants",
+  "parameters": {
+    "properties": {},
+    "required": [],
+    "type": "object"
+  },
+  "inputSchema": {
+    "properties": {},
+    "required": [],
+    "type": "object"
+  }
+}

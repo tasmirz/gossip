@@ -1,0 +1,54 @@
+{
+  "name": "gossip_set_goal",
+  "description": "Set or update high-level strategic goals and milestone checkpoints",
+  "parameters": {
+    "properties": {
+      "caller_role": {
+        "description": "Role of the agent setting the goal (e.g. 'orchestrator')",
+        "type": "string"
+      },
+      "description": {
+        "description": "Detailed description of the goal",
+        "type": "string"
+      },
+      "milestone_titles": {
+        "description": "List of milestone checkpoint titles",
+        "type": "array"
+      },
+      "title": {
+        "description": "Goal title",
+        "type": "string"
+      }
+    },
+    "required": [
+      "title",
+      "description"
+    ],
+    "type": "object"
+  },
+  "inputSchema": {
+    "properties": {
+      "caller_role": {
+        "description": "Role of the agent setting the goal (e.g. 'orchestrator')",
+        "type": "string"
+      },
+      "description": {
+        "description": "Detailed description of the goal",
+        "type": "string"
+      },
+      "milestone_titles": {
+        "description": "List of milestone checkpoint titles",
+        "type": "array"
+      },
+      "title": {
+        "description": "Goal title",
+        "type": "string"
+      }
+    },
+    "required": [
+      "title",
+      "description"
+    ],
+    "type": "object"
+  }
+}

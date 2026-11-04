@@ -1,0 +1,68 @@
+{
+  "name": "gossip_post_argument",
+  "description": "Post an argument in an active multi-agent debate (pro, con, critique, rebuttal, or neutral)",
+  "parameters": {
+    "properties": {
+      "agent_id": {
+        "description": "Agent ID posting the argument",
+        "type": "string"
+      },
+      "content": {
+        "description": "Detailed argument, evidence, or algorithmic justification",
+        "type": "string"
+      },
+      "debate_id": {
+        "description": "ID of the debate",
+        "type": "string"
+      },
+      "role": {
+        "description": "Agent's role",
+        "type": "string"
+      },
+      "stance": {
+        "description": "Stance: 'pro', 'con', 'critique', 'rebuttal', 'neutral'",
+        "type": "string"
+      }
+    },
+    "required": [
+      "debate_id",
+      "agent_id",
+      "role",
+      "stance",
+      "content"
+    ],
+    "type": "object"
+  },
+  "inputSchema": {
+    "properties": {
+      "agent_id": {
+        "description": "Agent ID posting the argument",
+        "type": "string"
+      },
+      "content": {
+        "description": "Detailed argument, evidence, or algorithmic justification",
+        "type": "string"
+      },
+      "debate_id": {
+        "description": "ID of the debate",
+        "type": "string"
+      },
+      "role": {
+        "description": "Agent's role",
+        "type": "string"
+      },
+      "stance": {
+        "description": "Stance: 'pro', 'con', 'critique', 'rebuttal', 'neutral'",
+        "type": "string"
+      }
+    },
+    "required": [
+      "debate_id",
+      "agent_id",
+      "role",
+      "stance",
+      "content"
+    ],
+    "type": "object"
+  }
+}

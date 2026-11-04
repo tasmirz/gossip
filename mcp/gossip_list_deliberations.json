@@ -1,0 +1,32 @@
+{
+  "name": "gossip_list_deliberations",
+  "description": "List debates, peer reviews, and red team probes with optional filtering",
+  "parameters": {
+    "properties": {
+      "status": {
+        "description": "Optional status filter",
+        "type": "string"
+      },
+      "type": {
+        "description": "Filter by type: 'debates', 'reviews', 'probes', or 'all' (default: 'all')",
+        "type": "string"
+      }
+    },
+    "required": [],
+    "type": "object"
+  },
+  "inputSchema": {
+    "properties": {
+      "status": {
+        "description": "Optional status filter",
+        "type": "string"
+      },
+      "type": {
+        "description": "Filter by type: 'debates', 'reviews', 'probes', or 'all' (default: 'all')",
+        "type": "string"
+      }
+    },
+    "required": [],
+    "type": "object"
+  }
+}

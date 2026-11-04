@@ -1,0 +1,36 @@
+{
+  "name": "gossip_personal_todo_list",
+  "description": "List an agent's personal to-do scratchpad items and working checklist",
+  "parameters": {
+    "properties": {
+      "agent_id": {
+        "description": "Agent ID",
+        "type": "string"
+      },
+      "status": {
+        "description": "Filter by status: 'pending', 'in_progress', 'done'",
+        "type": "string"
+      }
+    },
+    "required": [
+      "agent_id"
+    ],
+    "type": "object"
+  },
+  "inputSchema": {
+    "properties": {
+      "agent_id": {
+        "description": "Agent ID",
+        "type": "string"
+      },
+      "status": {
+        "description": "Filter by status: 'pending', 'in_progress', 'done'",
+        "type": "string"
+      }
+    },
+    "required": [
+      "agent_id"
+    ],
+    "type": "object"
+  }
+}

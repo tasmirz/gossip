@@ -1,0 +1,14 @@
+{
+  "name": "gossip_render_board",
+  "description": "Render and return the live Markdown Kanban board (BOARD.md) representing current multi-agent work state",
+  "parameters": {
+    "properties": {},
+    "required": [],
+    "type": "object"
+  },
+  "inputSchema": {
+    "properties": {},
+    "required": [],
+    "type": "object"
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "name": "gossip_rag_index_codebase",
+  "description": "Automatically index the codebase (files, packages, AST symbols, decisions, invariants) into the shared RAG knowledge graph",
+  "parameters": {
+    "properties": {
+      "root_path": {
+        "description": "Root directory of the project to index (default: project root)",
+        "type": "string"
+      }
+    },
+    "required": [],
+    "type": "object"
+  },
+  "inputSchema": {
+    "properties": {
+      "root_path": {
+        "description": "Root directory of the project to index (default: project root)",
+        "type": "string"
+      }
+    },
+    "required": [],
+    "type": "object"
+  }
+}

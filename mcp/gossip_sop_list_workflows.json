@@ -1,0 +1,14 @@
+{
+  "name": "gossip_sop_list_workflows",
+  "description": "List active Standard Operating Procedure (SOP) workflows and available templates (MetaGPT-inspired)",
+  "parameters": {
+    "properties": {},
+    "required": [],
+    "type": "object"
+  },
+  "inputSchema": {
+    "properties": {},
+    "required": [],
+    "type": "object"
+  }
+}

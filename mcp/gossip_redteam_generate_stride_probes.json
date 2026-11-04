@@ -1,0 +1,52 @@
+{
+  "name": "gossip_redteam_generate_stride_probes",
+  "description": "Generate structured adversarial STRIDE threat probes (Spoofing, Tampering, Repudiation, Info Disclosure, DoS, Elevation of Privilege)",
+  "parameters": {
+    "properties": {
+      "attacker_id": {
+        "description": "Attacker agent ID (default: 'agent:red_team')",
+        "type": "string"
+      },
+      "auto_log": {
+        "description": "Automatically record generated probes in deliberations.json (default: true)",
+        "type": "boolean"
+      },
+      "context": {
+        "description": "Context description or architectural invariants",
+        "type": "string"
+      },
+      "target": {
+        "description": "Target component, interface, or file to probe",
+        "type": "string"
+      }
+    },
+    "required": [
+      "target"
+    ],
+    "type": "object"
+  },
+  "inputSchema": {
+    "properties": {
+      "attacker_id": {
+        "description": "Attacker agent ID (default: 'agent:red_team')",
+        "type": "string"
+      },
+      "auto_log": {
+        "description": "Automatically record generated probes in deliberations.json (default: true)",
+        "type": "boolean"
+      },
+      "context": {
+        "description": "Context description or architectural invariants",
+        "type": "string"
+      },
+      "target": {
+        "description": "Target component, interface, or file to probe",
+        "type": "string"
+      }
+    },
+    "required": [
+      "target"
+    ],
+    "type": "object"
+  }
+}

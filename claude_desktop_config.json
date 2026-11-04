@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "gossip": {
+      "command": "/absolute/path/to/gossip",
+      "args": [
+        "serve"
+      ],
+      "env": {
+        "GOSSIP_DIR": ".local/gossip"
+      }
+    }
+  }
+}

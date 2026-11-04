@@ -1,0 +1,58 @@
+{
+  "name": "gossip_request_review",
+  "description": "Request a formal peer review or critique cycle on a task, artifact, or code file",
+  "parameters": {
+    "properties": {
+      "author_id": {
+        "description": "Author agent ID",
+        "type": "string"
+      },
+      "reviewer_id": {
+        "description": "Reviewer agent ID (or role:qa_engineer / role:red_team)",
+        "type": "string"
+      },
+      "target_id": {
+        "description": "Identifier of target (e.g. 'task-1', 'pkg/tasks/tasks.go')",
+        "type": "string"
+      },
+      "target_type": {
+        "description": "Target: 'task', 'file', 'artifact', 'decision'",
+        "type": "string"
+      }
+    },
+    "required": [
+      "target_type",
+      "target_id",
+      "author_id",
+      "reviewer_id"
+    ],
+    "type": "object"
+  },
+  "inputSchema": {
+    "properties": {
+      "author_id": {
+        "description": "Author agent ID",
+        "type": "string"
+      },
+      "reviewer_id": {
+        "description": "Reviewer agent ID (or role:qa_engineer / role:red_team)",
+        "type": "string"
+      },
+      "target_id": {
+        "description": "Identifier of target (e.g. 'task-1', 'pkg/tasks/tasks.go')",
+        "type": "string"
+      },
+      "target_type": {
+        "description": "Target: 'task', 'file', 'artifact', 'decision'",
+        "type": "string"
+      }
+    },
+    "required": [
+      "target_type",
+      "target_id",
+      "author_id",
+      "reviewer_id"
+    ],
+    "type": "object"
+  }
+}

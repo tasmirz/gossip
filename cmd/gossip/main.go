@@ -132,6 +132,9 @@ func main() {
 		dir := parseDirFlag(os.Args[2:])
 		runAssignments(dir)
 
+	case "export-mcp", "mcp-export":
+		runExportMCP(os.Args[2:])
+
 	case "roles":
 		fmt.Println(roles.FormatRoleSummary())
 
@@ -1014,6 +1017,7 @@ Commands:
   todo            List or add personal agent scratchpad to-dos (alias: gsp:my_todos)
   system-todos    View unified cross-system backlog (alias: gsp:system_todos)
   assignments     View Orchestrator task allocation & workload matrix (alias: gsp:assignments)
+  export-mcp      Export MCP tool schemas (JSON) and instructions.md (alias: mcp-export)
   roles           Print complete directory of agent roles and directives
   send            Send a message to an agent, role, or broadcast to all
   version         Show Gossip version

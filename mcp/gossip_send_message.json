@@ -1,0 +1,74 @@
+{
+  "name": "gossip_send_message",
+  "description": "Send a message to a specific agent, a role channel, or broadcast to all",
+  "parameters": {
+    "properties": {
+      "content": {
+        "description": "Message payload",
+        "type": "string"
+      },
+      "from": {
+        "description": "Sender identifier (e.g. 'orch-1', 'math-1')",
+        "type": "string"
+      },
+      "role": {
+        "description": "Sender's role (e.g. 'orchestrator', 'math_expert')",
+        "type": "string"
+      },
+      "subject": {
+        "description": "Short subject line",
+        "type": "string"
+      },
+      "thread_id": {
+        "description": "Optional thread identifier to group replies",
+        "type": "string"
+      },
+      "to": {
+        "description": "Target: 'agent:\u003cid\u003e', 'role:\u003crole_id\u003e', or 'all'",
+        "type": "string"
+      }
+    },
+    "required": [
+      "from",
+      "role",
+      "to",
+      "content"
+    ],
+    "type": "object"
+  },
+  "inputSchema": {
+    "properties": {
+      "content": {
+        "description": "Message payload",
+        "type": "string"
+      },
+      "from": {
+        "description": "Sender identifier (e.g. 'orch-1', 'math-1')",
+        "type": "string"
+      },
+      "role": {
+        "description": "Sender's role (e.g. 'orchestrator', 'math_expert')",
+        "type": "string"
+      },
+      "subject": {
+        "description": "Short subject line",
+        "type": "string"
+      },
+      "thread_id": {
+        "description": "Optional thread identifier to group replies",
+        "type": "string"
+      },
+      "to": {
+        "description": "Target: 'agent:\u003cid\u003e', 'role:\u003crole_id\u003e', or 'all'",
+        "type": "string"
+      }
+    },
+    "required": [
+      "from",
+      "role",
+      "to",
+      "content"
+    ],
+    "type": "object"
+  }
+}

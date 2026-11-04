@@ -1,0 +1,58 @@
+{
+  "name": "gossip_sop_start",
+  "description": "Start a structured SOP workflow (templates: 'feature_delivery', 'bug_investigation', 'security_hardening')",
+  "parameters": {
+    "properties": {
+      "description": {
+        "description": "Project scope or objective",
+        "type": "string"
+      },
+      "initiator": {
+        "description": "Initiator agent ID",
+        "type": "string"
+      },
+      "template": {
+        "description": "Template name: 'feature_delivery', 'bug_investigation', or 'security_hardening'",
+        "type": "string"
+      },
+      "title": {
+        "description": "Workflow title",
+        "type": "string"
+      }
+    },
+    "required": [
+      "template",
+      "title",
+      "description",
+      "initiator"
+    ],
+    "type": "object"
+  },
+  "inputSchema": {
+    "properties": {
+      "description": {
+        "description": "Project scope or objective",
+        "type": "string"
+      },
+      "initiator": {
+        "description": "Initiator agent ID",
+        "type": "string"
+      },
+      "template": {
+        "description": "Template name: 'feature_delivery', 'bug_investigation', or 'security_hardening'",
+        "type": "string"
+      },
+      "title": {
+        "description": "Workflow title",
+        "type": "string"
+      }
+    },
+    "required": [
+      "template",
+      "title",
+      "description",
+      "initiator"
+    ],
+    "type": "object"
+  }
+}
