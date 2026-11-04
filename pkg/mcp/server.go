@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 	"github.com/tasmirz/gossip/pkg/deliberation"
+	"github.com/tasmirz/gossip/pkg/events"
 	"github.com/tasmirz/gossip/pkg/graph"
 	"github.com/tasmirz/gossip/pkg/guardrails"
 	"github.com/tasmirz/gossip/pkg/messages"
@@ -30,6 +32,7 @@ type Server struct {
 	deliberations *deliberation.Manager
 	sop           *sop.Manager
 	guardrails    *guardrails.Manager
+	events        *events.Manager
 	roleProvider  roles.Provider
 }
 
@@ -43,14 +46,21 @@ func NewServer(store *state.Store, roleProv roles.Provider) *Server {
 		}
 	}
 
+	msgMgr := messages.NewManager(store)
+	taskMgr := tasks.NewManager(store)
+	delibMgr := deliberation.NewManager(store)
+	sopMgr := sop.NewManager(store)
+	evtMgr := events.NewManager(store, msgMgr, taskMgr, delibMgr, sopMgr)
+
 	s := &Server{
 		store:         store,
-		messages:      messages.NewManager(store),
-		tasks:         tasks.NewManager(store),
+		messages:      msgMgr,
+		tasks:         taskMgr,
 		graph:         graph.NewManager(store),
-		deliberations: deliberation.NewManager(store),
-		sop:           sop.NewManager(store),
+		deliberations: delibMgr,
+		sop:           sopMgr,
 		guardrails:    guardrails.NewManager(store),
+		events:        evtMgr,
 		roleProvider:  roleProv,
 	}
 
@@ -85,6 +95,7 @@ func (s *Server) registerTools() {
 	s.registerDeliberationTools()
 	s.registerSOPTools()
 	s.registerGuardrailTools()
+	s.registerEventTools()
 }
 
 // --- Helper Functions for Extracting Tool Arguments ---
@@ -179,6 +190,32 @@ func toJSONText(v any) (*mcp.CallToolResult, error) {
 		return mcp.NewToolResultError(fmt.Sprintf("serialization error: %v", err)), nil
 	}
 	return mcp.NewToolResultText(string(data)), nil
+}
+
+func parseTimeFlexible(val string) (time.Time, error) {
+	val = strings.TrimSpace(val)
+	if val == "" {
+		return time.Time{}, nil
+	}
+
+	cleanVal := strings.TrimSuffix(val, " ago")
+	if d, err := time.ParseDuration(cleanVal); err == nil {
+		return time.Now().Add(-d), nil
+	}
+
+	if t, err := time.Parse(time.RFC3339, val); err == nil {
+		return t, nil
+	}
+
+	if t, err := time.Parse(time.RFC3339Nano, val); err == nil {
+		return t, nil
+	}
+
+	if t, err := time.Parse("2006-01-02 15:04:05", val); err == nil {
+		return t, nil
+	}
+
+	return time.Time{}, fmt.Errorf("unable to parse time '%s' (use RFC3339 or relative duration like '30s', '5m')", val)
 }
 
 // --- Role & Identity Tools ---
@@ -1643,5 +1680,155 @@ func (s *Server) registerPrompts() {
 		return mcp.NewGetPromptResult("Architectural repo-map", []mcp.PromptMessage{
 			mcp.NewPromptMessage(mcp.RoleUser, mcp.NewTextContent(promptText)),
 		}), nil
+	})
+
+	// gsp:poll
+	s.mcpServer.AddPrompt(mcp.NewPrompt("gsp:poll",
+		mcp.WithPromptDescription("Continuously poll or long-poll for incoming messages, unblocked tasks, and state events"),
+		mcp.WithArgument("agent_id", mcp.ArgumentDescription("Calling agent identifier (e.g. 'worker-1')")),
+		mcp.WithArgument("role", mcp.ArgumentDescription("Specialist role (e.g. 'worker', 'network_engineer')")),
+		mcp.WithArgument("timeout", mcp.ArgumentDescription("Long-polling timeout in seconds (default: 20)")),
+	), func(ctx context.Context, req mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
+		agentID := req.Params.Arguments["agent_id"]
+		role := req.Params.Arguments["role"]
+		timeout := req.Params.Arguments["timeout"]
+		if timeout == "" {
+			timeout = "20"
+		}
+		promptText := fmt.Sprintf("Event Sync & Continuous Polling Loop:\nCall `gossip_poll_events` with agent_id='%s', role='%s', and timeout_seconds=%s.\nIf has_updates=true, process incoming messages or claim ready tasks; then poll again with returned server_time.", agentID, role, timeout)
+		return mcp.NewGetPromptResult("Event polling loop", []mcp.PromptMessage{
+			mcp.NewPromptMessage(mcp.RoleUser, mcp.NewTextContent(promptText)),
+		}), nil
+	})
+}
+
+// --- Event Synchronization & Long-Polling Tools ---
+
+func (s *Server) registerEventTools() {
+	// gossip_poll_events (alias gsp_poll, gossip_sync)
+	pollHandler := func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		args := getArgsMap(req)
+		agentID := getString(args, "agent_id")
+		role := getString(args, "role")
+		sinceTimeStr := getString(args, "since_time")
+		timeoutSec := getInt(args, "timeout_seconds", 0)
+		eventTypes := getStringSlice(args, "event_types")
+		autoHeartbeat := getBool(args, "auto_heartbeat")
+		currentTaskID := getString(args, "current_task_id")
+		status := getString(args, "status")
+
+		if agentID == "" || role == "" {
+			return mcp.NewToolResultError("'agent_id' and 'role' are required"), nil
+		}
+
+		var sinceTime time.Time
+		if sinceTimeStr != "" {
+			var err error
+			sinceTime, err = parseTimeFlexible(sinceTimeStr)
+			if err != nil {
+				return mcp.NewToolResultError(fmt.Sprintf("invalid since_time: %v", err)), nil
+			}
+		}
+
+		// Default auto_heartbeat to true if omitted or not explicitly false
+		if _, ok := args["auto_heartbeat"]; !ok {
+			autoHeartbeat = true
+		}
+
+		pollReq := events.PollRequest{
+			AgentID:       agentID,
+			Role:          role,
+			SinceTime:     sinceTime,
+			Timeout:       time.Duration(timeoutSec) * time.Second,
+			EventTypes:    eventTypes,
+			AutoHeartbeat: autoHeartbeat,
+			CurrentTaskID: currentTaskID,
+			Status:        status,
+		}
+
+		resp, err := s.events.Poll(ctx, pollReq)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("poll error: %v", err)), nil
+		}
+
+		return toJSONText(resp)
+	}
+
+	s.mcpServer.AddTool(mcp.NewTool("gossip_poll_events",
+		mcp.WithDescription("Continuously poll or long-poll for updates, new messages, newly unblocked ready tasks, debate rounds, and peer activity with timeout"),
+		mcp.WithString("agent_id", mcp.Required(), mcp.Description("Unique identifier of the calling agent")),
+		mcp.WithString("role", mcp.Required(), mcp.Description("Specialist role of the calling agent")),
+		mcp.WithString("since_time", mcp.Description("RFC3339 timestamp or relative duration (e.g. '2026-11-04T12:00:00Z', '30s', '5m')")),
+		mcp.WithInteger("timeout_seconds", mcp.Description("Long-polling timeout in seconds (0 to 60; 0 returns immediately, >0 waits for events)")),
+		mcp.WithArray("event_types", mcp.Description("Filter event categories: ['message_received', 'task_ready', 'task_assigned', 'task_updated', 'debate_activity', 'sop_advanced', 'agent_presence']")),
+		mcp.WithBoolean("auto_heartbeat", mcp.Description("Automatically update agent's online heartbeat during poll (default: true)")),
+		mcp.WithString("current_task_id", mcp.Description("Active task ID currently being worked on")),
+		mcp.WithString("status", mcp.Description("Agent working status: 'active', 'idle', 'blocked'")),
+	), pollHandler)
+
+	s.mcpServer.AddTool(mcp.NewTool("gsp_poll",
+		mcp.WithDescription("Alias for gossip_poll_events: time-based continuous event polling and long-polling sync"),
+		mcp.WithString("agent_id", mcp.Required(), mcp.Description("Unique identifier of the calling agent")),
+		mcp.WithString("role", mcp.Required(), mcp.Description("Specialist role of the calling agent")),
+		mcp.WithString("since_time", mcp.Description("RFC3339 timestamp or relative duration")),
+		mcp.WithInteger("timeout_seconds", mcp.Description("Long-polling timeout in seconds (0 to 60)")),
+		mcp.WithArray("event_types", mcp.Description("Filter event categories")),
+		mcp.WithBoolean("auto_heartbeat", mcp.Description("Automatically update agent's online heartbeat")),
+		mcp.WithString("current_task_id", mcp.Description("Active task ID")),
+		mcp.WithString("status", mcp.Description("Agent working status")),
+	), pollHandler)
+
+	s.mcpServer.AddTool(mcp.NewTool("gossip_sync",
+		mcp.WithDescription("Alias for gossip_poll_events: synchronize state, heartbeat, and fetch new events"),
+		mcp.WithString("agent_id", mcp.Required(), mcp.Description("Unique identifier of the calling agent")),
+		mcp.WithString("role", mcp.Required(), mcp.Description("Specialist role of the calling agent")),
+		mcp.WithString("since_time", mcp.Description("RFC3339 timestamp or relative duration")),
+		mcp.WithInteger("timeout_seconds", mcp.Description("Long-polling timeout in seconds (0 to 60)")),
+	), pollHandler)
+
+	// gossip_log_event
+	s.mcpServer.AddTool(mcp.NewTool("gossip_log_event",
+		mcp.WithDescription("Append an explicit custom event or checkpoint to the shared event ledger (events.jsonl)"),
+		mcp.WithString("type", mcp.Required(), mcp.Description("Event category or action (e.g. 'build_finished', 'migration_complete')")),
+		mcp.WithString("summary", mcp.Required(), mcp.Description("Human-readable event summary")),
+		mcp.WithString("actor_id", mcp.Description("Agent or system ID initiating the event")),
+		mcp.WithString("actor_role", mcp.Description("Role of the actor")),
+		mcp.WithString("target_id", mcp.Description("Target entity, task ID, or recipient ID")),
+		mcp.WithString("target_role", mcp.Description("Target role")),
+	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		args := getArgsMap(req)
+		evtType := getString(args, "type")
+		summary := getString(args, "summary")
+		actorID := getString(args, "actor_id")
+		actorRole := getString(args, "actor_role")
+		targetID := getString(args, "target_id")
+		targetRole := getString(args, "target_role")
+
+		if evtType == "" || summary == "" {
+			return mcp.NewToolResultError("'type' and 'summary' are required"), nil
+		}
+
+		if err := security.ValidatePayloadSize(summary, security.MaxMessageSizeBytes); err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("event summary too large: %v", err)), nil
+		}
+
+		evt := events.Event{
+			Type:       evtType,
+			Timestamp:  time.Now(),
+			ActorID:    actorID,
+			ActorRole:  actorRole,
+			TargetID:   targetID,
+			TargetRole: targetRole,
+			Summary:    summary,
+		}
+
+		if err := s.events.LogEvent(evt); err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("failed to log event: %v", err)), nil
+		}
+
+		return toJSONText(map[string]any{
+			"status": "logged",
+			"event":  evt,
+		})
 	})
 }
