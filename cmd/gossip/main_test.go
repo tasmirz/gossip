@@ -32,4 +32,19 @@ func TestCLICommands(t *testing.T) {
 
 	// Test report
 	runReport(tmpDir)
+
+	// Test PageRank
+	runPageRank(tmpDir)
+
+	// Test clusters
+	runClusters(tmpDir)
+
+	// Test repo-map
+	runRepoMap(tmpDir)
+
+	// Test red-team audit report
+	runAudit(tmpDir)
+
+	// Test SOP workflows
+	runSOP(tmpDir)
 }

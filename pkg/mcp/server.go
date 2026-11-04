@@ -13,6 +13,7 @@ import (
 	"github.com/tasmirz/gossip/pkg/graph"
 	"github.com/tasmirz/gossip/pkg/messages"
 	"github.com/tasmirz/gossip/pkg/roles"
+	"github.com/tasmirz/gossip/pkg/sop"
 	"github.com/tasmirz/gossip/pkg/state"
 	"github.com/tasmirz/gossip/pkg/tasks"
 )
@@ -25,6 +26,7 @@ type Server struct {
 	tasks         *tasks.Manager
 	graph         *graph.Manager
 	deliberations *deliberation.Manager
+	sop           *sop.Manager
 	roleProvider  roles.Provider
 }
 
@@ -44,6 +46,7 @@ func NewServer(store *state.Store, roleProv roles.Provider) *Server {
 		tasks:         tasks.NewManager(store),
 		graph:         graph.NewManager(store),
 		deliberations: deliberation.NewManager(store),
+		sop:           sop.NewManager(store),
 		roleProvider:  roleProv,
 	}
 
@@ -63,12 +66,18 @@ func (s *Server) ServeStdio() error {
 	return server.ServeStdio(s.mcpServer)
 }
 
+// MCPServer returns the underlying mark3labs MCPServer instance.
+func (s *Server) MCPServer() *server.MCPServer {
+	return s.mcpServer
+}
+
 func (s *Server) registerTools() {
 	s.registerRoleTools()
 	s.registerMessageTools()
 	s.registerTaskTools()
 	s.registerGraphTools()
 	s.registerDeliberationTools()
+	s.registerSOPTools()
 }
 
 // --- Helper Functions for Extracting Tool Arguments ---
@@ -118,6 +127,22 @@ func getInt(args map[string]any, key string, defaultVal int) int {
 			return num
 		case int64:
 			return int(num)
+		}
+	}
+	return defaultVal
+}
+
+func getFloat(args map[string]any, key string, defaultVal float64) float64 {
+	if v, ok := args[key]; ok {
+		switch num := v.(type) {
+		case float64:
+			return num
+		case float32:
+			return float64(num)
+		case int:
+			return float64(num)
+		case int64:
+			return float64(num)
 		}
 	}
 	return defaultVal
@@ -736,6 +761,72 @@ func (s *Server) registerGraphTools() {
 		}
 		return mcp.NewToolResultText(report), nil
 	})
+
+	// gossip_rag_pagerank
+	s.mcpServer.AddTool(mcp.NewTool("gossip_rag_pagerank",
+		mcp.WithDescription("Compute PageRank centrality scores across all knowledge nodes to identify architecturally critical components (inspired by Aider repo-map)"),
+		mcp.WithNumber("damping", mcp.Description("PageRank damping factor (default: 0.85)")),
+		mcp.WithInteger("max_iterations", mcp.Description("Max iterations for power-method convergence (default: 100)")),
+		mcp.WithNumber("tolerance", mcp.Description("Convergence tolerance threshold (default: 0.00001)")),
+	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		args := getArgsMap(req)
+		damping := getFloat(args, "damping", 0.85)
+		maxIter := getInt(args, "max_iterations", 100)
+		tol := getFloat(args, "tolerance", 0.00001)
+
+		scores, err := s.graph.ComputePageRank(damping, maxIter, tol)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("pagerank error: %v", err)), nil
+		}
+		return toJSONText(scores)
+	})
+
+	// gossip_rag_impact_analysis
+	s.mcpServer.AddTool(mcp.NewTool("gossip_rag_impact_analysis",
+		mcp.WithDescription("Perform blast-radius impact analysis when modifying a node/symbol/file, discovering all direct and indirect dependents (inspired by Graphify affected.py)"),
+		mcp.WithString("seed_node_id", mcp.Required(), mcp.Description("Node, symbol, or file ID to analyze")),
+		mcp.WithInteger("depth", mcp.Description("Max reverse traversal depth (default: 2)")),
+	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		args := getArgsMap(req)
+		seedID := getString(args, "seed_node_id")
+		depth := getInt(args, "depth", 2)
+
+		if seedID == "" {
+			return mcp.NewToolResultError("seed_node_id is required"), nil
+		}
+
+		report, err := s.graph.AffectedNodes(seedID, depth)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("impact analysis error: %v", err)), nil
+		}
+		return toJSONText(report)
+	})
+
+	// gossip_rag_clusters
+	s.mcpServer.AddTool(mcp.NewTool("gossip_rag_clusters",
+		mcp.WithDescription("Detect modular architectural clusters and submodules in the knowledge graph (inspired by Graphify cluster.py)"),
+	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		clusters, err := s.graph.DetectClusters()
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("cluster error: %v", err)), nil
+		}
+		return toJSONText(clusters)
+	})
+
+	// gossip_rag_repo_map
+	s.mcpServer.AddTool(mcp.NewTool("gossip_rag_repo_map",
+		mcp.WithDescription("Generate a compact, token-budgeted architectural map ranked by PageRank centrality (inspired by Aider repo-map)"),
+		mcp.WithInteger("max_tokens", mcp.Description("Token budget ceiling for the map (default: 1000)")),
+	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		args := getArgsMap(req)
+		maxTokens := getInt(args, "max_tokens", 1000)
+
+		repoMap, err := s.graph.GenerateRepoMap(maxTokens)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("repo-map error: %v", err)), nil
+		}
+		return mcp.NewToolResultText(repoMap), nil
+	})
 }
 
 // --- Multi-Agent Debate, Review & Red Teaming Tools ---
@@ -981,5 +1072,248 @@ func (s *Server) registerDeliberationTools() {
 		}
 
 		return toJSONText(resp)
+	})
+
+	// gossip_advance_debate_round
+	s.mcpServer.AddTool(mcp.NewTool("gossip_advance_debate_round",
+		mcp.WithDescription("Close the current round of an active debate and open the next round for critique and rebuttal"),
+		mcp.WithString("debate_id", mcp.Required(), mcp.Description("ID of the debate to advance")),
+	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		args := getArgsMap(req)
+		debateID := getString(args, "debate_id")
+		if debateID == "" {
+			return mcp.NewToolResultError("debate_id is required"), nil
+		}
+
+		if err := s.deliberations.AdvanceRound(debateID); err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("failed to advance round: %v", err)), nil
+		}
+		return mcp.NewToolResultText(fmt.Sprintf("Successfully advanced debate %s to next round", debateID)), nil
+	})
+
+	// gossip_debate_ranked_vote
+	s.mcpServer.AddTool(mcp.NewTool("gossip_debate_ranked_vote",
+		mcp.WithDescription("Cast a ranked-choice ballot ordering multiple alternative candidates (Borda Count tallying)"),
+		mcp.WithString("debate_id", mcp.Required(), mcp.Description("ID of the debate")),
+		mcp.WithString("agent_id", mcp.Required(), mcp.Description("Voter Agent ID")),
+		mcp.WithString("role", mcp.Required(), mcp.Description("Voter Role")),
+		mcp.WithArray("ranked_choices", mcp.Required(), mcp.Description("Ordered list of candidate options from most preferred (1st) to least preferred")),
+		mcp.WithInteger("confidence", mcp.Description("Confidence level from 1 to 5 (default: 3)")),
+		mcp.WithString("reasoning", mcp.Description("Rationale for this candidate ranking")),
+	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		args := getArgsMap(req)
+		debateID := getString(args, "debate_id")
+		agentID := getString(args, "agent_id")
+		role := getString(args, "role")
+		choices := getStringSlice(args, "ranked_choices")
+		confidence := getInt(args, "confidence", 3)
+		reasoning := getString(args, "reasoning")
+
+		if debateID == "" || agentID == "" || role == "" || len(choices) == 0 {
+			return mcp.NewToolResultError("debate_id, agent_id, role, and ranked_choices are required"), nil
+		}
+
+		err := s.deliberations.CastRankedVote(debateID, agentID, role, choices, confidence, reasoning)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("failed to cast ranked vote: %v", err)), nil
+		}
+		return mcp.NewToolResultText(fmt.Sprintf("Ranked vote recorded for %s on debate %s", agentID, debateID)), nil
+	})
+
+	// gossip_debate_tally_ranked_votes
+	s.mcpServer.AddTool(mcp.NewTool("gossip_debate_tally_ranked_votes",
+		mcp.WithDescription("Tally ranked-choice votes using confidence-weighted Borda Count to identify the consensus winner"),
+		mcp.WithString("debate_id", mcp.Required(), mcp.Description("ID of the debate")),
+	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		args := getArgsMap(req)
+		debateID := getString(args, "debate_id")
+		if debateID == "" {
+			return mcp.NewToolResultError("debate_id is required"), nil
+		}
+
+		result, err := s.deliberations.TallyRankedVotes(debateID)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("tally error: %v", err)), nil
+		}
+		return toJSONText(result)
+	})
+
+	// gossip_debate_check_convergence
+	s.mcpServer.AddTool(mcp.NewTool("gossip_debate_check_convergence",
+		mcp.WithDescription("Evaluate whether a multi-round debate has converged towards consensus or if further rounds are needed"),
+		mcp.WithString("debate_id", mcp.Required(), mcp.Description("ID of the debate")),
+	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		args := getArgsMap(req)
+		debateID := getString(args, "debate_id")
+		if debateID == "" {
+			return mcp.NewToolResultError("debate_id is required"), nil
+		}
+
+		report, err := s.deliberations.CheckConvergence(debateID)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("convergence check error: %v", err)), nil
+		}
+		return toJSONText(report)
+	})
+
+	// gossip_redteam_generate_stride_probes
+	s.mcpServer.AddTool(mcp.NewTool("gossip_redteam_generate_stride_probes",
+		mcp.WithDescription("Generate structured adversarial STRIDE threat probes (Spoofing, Tampering, Repudiation, Info Disclosure, DoS, Elevation of Privilege)"),
+		mcp.WithString("target", mcp.Required(), mcp.Description("Target component, interface, or file to probe")),
+		mcp.WithString("context", mcp.Description("Context description or architectural invariants")),
+		mcp.WithString("attacker_id", mcp.Description("Attacker agent ID (default: 'agent:red_team')")),
+		mcp.WithBoolean("auto_log", mcp.Description("Automatically record generated probes in deliberations.json (default: true)")),
+	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		args := getArgsMap(req)
+		target := getString(args, "target")
+		contextDesc := getString(args, "context")
+		attackerID := getString(args, "attacker_id")
+		autoLog := getBool(args, "auto_log")
+		// default to true if key not provided
+		if _, ok := args["auto_log"]; !ok {
+			autoLog = true
+		}
+
+		if target == "" {
+			return mcp.NewToolResultError("target is required"), nil
+		}
+
+		probes := deliberation.GenerateSTRIDEProbes(target, contextDesc, attackerID)
+		if autoLog {
+			_ = s.deliberations.LogBatchProbes(probes)
+		}
+		return toJSONText(probes)
+	})
+
+	// gossip_redteam_generate_audit_report
+	s.mcpServer.AddTool(mcp.NewTool("gossip_redteam_generate_audit_report",
+		mcp.WithDescription("Generate and save the executive AUDIT_REPORT.md summarizing all red-team security evaluations"),
+	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		report, err := s.deliberations.GenerateAuditReport()
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("failed to generate audit report: %v", err)), nil
+		}
+		return mcp.NewToolResultText(report), nil
+	})
+}
+
+// --- Standard Operating Procedures (SOP) Tools ---
+
+func (s *Server) registerSOPTools() {
+	// gossip_sop_list_workflows
+	s.mcpServer.AddTool(mcp.NewTool("gossip_sop_list_workflows",
+		mcp.WithDescription("List active Standard Operating Procedure (SOP) workflows and available templates (MetaGPT-inspired)"),
+	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		workflows, err := s.sop.ListWorkflows()
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("failed to list workflows: %v", err)), nil
+		}
+
+		templates := sop.GetWorkflowTemplates()
+		templateNames := make([]string, 0, len(templates))
+		for name := range templates {
+			templateNames = append(templateNames, name)
+		}
+
+		resp := map[string]any{
+			"active_workflows":    workflows,
+			"available_templates": templateNames,
+		}
+		return toJSONText(resp)
+	})
+
+	// gossip_sop_start
+	s.mcpServer.AddTool(mcp.NewTool("gossip_sop_start",
+		mcp.WithDescription("Start a structured SOP workflow (templates: 'feature_delivery', 'bug_investigation', 'security_hardening')"),
+		mcp.WithString("template", mcp.Required(), mcp.Description("Template name: 'feature_delivery', 'bug_investigation', or 'security_hardening'")),
+		mcp.WithString("title", mcp.Required(), mcp.Description("Workflow title")),
+		mcp.WithString("description", mcp.Required(), mcp.Description("Project scope or objective")),
+		mcp.WithString("initiator", mcp.Required(), mcp.Description("Initiator agent ID")),
+	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		args := getArgsMap(req)
+		templateName := getString(args, "template")
+		title := getString(args, "title")
+		desc := getString(args, "description")
+		initiator := getString(args, "initiator")
+
+		if templateName == "" || title == "" || desc == "" || initiator == "" {
+			return mcp.NewToolResultError("template, title, description, and initiator are required"), nil
+		}
+
+		wf, err := s.sop.StartWorkflow(templateName, title, desc, initiator)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("failed to start SOP workflow: %v", err)), nil
+		}
+		return toJSONText(wf)
+	})
+
+	// gossip_sop_save_artifact
+	s.mcpServer.AddTool(mcp.NewTool("gossip_sop_save_artifact",
+		mcp.WithDescription("Save a versioned SOP artifact deliverable (PRD, System Design, Task Plan, Review, Security Audit)"),
+		mcp.WithString("workflow_id", mcp.Required(), mcp.Description("Active SOP workflow ID")),
+		mcp.WithString("stage_id", mcp.Required(), mcp.Description("Stage ID (e.g. 'requirements', 'architecture', 'planning', 'implementation', 'qa_review', 'security_audit')")),
+		mcp.WithString("artifact_type", mcp.Required(), mcp.Description("Type: 'prd', 'system_design', 'task_plan', 'code_manifest', 'peer_review', 'security_audit', 'release_notes'")),
+		mcp.WithString("title", mcp.Required(), mcp.Description("Artifact title")),
+		mcp.WithString("content", mcp.Required(), mcp.Description("Full Markdown artifact document content")),
+		mcp.WithString("created_by", mcp.Required(), mcp.Description("Author Agent ID")),
+	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		args := getArgsMap(req)
+		wfID := getString(args, "workflow_id")
+		stageID := getString(args, "stage_id")
+		artType := getString(args, "artifact_type")
+		title := getString(args, "title")
+		content := getString(args, "content")
+		createdBy := getString(args, "created_by")
+
+		if wfID == "" || stageID == "" || artType == "" || title == "" || content == "" || createdBy == "" {
+			return mcp.NewToolResultError("workflow_id, stage_id, artifact_type, title, content, and created_by are required"), nil
+		}
+
+		art, err := s.sop.SaveArtifact(wfID, stageID, artType, title, content, createdBy, nil)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("failed to save artifact: %v", err)), nil
+		}
+		return toJSONText(art)
+	})
+
+	// gossip_sop_advance
+	s.mcpServer.AddTool(mcp.NewTool("gossip_sop_advance",
+		mcp.WithDescription("Advance an SOP workflow to the next phase gate, verifying that required deliverables and roles match"),
+		mcp.WithString("workflow_id", mcp.Required(), mcp.Description("Active SOP workflow ID")),
+		mcp.WithString("agent_id", mcp.Required(), mcp.Description("Caller Agent ID")),
+		mcp.WithString("role", mcp.Required(), mcp.Description("Caller Role (must match stage required role or orchestrator)")),
+	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		args := getArgsMap(req)
+		wfID := getString(args, "workflow_id")
+		agentID := getString(args, "agent_id")
+		role := getString(args, "role")
+
+		if wfID == "" || agentID == "" || role == "" {
+			return mcp.NewToolResultError("workflow_id, agent_id, and role are required"), nil
+		}
+
+		wf, err := s.sop.AdvanceStage(wfID, agentID, role)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("failed to advance stage: %v", err)), nil
+		}
+		return toJSONText(wf)
+	})
+
+	// gossip_sop_get_status
+	s.mcpServer.AddTool(mcp.NewTool("gossip_sop_get_status",
+		mcp.WithDescription("Inspect the current stage, completed gates, and deliverables for an SOP workflow"),
+		mcp.WithString("workflow_id", mcp.Required(), mcp.Description("Active SOP workflow ID")),
+	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		args := getArgsMap(req)
+		wfID := getString(args, "workflow_id")
+		if wfID == "" {
+			return mcp.NewToolResultError("workflow_id is required"), nil
+		}
+
+		wf, err := s.sop.GetWorkflow(wfID)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("workflow error: %v", err)), nil
+		}
+		return toJSONText(wf)
 	})
 }

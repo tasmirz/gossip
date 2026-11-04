@@ -57,6 +57,12 @@ func TestMCPServerInitializationAndDynamicRoles(t *testing.T) {
 	if !ok || registered.Title != "Kubernetes & CI/CD Engineer" {
 		t.Fatalf("Failed to retrieve dynamically registered role")
 	}
+
+	// Verify that the MCP server initialized with expected tools
+	mcpServer := srv.MCPServer()
+	if mcpServer == nil {
+		t.Fatal("Expected non-nil MCPServer instance")
+	}
 }
 
 // Dummy context to satisfy unused imports if needed

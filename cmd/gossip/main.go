@@ -12,6 +12,7 @@ import (
 	"github.com/tasmirz/gossip/pkg/mcp"
 	"github.com/tasmirz/gossip/pkg/messages"
 	"github.com/tasmirz/gossip/pkg/roles"
+	"github.com/tasmirz/gossip/pkg/sop"
 	"github.com/tasmirz/gossip/pkg/state"
 	"github.com/tasmirz/gossip/pkg/tasks"
 )
@@ -69,6 +70,29 @@ func main() {
 	case "probes":
 		dir := parseDirFlag(os.Args[2:])
 		runProbes(dir)
+
+	case "pagerank":
+		dir := parseDirFlag(os.Args[2:])
+		runPageRank(dir)
+
+	case "impact":
+		runImpact(os.Args[2:])
+
+	case "clusters":
+		dir := parseDirFlag(os.Args[2:])
+		runClusters(dir)
+
+	case "repomap":
+		dir := parseDirFlag(os.Args[2:])
+		runRepoMap(dir)
+
+	case "audit":
+		dir := parseDirFlag(os.Args[2:])
+		runAudit(dir)
+
+	case "sop":
+		dir := parseDirFlag(os.Args[2:])
+		runSOP(dir)
 
 	case "roles":
 		fmt.Println(roles.FormatRoleSummary())
@@ -372,6 +396,172 @@ func runSend(args []string) {
 	fmt.Printf("✓ Message sent [%s] to %s: %s\n", m.ID, m.To, m.Content)
 }
 
+func runPageRank(customDir string) {
+	store, err := state.NewStore(customDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	gm := graph.NewManager(store)
+	scores, err := gm.ComputePageRank(0.85, 100, 1e-5)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error calculating PageRank: %v\n", err)
+		os.Exit(1)
+	}
+
+	if len(scores) == 0 {
+		fmt.Println("No nodes found in knowledge graph.")
+		return
+	}
+
+	fmt.Printf("%-24s %-12s %-12s %-8s %-8s %s\n", "NODE ID", "TYPE", "PAGERANK", "IN-DEG", "OUT-DEG", "LABEL")
+	fmt.Println(strings.Repeat("-", 80))
+	for _, s := range scores {
+		fmt.Printf("%-24s %-12s %-12.4f %-8d %-8d %s\n", s.NodeID, s.Type, s.PageRank, s.InDegree, s.OutDegree, s.Label)
+	}
+}
+
+func runImpact(args []string) {
+	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
+		fmt.Fprintln(os.Stderr, "Usage: gossip impact <node_id> [--depth <int>] [--dir <path>]")
+		os.Exit(1)
+	}
+	seedID := args[0]
+	fs := flag.NewFlagSet("impact", flag.ExitOnError)
+	depth := fs.Int("depth", 2, "Max traversal depth")
+	dir := fs.String("dir", "", "Storage directory")
+	_ = fs.Parse(args[1:])
+
+	store, err := state.NewStore(*dir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	gm := graph.NewManager(store)
+	report, err := gm.AffectedNodes(seedID, *depth)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Blast-radius error: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("🎯 Blast-Radius Impact Analysis for [%s] (%s)\n", report.SeedNodeID, report.SeedLabel)
+	fmt.Printf("Total Affected Components: %d | Blast Radius Score: %.2f / 100.0\n\n", report.TotalAffectedCount, report.BlastRadiusScore)
+
+	if len(report.DirectHits) > 0 {
+		fmt.Printf("=== Direct Dependents (Depth 1) [%d] ===\n", len(report.DirectHits))
+		for _, h := range report.DirectHits {
+			fmt.Printf("  • %-20s (%s) via %s from %s\n", h.NodeID, h.Type, h.ViaRelation, h.ViaSource)
+		}
+		fmt.Println()
+	}
+
+	if len(report.IndirectHits) > 0 {
+		fmt.Printf("=== Transitive Dependents (Depth 2+) [%d] ===\n", len(report.IndirectHits))
+		for _, h := range report.IndirectHits {
+			fmt.Printf("  • %-20s (Depth %d, %s) via %s from %s\n", h.NodeID, h.Depth, h.Type, h.ViaRelation, h.ViaSource)
+		}
+		fmt.Println()
+	}
+
+	if len(report.RecommendedVerifications) > 0 {
+		fmt.Println("=== Recommended Verifications ===")
+		for _, rec := range report.RecommendedVerifications {
+			fmt.Printf("  ✓ %s\n", rec)
+		}
+	}
+}
+
+func runClusters(customDir string) {
+	store, err := state.NewStore(customDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	gm := graph.NewManager(store)
+	clusters, err := gm.DetectClusters()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Cluster error: %v\n", err)
+		os.Exit(1)
+	}
+
+	if len(clusters) == 0 {
+		fmt.Println("No clusters identified.")
+		return
+	}
+
+	for _, c := range clusters {
+		fmt.Printf("📦 %s (Hub: %s, Size: %d)\n", c.ClusterName, c.HubNode, c.Size)
+		for _, n := range c.Nodes {
+			fmt.Printf("   - %s\n", n)
+		}
+		fmt.Println()
+	}
+}
+
+func runRepoMap(customDir string) {
+	store, err := state.NewStore(customDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	gm := graph.NewManager(store)
+	repoMap, err := gm.GenerateRepoMap(1000)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Repo-map error: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Print(repoMap)
+}
+
+func runAudit(customDir string) {
+	store, err := state.NewStore(customDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	dm := deliberation.NewManager(store)
+	report, err := dm.GenerateAuditReport()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Audit report error: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Print(report)
+}
+
+func runSOP(customDir string) {
+	store, err := state.NewStore(customDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	sm := sop.NewManager(store)
+	wfs, err := sm.ListWorkflows()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "SOP error: %v\n", err)
+		os.Exit(1)
+	}
+
+	if len(wfs) == 0 {
+		fmt.Println("No active SOP workflows found. Available templates:")
+		for name, stages := range sop.GetWorkflowTemplates() {
+			fmt.Printf("  • Template: %-20s (%d phase gates)\n", name, len(stages))
+		}
+		return
+	}
+
+	fmt.Printf("%-24s %-16s %-10s %s\n", "WORKFLOW ID", "TEMPLATE", "STATUS", "TITLE")
+	fmt.Println(strings.Repeat("-", 75))
+	for _, wf := range wfs {
+		fmt.Printf("%-24s %-16s %-10s %s\n", wf.ID, wf.Template, strings.ToUpper(wf.Status), wf.Title)
+	}
+}
+
 func printHelp() {
 	fmt.Printf("%s\n", BannerArt)
 	fmt.Print(`Usage:
@@ -386,6 +576,12 @@ Commands:
   tasks           List all tasks in table format
   debates         List multi-agent debates and voting sessions
   probes          List adversarial red-team security probes
+  pagerank        Compute and display PageRank architectural centrality scores
+  impact <id>     Perform blast-radius impact analysis when modifying a node/file
+  clusters        Detect architectural submodules and connected clusters
+  repomap         Generate PageRank-prioritized token-budgeted repo map
+  audit           Display executive red-team security audit report (AUDIT_REPORT.md)
+  sop             List active Standard Operating Procedure workflows
   roles           Print complete directory of agent roles and directives
   send            Send a message to an agent, role, or broadcast to all
   version         Show Gossip version
@@ -397,6 +593,10 @@ Options:
 Examples:
   gossip init
   gossip mcp
+  gossip impact util:core
+  gossip pagerank
+  gossip repomap
+  gossip audit
   gossip send --from agent_1 --role network_engineer --to role:math_expert --msg "Check polynomial"
   gossip board
 `)

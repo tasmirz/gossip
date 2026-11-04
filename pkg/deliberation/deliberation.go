@@ -82,17 +82,19 @@ type Resolution struct {
 
 // Debate manages an asynchronous multi-agent deliberation.
 type Debate struct {
-	ID          string          `json:"id"`
-	Title       string          `json:"title"`
-	Description string          `json:"description"`
-	Proposer    string          `json:"proposer"`
-	Role        string          `json:"role"`
-	Status      string          `json:"status"`
-	Rounds      []DebateRound   `json:"rounds"`
-	Votes       map[string]Vote `json:"votes"`
-	Resolution  *Resolution     `json:"resolution,omitempty"`
-	CreatedAt   time.Time       `json:"created_at"`
-	UpdatedAt   time.Time       `json:"updated_at"`
+	ID               string                     `json:"id"`
+	Title            string                     `json:"title"`
+	Description      string                     `json:"description"`
+	Proposer         string                     `json:"proposer"`
+	Role             string                     `json:"role"`
+	Status           string                     `json:"status"`
+	Options          []string                   `json:"options,omitempty"`
+	Rounds           []DebateRound              `json:"rounds"`
+	Votes            map[string]Vote            `json:"votes"`
+	MultiOptionVotes map[string]MultiOptionVote `json:"multi_option_votes,omitempty"`
+	Resolution       *Resolution                `json:"resolution,omitempty"`
+	CreatedAt        time.Time                  `json:"created_at"`
+	UpdatedAt        time.Time                  `json:"updated_at"`
 }
 
 // Finding represents a discrete critique item in a peer review.
@@ -224,9 +226,10 @@ func (m *Manager) StartDebate(title, description, proposer, role string) (*Debat
 				Arguments:   []Argument{},
 			},
 		},
-		Votes:     make(map[string]Vote),
-		CreatedAt: now,
-		UpdatedAt: now,
+		Votes:            make(map[string]Vote),
+		MultiOptionVotes: make(map[string]MultiOptionVote),
+		CreatedAt:        now,
+		UpdatedAt:        now,
 	}
 
 	ds.Debates[debateID] = deb
@@ -285,6 +288,35 @@ func (m *Manager) PostArgument(debateID, agentID, role, stance, content string) 
 	}
 
 	return &arg, nil
+}
+
+// AdvanceRound closes the current round and opens the next round for critique and revision.
+func (m *Manager) AdvanceRound(debateID string) error {
+	unlock, err := m.store.Lock()
+	if err != nil {
+		return err
+	}
+	defer unlock()
+
+	ds, err := m.Load()
+	if err != nil {
+		return err
+	}
+
+	deb, exists := ds.Debates[debateID]
+	if !exists {
+		return fmt.Errorf("debate %s not found", debateID)
+	}
+
+	nextRoundNum := len(deb.Rounds) + 1
+	deb.Rounds = append(deb.Rounds, DebateRound{
+		RoundNumber: nextRoundNum,
+		Arguments:   []Argument{},
+	})
+	deb.UpdatedAt = time.Now()
+	ds.Debates[debateID] = deb
+
+	return m.Save(ds)
 }
 
 // CastVote records an agent's formal vote on a debate proposal.
