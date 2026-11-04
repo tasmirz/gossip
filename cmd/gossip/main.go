@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -131,6 +132,9 @@ func main() {
 	case "assignments", "gsp:assignments":
 		dir := parseDirFlag(os.Args[2:])
 		runAssignments(dir)
+
+	case "resume", "reidentify", "gsp:resume":
+		runResume(os.Args[2:])
 
 	case "export-mcp", "mcp-export":
 		runExportMCP(os.Args[2:])
@@ -987,6 +991,146 @@ func runAssignments(customDir string) {
 	fmt.Print(matrix.RenderMarkdown())
 }
 
+func runResume(args []string) {
+	fs := flag.NewFlagSet("resume", flag.ExitOnError)
+	agentID := fs.String("agent", "", "Agent ID to re-identify (required)")
+	role := fs.String("role", "", "Role override (optional)")
+	sessionID := fs.String("session", "", "External session or conversation ID (optional)")
+	dir := fs.String("dir", "", "Custom gossip directory")
+	format := fs.String("format", "markdown", "Output format (markdown, json)")
+	_ = fs.Parse(args)
+
+	if *agentID == "" {
+		fmt.Fprintf(os.Stderr, "Error: --agent is required\nUsage: gossip resume --agent <id> [--role <role>] [--session <session_id>]\n")
+		os.Exit(1)
+	}
+
+	store, err := state.NewStore(*dir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	existing, found, err := store.GetAgent(*agentID)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error checking agent: %v\n", err)
+		os.Exit(1)
+	}
+
+	var timeAway time.Duration
+	sessionCount := 1
+	effectiveRole := *role
+	if found {
+		timeAway = time.Since(existing.LastHeartbeat)
+		sessionCount = existing.SessionCount + 1
+		if effectiveRole == "" {
+			effectiveRole = existing.Role
+		}
+	} else if effectiveRole == "" {
+		effectiveRole = "worker"
+	}
+
+	sess := state.AgentSession{
+		ID:           *agentID,
+		Role:         effectiveRole,
+		Status:       "active",
+		SessionID:    *sessionID,
+		SessionCount: sessionCount,
+	}
+	if found {
+		sess.Name = existing.Name
+		sess.Capabilities = existing.Capabilities
+		sess.CurrentTaskID = existing.CurrentTaskID
+	}
+
+	if err := store.RegisterAgent(sess); err != nil {
+		fmt.Fprintf(os.Stderr, "Error reidentifying agent: %v\n", err)
+		os.Exit(1)
+	}
+
+	msgMgr := messages.NewManager(store)
+	taskMgr := tasks.NewManager(store)
+	delibMgr := deliberation.NewManager(store)
+	sopMgr := sop.NewManager(store)
+
+	unreadMsgs, _ := msgMgr.ReadInbox(*agentID, effectiveRole, true, "", 20)
+	allTasks, _ := taskMgr.ListTasks("", "", *agentID)
+	var pendingTasks []tasks.Task
+	for _, t := range allTasks {
+		if t.Status != "done" {
+			pendingTasks = append(pendingTasks, t)
+		}
+	}
+
+	pTodos, _ := taskMgr.ListPersonalTodos(*agentID, "pending")
+	ipTodos, _ := taskMgr.ListPersonalTodos(*agentID, "in_progress")
+	activeTodos := append(pTodos, ipTodos...)
+
+	debates, _ := delibMgr.ListDebates("in_progress")
+	workflows, _ := sopMgr.ListWorkflows()
+	var activeWf *sop.SOPWorkflow
+	for i := range workflows {
+		if workflows[i].Status == "active" {
+			activeWf = &workflows[i]
+			break
+		}
+	}
+
+	timeAwayStr := "first session"
+	if found {
+		timeAwayStr = timeAway.Round(time.Second).String()
+	}
+
+	if *format == "json" {
+		briefing := map[string]interface{}{
+			"agent_id":        *agentID,
+			"role":            effectiveRole,
+			"session_count":   sessionCount,
+			"time_away":       timeAwayStr,
+			"unread_messages": len(unreadMsgs),
+			"assigned_tasks":  len(pendingTasks),
+			"personal_todos":  len(activeTodos),
+			"active_debates":  len(debates),
+			"status":          "active",
+		}
+		if activeWf != nil {
+			briefing["active_sop"] = map[string]interface{}{
+				"workflow_id":   activeWf.ID,
+				"template_name": activeWf.Template,
+				"current_stage": activeWf.Stages[activeWf.CurrentStageIndex].Name,
+			}
+		}
+		data, _ := json.MarshalIndent(briefing, "", "  ")
+		fmt.Println(string(data))
+		return
+	}
+
+	fmt.Printf("🔄 Agent Re-Identification Briefing: %s\n", *agentID)
+	fmt.Printf("  Role:            %s\n", effectiveRole)
+	fmt.Printf("  Session:         #%d (Time away: %s)\n", sessionCount, timeAwayStr)
+	fmt.Printf("  Assigned Tasks:  %d in progress/pending\n", len(pendingTasks))
+	for _, t := range pendingTasks {
+		fmt.Printf("    - [%s] (%s) %s\n", t.ID, t.Status, t.Title)
+	}
+	fmt.Printf("  Unread Messages: %d in inbox\n", len(unreadMsgs))
+	for _, m := range unreadMsgs {
+		fmt.Printf("    - From %s (%s): %s\n", m.From, m.Role, m.Subject)
+	}
+	fmt.Printf("  Personal To-Dos: %d active scratchpad items\n", len(activeTodos))
+	for _, td := range activeTodos {
+		fmt.Printf("    - [%s] (%s) %s\n", td.ID, td.Priority, td.Title)
+	}
+	if len(debates) > 0 {
+		fmt.Printf("  Active Debates:  %d awaiting consensus\n", len(debates))
+		for _, d := range debates {
+			fmt.Printf("    - [%s] (Round %d): %s\n", d.ID, len(d.Rounds), d.Title)
+		}
+	}
+	if activeWf != nil {
+		fmt.Printf("  Active SOP:      %s (Stage: %s)\n", activeWf.Template, activeWf.Stages[activeWf.CurrentStageIndex].Name)
+	}
+}
+
 func printHelp() {
 	fmt.Printf("%s\n", BannerArt)
 	fmt.Print(`Usage:
@@ -1017,6 +1161,7 @@ Commands:
   todo            List or add personal agent scratchpad to-dos (alias: gsp:my_todos)
   system-todos    View unified cross-system backlog (alias: gsp:system_todos)
   assignments     View Orchestrator task allocation & workload matrix (alias: gsp:assignments)
+  resume          Re-identify and resume agent session with instant catch-up briefing (alias: gsp:resume)
   export-mcp      Export MCP tool schemas (JSON) and instructions.md (alias: mcp-export)
   roles           Print complete directory of agent roles and directives
   send            Send a message to an agent, role, or broadcast to all

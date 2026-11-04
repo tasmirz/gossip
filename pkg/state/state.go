@@ -51,6 +51,8 @@ type AgentSession struct {
 	Status        string    `json:"status"` // active, idle, offline
 	RegisteredAt  time.Time `json:"registered_at"`
 	LastHeartbeat time.Time `json:"last_heartbeat"`
+	SessionCount  int       `json:"session_count,omitempty"`
+	SessionID     string    `json:"session_id,omitempty"`
 }
 
 // ProjectState holds the top-level goals and agent registry.
@@ -188,7 +190,7 @@ func (s *Store) SaveProjectState(state *ProjectState) error {
 	return s.AtomicWriteFile("state.json", data)
 }
 
-// RegisterAgent registers or updates an agent in state.json.
+// RegisterAgent registers or updates an agent in state.json, preserving registration history on re-identification.
 func (s *Store) RegisterAgent(session AgentSession) error {
 	unlock, err := s.Lock()
 	if err != nil {
@@ -202,9 +204,37 @@ func (s *Store) RegisterAgent(session AgentSession) error {
 	}
 
 	now := time.Now()
-	if session.RegisteredAt.IsZero() {
-		session.RegisteredAt = now
+	if existing, exists := st.Agents[session.ID]; exists {
+		// Re-identification in another session: preserve registration time, increment session count
+		if session.RegisteredAt.IsZero() {
+			session.RegisteredAt = existing.RegisteredAt
+		}
+		if session.SessionCount <= 0 {
+			session.SessionCount = existing.SessionCount + 1
+		}
+		if session.Role == "" {
+			session.Role = existing.Role
+		}
+		if session.Name == "" || session.Name == session.ID {
+			if existing.Name != "" {
+				session.Name = existing.Name
+			}
+		}
+		if len(session.Capabilities) == 0 {
+			session.Capabilities = existing.Capabilities
+		}
+		if session.CurrentTaskID == "" {
+			session.CurrentTaskID = existing.CurrentTaskID
+		}
+	} else {
+		if session.RegisteredAt.IsZero() {
+			session.RegisteredAt = now
+		}
+		if session.SessionCount <= 0 {
+			session.SessionCount = 1
+		}
 	}
+
 	session.LastHeartbeat = now
 	if session.Status == "" {
 		session.Status = "active"
@@ -212,6 +242,29 @@ func (s *Store) RegisterAgent(session AgentSession) error {
 
 	st.Agents[session.ID] = session
 	return s.SaveProjectState(st)
+}
+
+// GetAgent retrieves a single registered agent session by ID.
+func (s *Store) GetAgent(agentID string) (AgentSession, bool, error) {
+	unlock, err := s.Lock()
+	if err != nil {
+		return AgentSession{}, false, err
+	}
+	defer unlock()
+
+	st, err := s.LoadProjectState()
+	if err != nil {
+		return AgentSession{}, false, err
+	}
+
+	sess, exists := st.Agents[agentID]
+	if !exists {
+		return AgentSession{}, false, nil
+	}
+	if time.Since(sess.LastHeartbeat) > 15*time.Minute && sess.Status == "active" {
+		sess.Status = "offline"
+	}
+	return sess, true, nil
 }
 
 // Heartbeat refreshes the last seen timestamp of an agent.
