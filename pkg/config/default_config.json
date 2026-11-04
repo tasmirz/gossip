@@ -1,0 +1,30 @@
+{
+  "version": "1.0.0",
+  "storage": {
+    "default_dir": ".local/gossip",
+    "lock_file": ".lock"
+  },
+  "roles": {
+    "config_file": "roles.json",
+    "allow_dynamic_registration": true
+  },
+  "messages": {
+    "log_file": "messages.jsonl",
+    "max_inbox_limit": 50,
+    "max_buffer_bytes": 4194304
+  },
+  "tasks": {
+    "data_file": "tasks.json",
+    "board_file": "BOARD.md",
+    "auto_unblock": true
+  },
+  "graph": {
+    "data_file": "graph.json",
+    "report_file": "GRAPH_REPORT.md",
+    "default_neighborhood_depth": 1,
+    "max_neighborhood_depth": 3
+  },
+  "agents": {
+    "heartbeat_timeout_seconds": 900
+  }
+}

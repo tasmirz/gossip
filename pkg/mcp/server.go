@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -17,20 +18,30 @@ import (
 
 // Server encapsulates the Gossip MCP server and underlying subsystems.
 type Server struct {
-	mcpServer *server.MCPServer
-	store     *state.Store
-	messages  *messages.Manager
-	tasks     *tasks.Manager
-	graph     *graph.Manager
+	mcpServer    *server.MCPServer
+	store        *state.Store
+	messages     *messages.Manager
+	tasks        *tasks.Manager
+	graph        *graph.Manager
+	roleProvider roles.Provider
 }
 
-// NewServer instantiates the MCP server and registers all tools.
-func NewServer(store *state.Store) *Server {
+// NewServer instantiates the MCP server and registers all tools (SOLID Dependency Inversion).
+func NewServer(store *state.Store, roleProv roles.Provider) *Server {
+	if roleProv == nil {
+		var err error
+		roleProv, err = roles.NewService(store.Dir(), "")
+		if err != nil {
+			roleProv = roles.GetDefaultService()
+		}
+	}
+
 	s := &Server{
-		store:    store,
-		messages: messages.NewManager(store),
-		tasks:    tasks.NewManager(store),
-		graph:    graph.NewManager(store),
+		store:        store,
+		messages:     messages.NewManager(store),
+		tasks:        tasks.NewManager(store),
+		graph:        graph.NewManager(store),
+		roleProvider: roleProv,
 	}
 
 	mcpSrv := server.NewMCPServer(
@@ -213,21 +224,72 @@ func (s *Server) registerRoleTools() {
 	// gossip_get_role_definition
 	s.mcpServer.AddTool(mcp.NewTool("gossip_get_role_definition",
 		mcp.WithDescription("Retrieve system prompt, responsibilities, guidelines, and recommended tools for a specific role"),
-		mcp.WithString("role_id", mcp.Required(), mcp.Description("Role ID: orchestrator, worker, network_engineer, math_expert, systems_architect, security_specialist, qa_engineer, researcher")),
+		mcp.WithString("role_id", mcp.Required(), mcp.Description("Role ID (loaded dynamically from JSON)")),
 	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		roleID := getString(getArgsMap(req), "role_id")
-		r, ok := roles.GetRole(roleID)
+		r, ok := s.roleProvider.GetRole(roleID)
 		if !ok {
-			return mcp.NewToolResultError(fmt.Sprintf("unknown role '%s'. Available: orchestrator, worker, network_engineer, math_expert, systems_architect, security_specialist, qa_engineer, researcher", roleID)), nil
+			return mcp.NewToolResultError(fmt.Sprintf("unknown role '%s'. Call gossip_list_roles to see available roles loaded from JSON", roleID)), nil
 		}
 		return toJSONText(r)
 	})
 
 	// gossip_list_roles
 	s.mcpServer.AddTool(mcp.NewTool("gossip_list_roles",
-		mcp.WithDescription("List all available specialist roles and their behavioral directives in Markdown"),
+		mcp.WithDescription("List all available specialist roles loaded dynamically from JSON in Markdown"),
 	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		return mcp.NewToolResultText(roles.FormatRoleSummary()), nil
+		return mcp.NewToolResultText(s.roleProvider.FormatRoleSummary()), nil
+	})
+
+	// gossip_register_custom_role
+	s.mcpServer.AddTool(mcp.NewTool("gossip_register_custom_role",
+		mcp.WithDescription("Dynamically define and register a new custom agent role at runtime (stored in JSON)"),
+		mcp.WithString("id", mcp.Required(), mcp.Description("Unique role identifier (e.g. 'devops_engineer', 'quantum_expert')")),
+		mcp.WithString("title", mcp.Required(), mcp.Description("Human-readable role title")),
+		mcp.WithString("category", mcp.Description("Category: 'management', 'engineering', 'specialist', 'assurance'")),
+		mcp.WithString("description", mcp.Required(), mcp.Description("Detailed description of role responsibilities")),
+		mcp.WithString("system_prompt", mcp.Required(), mcp.Description("System prompt and operational persona")),
+		mcp.WithArray("directives", mcp.Description("List of behavioral rules/directives")),
+		mcp.WithArray("recommended_tools", mcp.Description("List of recommended MCP tools")),
+		mcp.WithArray("capability_tags", mcp.Description("List of capability tags")),
+	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		args := getArgsMap(req)
+		id := getString(args, "id")
+		title := getString(args, "title")
+		cat := getString(args, "category")
+		desc := getString(args, "description")
+		prompt := getString(args, "system_prompt")
+		directives := getStringSlice(args, "directives")
+		tools := getStringSlice(args, "recommended_tools")
+		tags := getStringSlice(args, "capability_tags")
+
+		if id == "" || title == "" || desc == "" || prompt == "" {
+			return mcp.NewToolResultError("'id', 'title', 'description', and 'system_prompt' are required"), nil
+		}
+		if cat == "" {
+			cat = "specialist"
+		}
+
+		customRole := roles.RoleDefinition{
+			ID:               id,
+			Title:            title,
+			Category:         cat,
+			Description:      desc,
+			SystemPrompt:     prompt,
+			Directives:       directives,
+			RecommendedTools: tools,
+			CapabilityTags:   tags,
+		}
+
+		if err := s.roleProvider.RegisterRole(customRole); err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("failed to register custom role: %v", err)), nil
+		}
+
+		// Save updated roles to project storage directory roles.json
+		rolesPath := filepath.Join(s.store.Dir(), "roles.json")
+		_ = s.roleProvider.SaveToFile(rolesPath)
+
+		return mcp.NewToolResultText(fmt.Sprintf("Custom role '%s' successfully registered and saved to %s", id, rolesPath)), nil
 	})
 }
 

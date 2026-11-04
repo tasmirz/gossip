@@ -99,7 +99,8 @@ func runMCPServer(customDir string) {
 		os.Exit(1)
 	}
 
-	srv := mcp.NewServer(store)
+	roleSrv, _ := roles.NewService(store.Dir(), "")
+	srv := mcp.NewServer(store, roleSrv)
 	if err := srv.ServeStdio(); err != nil {
 		fmt.Fprintf(os.Stderr, "Gossip MCP server error: %v\n", err)
 		os.Exit(1)
@@ -123,6 +124,10 @@ func runInit(customDir string) {
 		fmt.Fprintf(os.Stderr, "Error saving state: %v\n", err)
 		os.Exit(1)
 	}
+
+	// Initialize roles JSON file
+	roleSrv, _ := roles.NewService(store.Dir(), "")
+	_ = roleSrv.SaveToFile(filepath.Join(store.Dir(), "roles.json"))
 
 	// Initialize tasks manager & board
 	tm := tasks.NewManager(store)
@@ -162,6 +167,7 @@ func runInit(customDir string) {
 	fmt.Printf("  ├── tasks.json\n")
 	fmt.Printf("  ├── messages.jsonl\n")
 	fmt.Printf("  ├── graph.json\n")
+	fmt.Printf("  ├── roles.json (JSON-driven role specifications)\n")
 	fmt.Printf("  ├── BOARD.md\n")
 	fmt.Printf("  └── GRAPH_REPORT.md\n\n")
 	fmt.Printf("Ready for multi-agent collaboration!\n")

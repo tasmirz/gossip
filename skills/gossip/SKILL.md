@@ -131,6 +131,7 @@ All state is persisted under `.local/gossip/` inside the current project root:
 - `tasks.json`: Task DAG, blocker lists, assignees, progress logs, and deliverables.
 - `messages.jsonl`: Append-only audit ledger of every message sent between agents.
 - `graph.json`: Knowledge graph nodes and edges.
+- `roles.json`: JSON-driven role definitions, directives, prompts, and tools (extensible dynamically).
 - `BOARD.md`: Automatically rendered Markdown Kanban board showing goals and lanes.
 - `GRAPH_REPORT.md`: Automatically rendered knowledge analysis summarizing core hubs and proofs.
 
@@ -144,7 +145,8 @@ All state is persisted under `.local/gossip/` inside the current project root:
 | `gossip_list_agents` | _(none)_ | See who is online, idle, or working on what. |
 | `gossip_heartbeat` | `agent_id`, `current_task_id`, `status` | Keep session alive and report current task. |
 | `gossip_get_role_definition`| `role_id` | Read system prompt and directives for a role. |
-| `gossip_list_roles` | _(none)_ | List all specialist roles. |
+| `gossip_list_roles` | _(none)_ | List all specialist roles loaded from JSON. |
+| `gossip_register_custom_role`| `id`, `title`, `description`, `system_prompt` | Dynamically register a new custom role in JSON. |
 | `gossip_send_message` | `from`, `role`, `to`, `subject`, `content` | Send point-to-point or role message. |
 | `gossip_broadcast_message`| `from`, `role`, `content`, `subject` | Broadcast announcement to all agents. |
 | `gossip_read_inbox` | `agent_id`, `role`, `only_unread`, `limit` | Check incoming communications. |

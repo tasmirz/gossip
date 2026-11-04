@@ -56,9 +56,16 @@ flowchart TB
 
 ---
 
-## 🎭 Specialist Role Taxonomy
+## 🎭 JSON-Driven Role Taxonomy (SOLID Design)
 
-Each role in Gossip is defined with deep domain directives, system prompts, and recommended tool configurations:
+Roles in Gossip are **never hardcoded in Go source code**. They are dynamically loaded from `roles.json` (`config/roles.json` or `.local/gossip/roles.json`) and can be extended at runtime by agents or operators without recompiling.
+
+Adhering strictly to **SOLID Principles**:
+- **Single Responsibility (SRP)**: Distinct subsystems handle storage locking (`pkg/state`), role schema resolution (`pkg/roles`), task DAG evaluation (`pkg/tasks`), and graph traversal (`pkg/graph`).
+- **Open/Closed (OCP)**: New roles and node types can be registered dynamically via JSON or the `gossip_register_custom_role` tool without altering existing code.
+- **Liskov Substitution (LSP)**: Interface contracts (`roles.Provider`, `tasks.Manager`, `state.Store`) can be swapped or extended without breaking higher-level consumers.
+- **Interface Segregation (ISP)**: Interfaces are strictly partitioned by capability (Agent Registry vs Task Engine vs RAG).
+- **Dependency Inversion (DIP)**: The MCP server and CLI depend on abstract service interfaces injected at construction time.
 
 | Role ID | Title | Specialization & Behavioral Directives | Focus Areas |
 | :--- | :--- | :--- | :--- |
@@ -73,14 +80,15 @@ Each role in Gossip is defined with deep domain directives, system prompts, and 
 
 ---
 
-## 🛠️ MCP Tool Directory (23 Granular Tools)
+## 🛠️ MCP Tool Directory (24 Granular Tools)
 
 ### 1. Identity & Role Tools
 - `gossip_register_agent`: Join the active gossip mesh with agent ID, role, capabilities, and active task.
 - `gossip_list_agents`: List all active agents, their statuses, tasks, and last heartbeats.
 - `gossip_heartbeat`: Refresh session timestamp and update current task or status.
 - `gossip_get_role_definition`: Fetch complete system prompt, directives, and tool recommendations for any role.
-- `gossip_list_roles`: View markdown directory of all roles.
+- `gossip_list_roles`: View markdown directory of all roles loaded dynamically from JSON.
+- `gossip_register_custom_role`: Dynamically define and register a new custom agent role at runtime in JSON.
 
 ### 2. Inter-Agent Messaging Tools
 - `gossip_send_message`: Send point-to-point message (`agent:<id>`), role-targeted message (`role:<role_id>`), or broadcast (`all`).
