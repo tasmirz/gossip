@@ -24,6 +24,12 @@ func TestCLICommands(t *testing.T) {
 	// Test tasks
 	runTasks(tmpDir)
 
+	// Test debates
+	runDebates(tmpDir)
+
+	// Test probes
+	runProbes(tmpDir)
+
 	// Test report
 	runReport(tmpDir)
 }

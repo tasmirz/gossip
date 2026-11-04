@@ -9,6 +9,7 @@ import (
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
+	"github.com/tasmirz/gossip/pkg/deliberation"
 	"github.com/tasmirz/gossip/pkg/graph"
 	"github.com/tasmirz/gossip/pkg/messages"
 	"github.com/tasmirz/gossip/pkg/roles"
@@ -18,12 +19,13 @@ import (
 
 // Server encapsulates the Gossip MCP server and underlying subsystems.
 type Server struct {
-	mcpServer    *server.MCPServer
-	store        *state.Store
-	messages     *messages.Manager
-	tasks        *tasks.Manager
-	graph        *graph.Manager
-	roleProvider roles.Provider
+	mcpServer     *server.MCPServer
+	store         *state.Store
+	messages      *messages.Manager
+	tasks         *tasks.Manager
+	graph         *graph.Manager
+	deliberations *deliberation.Manager
+	roleProvider  roles.Provider
 }
 
 // NewServer instantiates the MCP server and registers all tools (SOLID Dependency Inversion).
@@ -37,11 +39,12 @@ func NewServer(store *state.Store, roleProv roles.Provider) *Server {
 	}
 
 	s := &Server{
-		store:        store,
-		messages:     messages.NewManager(store),
-		tasks:        tasks.NewManager(store),
-		graph:        graph.NewManager(store),
-		roleProvider: roleProv,
+		store:         store,
+		messages:      messages.NewManager(store),
+		tasks:         tasks.NewManager(store),
+		graph:         graph.NewManager(store),
+		deliberations: deliberation.NewManager(store),
+		roleProvider:  roleProv,
 	}
 
 	mcpSrv := server.NewMCPServer(
@@ -65,6 +68,7 @@ func (s *Server) registerTools() {
 	s.registerMessageTools()
 	s.registerTaskTools()
 	s.registerGraphTools()
+	s.registerDeliberationTools()
 }
 
 // --- Helper Functions for Extracting Tool Arguments ---
@@ -731,5 +735,251 @@ func (s *Server) registerGraphTools() {
 			return mcp.NewToolResultError(fmt.Sprintf("failed to generate report: %v", err)), nil
 		}
 		return mcp.NewToolResultText(report), nil
+	})
+}
+
+// --- Multi-Agent Debate, Review & Red Teaming Tools ---
+
+func (s *Server) registerDeliberationTools() {
+	// gossip_start_debate
+	s.mcpServer.AddTool(mcp.NewTool("gossip_start_debate",
+		mcp.WithDescription("Open a multi-agent debate session on an architectural choice, controversial design, or proposal"),
+		mcp.WithString("title", mcp.Required(), mcp.Description("Debate title or motion")),
+		mcp.WithString("description", mcp.Required(), mcp.Description("Detailed problem statement and proposed approach")),
+		mcp.WithString("proposer", mcp.Required(), mcp.Description("Agent ID proposing the motion")),
+		mcp.WithString("role", mcp.Required(), mcp.Description("Proposer's role")),
+	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		args := getArgsMap(req)
+		title := getString(args, "title")
+		desc := getString(args, "description")
+		proposer := getString(args, "proposer")
+		role := getString(args, "role")
+
+		if title == "" || desc == "" || proposer == "" || role == "" {
+			return mcp.NewToolResultError("'title', 'description', 'proposer', and 'role' are required"), nil
+		}
+
+		deb, err := s.deliberations.StartDebate(title, desc, proposer, role)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("failed to start debate: %v", err)), nil
+		}
+
+		return toJSONText(deb)
+	})
+
+	// gossip_post_argument
+	s.mcpServer.AddTool(mcp.NewTool("gossip_post_argument",
+		mcp.WithDescription("Post an argument in an active multi-agent debate (pro, con, critique, rebuttal, or neutral)"),
+		mcp.WithString("debate_id", mcp.Required(), mcp.Description("ID of the debate")),
+		mcp.WithString("agent_id", mcp.Required(), mcp.Description("Agent ID posting the argument")),
+		mcp.WithString("role", mcp.Required(), mcp.Description("Agent's role")),
+		mcp.WithString("stance", mcp.Required(), mcp.Description("Stance: 'pro', 'con', 'critique', 'rebuttal', 'neutral'")),
+		mcp.WithString("content", mcp.Required(), mcp.Description("Detailed argument, evidence, or algorithmic justification")),
+	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		args := getArgsMap(req)
+		debateID := getString(args, "debate_id")
+		agentID := getString(args, "agent_id")
+		role := getString(args, "role")
+		stance := getString(args, "stance")
+		content := getString(args, "content")
+
+		if debateID == "" || agentID == "" || role == "" || stance == "" || content == "" {
+			return mcp.NewToolResultError("debate_id, agent_id, role, stance, and content are required"), nil
+		}
+
+		arg, err := s.deliberations.PostArgument(debateID, agentID, role, stance, content)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("failed to post argument: %v", err)), nil
+		}
+
+		return toJSONText(arg)
+	})
+
+	// gossip_cast_vote
+	s.mcpServer.AddTool(mcp.NewTool("gossip_cast_vote",
+		mcp.WithDescription("Cast a formal vote on an active debate or proposal"),
+		mcp.WithString("debate_id", mcp.Required(), mcp.Description("ID of the debate")),
+		mcp.WithString("agent_id", mcp.Required(), mcp.Description("Agent ID voting")),
+		mcp.WithString("role", mcp.Required(), mcp.Description("Voter's role")),
+		mcp.WithString("choice", mcp.Required(), mcp.Description("Vote choice: 'accept', 'reject', or 'abstain'")),
+		mcp.WithInteger("confidence", mcp.Description("Confidence level from 1 to 5 (default: 3)")),
+		mcp.WithString("reasoning", mcp.Description("Rationale for this vote")),
+	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		args := getArgsMap(req)
+		debateID := getString(args, "debate_id")
+		agentID := getString(args, "agent_id")
+		role := getString(args, "role")
+		choice := getString(args, "choice")
+		confidence := getInt(args, "confidence", 3)
+		reasoning := getString(args, "reasoning")
+
+		if debateID == "" || agentID == "" || role == "" || choice == "" {
+			return mcp.NewToolResultError("debate_id, agent_id, role, and choice are required"), nil
+		}
+
+		vote, err := s.deliberations.CastVote(debateID, agentID, role, choice, confidence, reasoning)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("failed to cast vote: %v", err)), nil
+		}
+
+		return toJSONText(vote)
+	})
+
+	// gossip_conclude_debate
+	s.mcpServer.AddTool(mcp.NewTool("gossip_conclude_debate",
+		mcp.WithDescription("Conclude a debate, tally votes, establish consensus, and record the final resolution"),
+		mcp.WithString("debate_id", mcp.Required(), mcp.Description("ID of the debate to conclude")),
+		mcp.WithString("resolved_by", mcp.Required(), mcp.Description("Arbiter/Critic agent ID concluding the debate")),
+		mcp.WithString("summary", mcp.Required(), mcp.Description("Executive summary of deliberation and consensus")),
+		mcp.WithString("adopted_decision", mcp.Description("Adopted architectural decision or policy to register")),
+	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		args := getArgsMap(req)
+		debateID := getString(args, "debate_id")
+		resolvedBy := getString(args, "resolved_by")
+		summary := getString(args, "summary")
+		adoptedDecision := getString(args, "adopted_decision")
+
+		if debateID == "" || resolvedBy == "" || summary == "" {
+			return mcp.NewToolResultError("debate_id, resolved_by, and summary are required"), nil
+		}
+
+		res, err := s.deliberations.ConcludeDebate(debateID, resolvedBy, summary, adoptedDecision)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("failed to conclude debate: %v", err)), nil
+		}
+
+		// If an adopted decision was formulated, register it automatically in the knowledge graph!
+		if adoptedDecision != "" {
+			_, _ = s.graph.AddNode(graph.Node{
+				ID:        fmt.Sprintf("decision:%s", debateID),
+				Type:      graph.TypeDecision,
+				Label:     fmt.Sprintf("Consensus Decision (%s)", debateID),
+				Summary:   fmt.Sprintf("%s\n\nAdopted: %s", summary, adoptedDecision),
+				Tags:      []string{"consensus", "debate", "decision"},
+				CreatedBy: resolvedBy,
+			})
+		}
+
+		return toJSONText(res)
+	})
+
+	// gossip_request_review
+	s.mcpServer.AddTool(mcp.NewTool("gossip_request_review",
+		mcp.WithDescription("Request a formal peer review or critique cycle on a task, artifact, or code file"),
+		mcp.WithString("target_type", mcp.Required(), mcp.Description("Target: 'task', 'file', 'artifact', 'decision'")),
+		mcp.WithString("target_id", mcp.Required(), mcp.Description("Identifier of target (e.g. 'task-1', 'pkg/tasks/tasks.go')")),
+		mcp.WithString("author_id", mcp.Required(), mcp.Description("Author agent ID")),
+		mcp.WithString("reviewer_id", mcp.Required(), mcp.Description("Reviewer agent ID (or role:qa_engineer / role:red_team)")),
+	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		args := getArgsMap(req)
+		targetType := getString(args, "target_type")
+		targetID := getString(args, "target_id")
+		authorID := getString(args, "author_id")
+		reviewerID := getString(args, "reviewer_id")
+
+		if targetType == "" || targetID == "" || authorID == "" || reviewerID == "" {
+			return mcp.NewToolResultError("target_type, target_id, author_id, and reviewer_id are required"), nil
+		}
+
+		rev, err := s.deliberations.RequestReview(targetType, targetID, authorID, reviewerID)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("failed to request review: %v", err)), nil
+		}
+
+		return toJSONText(rev)
+	})
+
+	// gossip_submit_review
+	s.mcpServer.AddTool(mcp.NewTool("gossip_submit_review",
+		mcp.WithDescription("Submit structured review findings, critique, and formal verdict on a pending review"),
+		mcp.WithString("review_id", mcp.Required(), mcp.Description("ID of the review")),
+		mcp.WithString("reviewer_id", mcp.Required(), mcp.Description("Reviewer agent ID")),
+		mcp.WithString("status", mcp.Required(), mcp.Description("Verdict status: 'approved', 'changes_requested', 'rejected'")),
+		mcp.WithString("verdict", mcp.Required(), mcp.Description("Review summary evaluation")),
+	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		args := getArgsMap(req)
+		reviewID := getString(args, "review_id")
+		reviewerID := getString(args, "reviewer_id")
+		status := getString(args, "status")
+		verdict := getString(args, "verdict")
+
+		if reviewID == "" || reviewerID == "" || status == "" || verdict == "" {
+			return mcp.NewToolResultError("review_id, reviewer_id, status, and verdict are required"), nil
+		}
+
+		rev, err := s.deliberations.SubmitReview(reviewID, reviewerID, status, verdict, nil)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("failed to submit review: %v", err)), nil
+		}
+
+		return toJSONText(rev)
+	})
+
+	// gossip_log_red_team_probe
+	s.mcpServer.AddTool(mcp.NewTool("gossip_log_red_team_probe",
+		mcp.WithDescription("Log an adversarial red-team penetration, fuzzing vector, concurrency race, or boundary exploit"),
+		mcp.WithString("target", mcp.Required(), mcp.Description("Component, protocol, or file under test")),
+		mcp.WithString("threat_category", mcp.Required(), mcp.Description("Threat category: 'concurrency_race', 'dos', 'boundary_overflow', 'tampering', 'spoofing', 'logic_bypass'")),
+		mcp.WithString("attacker_id", mcp.Required(), mcp.Description("Red team agent ID")),
+		mcp.WithString("attack_vector", mcp.Required(), mcp.Description("Description of exploit or edge-case break scenario")),
+		mcp.WithString("poc_payload", mcp.Description("Minimal reproduction payload or reproduction command")),
+		mcp.WithString("status", mcp.Description("Status: 'vulnerable', 'mitigated', 'false_positive' (default: 'vulnerable')")),
+		mcp.WithString("remediation_task_id", mcp.Description("Linked task ID to remediate this vulnerability")),
+	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		args := getArgsMap(req)
+		target := getString(args, "target")
+		threatCat := getString(args, "threat_category")
+		attackerID := getString(args, "attacker_id")
+		attackVec := getString(args, "attack_vector")
+		poc := getString(args, "poc_payload")
+		status := getString(args, "status")
+		remediationTask := getString(args, "remediation_task_id")
+
+		if target == "" || threatCat == "" || attackerID == "" || attackVec == "" {
+			return mcp.NewToolResultError("target, threat_category, attacker_id, and attack_vector are required"), nil
+		}
+
+		probe, err := s.deliberations.LogRedTeamProbe(target, threatCat, attackerID, attackVec, poc, status, remediationTask)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("failed to log red team probe: %v", err)), nil
+		}
+
+		return toJSONText(probe)
+	})
+
+	// gossip_list_deliberations
+	s.mcpServer.AddTool(mcp.NewTool("gossip_list_deliberations",
+		mcp.WithDescription("List debates, peer reviews, and red team probes with optional filtering"),
+		mcp.WithString("type", mcp.Description("Filter by type: 'debates', 'reviews', 'probes', or 'all' (default: 'all')")),
+		mcp.WithString("status", mcp.Description("Optional status filter")),
+	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		args := getArgsMap(req)
+		delibType := getString(args, "type")
+		status := getString(args, "status")
+
+		resp := make(map[string]any)
+
+		if delibType == "" || delibType == "all" || delibType == "debates" {
+			debates, err := s.deliberations.ListDebates(status)
+			if err == nil {
+				resp["debates"] = debates
+			}
+		}
+
+		if delibType == "" || delibType == "all" || delibType == "reviews" {
+			reviews, err := s.deliberations.ListReviews(status)
+			if err == nil {
+				resp["reviews"] = reviews
+			}
+		}
+
+		if delibType == "" || delibType == "all" || delibType == "probes" {
+			probes, err := s.deliberations.ListProbes(status)
+			if err == nil {
+				resp["probes"] = probes
+			}
+		}
+
+		return toJSONText(resp)
 	})
 }

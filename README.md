@@ -80,24 +80,34 @@ Adhering strictly to **SOLID Principles**:
 
 ---
 
-## 🛠️ MCP Tool Directory (24 Granular Tools)
+## 🛠️ MCP Tool Directory (32 Granular Tools)
 
-### 1. Identity & Role Tools
-- `gossip_register_agent`: Join the active gossip mesh with agent ID, role, capabilities, and active task.
+### 1. Identity, Roles & Multi-Instance Management
+- `gossip_register_agent`: Join the active gossip mesh with agent ID, role, capabilities, and active task. Supports multiple instances per role (e.g. `worker-1`, `worker-2`, `red-team-1`, `red-team-2`).
 - `gossip_list_agents`: List all active agents, their statuses, tasks, and last heartbeats.
 - `gossip_heartbeat`: Refresh session timestamp and update current task or status.
 - `gossip_get_role_definition`: Fetch complete system prompt, directives, and tool recommendations for any role.
 - `gossip_list_roles`: View markdown directory of all roles loaded dynamically from JSON.
 - `gossip_register_custom_role`: Dynamically define and register a new custom agent role at runtime in JSON.
 
-### 2. Inter-Agent Messaging Tools
+### 2. Multi-Agent Deliberations: Debating, Voting, Peer Review & Red Teaming
+- `gossip_start_debate`: Open a structured multi-agent debate session on an architectural trade-off or controversial proposal.
+- `gossip_post_argument`: Post a pro, con, critique, rebuttal, or neutral argument in an active debate round.
+- `gossip_cast_vote`: Cast a formal vote on a debate proposal with confidence level (1-5) and rationale.
+- `gossip_conclude_debate`: Tally votes, determine consensus outcome, and automatically record the adopted decision in the knowledge graph.
+- `gossip_request_review`: Request formal peer review or red-team critique on a task, artifact, or code file.
+- `gossip_submit_review`: Submit structured review findings (`minor`, `major`, `critical`) and issue a formal verdict.
+- `gossip_log_red_team_probe`: Log an adversarial exploit, boundary attack, or data race with reproduction payloads and link a remediation task.
+- `gossip_list_deliberations`: List active or historical debates, peer reviews, and red team probes.
+
+### 3. Inter-Agent Messaging Tools
 - `gossip_send_message`: Send point-to-point message (`agent:<id>`), role-targeted message (`role:<role_id>`), or broadcast (`all`).
 - `gossip_broadcast_message`: Broadcast high-priority announcements to all agents.
 - `gossip_read_inbox`: Retrieve incoming messages filtered by agent ID, role, unread status, or thread ID.
 - `gossip_mark_messages_read`: Mark messages as acknowledged.
 - `gossip_list_threads`: Inspect active multi-agent conversation threads.
 
-### 3. Shared Source of Truth: Goals & Tasks
+### 4. Shared Source of Truth: Goals & Tasks
 - `gossip_set_goal`: Define project objectives and milestone checkpoints.
 - `gossip_get_goals`: Retrieve active goals and milestone completion status.
 - `gossip_create_task`: Create a task in the DAG with dependencies (`blocked_by`), priority, and role assignee.
@@ -106,7 +116,7 @@ Adhering strictly to **SOLID Principles**:
 - `gossip_get_task`: Retrieve full task specification, dependencies, and history notes.
 - `gossip_render_board`: Regenerate and return the live Markdown Kanban board (`BOARD.md`).
 
-### 4. Graphify-Style Shared RAG Space (Knowledge Graph)
+### 5. Graphify-Style Shared RAG Space (Knowledge Graph)
 - `gossip_rag_add_node`: Add a concept, file, symbol, decision, constraint, or formal proof.
 - `gossip_rag_add_edge`: Connect entities with typed relationships (`depends_on`, `implements`, `verifies`, `calls`, `solves`, `conflicts_with`) and provenance (`EXTRACTED` vs `INFERRED`).
 - `gossip_rag_query`: Search graph using keywords, type filter, and tag filter with relevance scoring.
@@ -193,6 +203,12 @@ gossip report
 
 # List tasks in terminal table format
 gossip tasks
+
+# List active and past debates with vote tallies
+gossip debates
+
+# List adversarial red team security probes
+gossip probes
 
 # Send a message directly from terminal
 gossip send --from dev_terminal --role orchestrator --to role:math_expert --msg "Please analyze time complexity of partition algorithm"
