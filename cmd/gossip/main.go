@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/tasmirz/gossip/pkg/deliberation"
 	"github.com/tasmirz/gossip/pkg/graph"
 	"github.com/tasmirz/gossip/pkg/mcp"
 	"github.com/tasmirz/gossip/pkg/messages"
@@ -60,6 +61,14 @@ func main() {
 	case "tasks":
 		dir := parseDirFlag(os.Args[2:])
 		runTasks(dir)
+
+	case "debates":
+		dir := parseDirFlag(os.Args[2:])
+		runDebates(dir)
+
+	case "probes":
+		dir := parseDirFlag(os.Args[2:])
+		runProbes(dir)
 
 	case "roles":
 		fmt.Println(roles.FormatRoleSummary())
@@ -280,6 +289,58 @@ func runTasks(customDir string) {
 	}
 }
 
+func runDebates(customDir string) {
+	store, err := state.NewStore(customDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	dm := deliberation.NewManager(store)
+	list, err := dm.ListDebates("")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error reading debates: %v\n", err)
+		os.Exit(1)
+	}
+
+	if len(list) == 0 {
+		fmt.Println("No active or past debates found.")
+		return
+	}
+
+	fmt.Printf("%-10s %-14s %-20s %s\n", "ID", "STATUS", "PROPOSER", "TITLE")
+	fmt.Println(strings.Repeat("-", 75))
+	for _, d := range list {
+		fmt.Printf("%-10s %-14s %-20s %s\n", d.ID, strings.ToUpper(d.Status), d.Proposer, d.Title)
+	}
+}
+
+func runProbes(customDir string) {
+	store, err := state.NewStore(customDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	dm := deliberation.NewManager(store)
+	list, err := dm.ListProbes("")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error reading probes: %v\n", err)
+		os.Exit(1)
+	}
+
+	if len(list) == 0 {
+		fmt.Println("No red team security probes logged.")
+		return
+	}
+
+	fmt.Printf("%-10s %-14s %-16s %-22s %s\n", "ID", "STATUS", "ATTACKER", "THREAT", "TARGET")
+	fmt.Println(strings.Repeat("-", 85))
+	for _, p := range list {
+		fmt.Printf("%-10s %-14s %-16s %-22s %s\n", p.ID, strings.ToUpper(p.Status), p.AttackerID, p.ThreatCategory, p.Target)
+	}
+}
+
 func runSend(args []string) {
 	fs := flag.NewFlagSet("send", flag.ExitOnError)
 	from := fs.String("from", "cli-user", "Sender ID")
@@ -323,6 +384,8 @@ Commands:
   board           Print the live Markdown Kanban board (BOARD.md)
   report          Print the Graphify-style knowledge graph report (GRAPH_REPORT.md)
   tasks           List all tasks in table format
+  debates         List multi-agent debates and voting sessions
+  probes          List adversarial red-team security probes
   roles           Print complete directory of agent roles and directives
   send            Send a message to an agent, role, or broadcast to all
   version         Show Gossip version

@@ -23,6 +23,10 @@ When participating in a Gossip mesh, each agent assumes a specialized role:
 | `security_specialist` | Security & Vulnerability Auditor | Threat modeling (STRIDE), input sanitization, directory traversal defense, cryptographically secure randomness, deserialization safety, DoS protection. |
 | `qa_engineer` | Verification & Test Specialist | Authors deterministic unit and integration test harnesses, edge cases (empty, boundary, overflow), invariant assertions, race condition detection (`-race`). |
 | `researcher` | Codebase & External Researcher | Explores documentation, RFC standards, existing code patterns, and populates the knowledge graph with verified facts (`EXTRACTED`) and insights (`INFERRED`). |
+| `red_team` | Adversarial Red Team Specialist | Aggressively probes edge cases, injects data races, fuzzes inputs, seeks denial-of-service conditions, and stress-tests architectural assumptions. |
+| `critic` | Independent Critic & Consensus Arbiter | Evaluates debates impartially, identifies hidden trade-offs, tallies consensus votes, and commits decisions to the shared knowledge graph. |
+
+> **Dynamic Role Creation & Multiple Instances**: The orchestrator can define custom project roles dynamically using `gossip_register_custom_role` (persisted to `roles.json`). Multiple concurrent instances of any role can be spawned simultaneously (e.g., `worker-1`, `worker-2`, `red-team-alpha`, `red-team-beta`).
 
 ---
 
@@ -123,21 +127,44 @@ Instead of dumping megabytes of text into context, record and query concepts, fi
 
 ---
 
-## 3. Storage Architecture (`.local/gossip`)
+## 3. Deliberations: Debates, Voting, Peer Review & Red Teaming
+
+Gossip incorporates formal dialectic and adversarial testing protocols:
+
+### A. Multi-Agent Debate (MAD) & Voting
+When facing architectural trade-offs, any agent can launch a debate session:
+1. **Open a Debate**: `gossip_start_debate({"title": "Zero-Copy vs JSON-RPC", "description": "Evaluate binary framing vs JSON payload overhead", "proposer": "net-1", "role": "network_engineer"})`
+2. **Post Arguments**: `gossip_post_argument({"debate_id": "deb-1", "agent_id": "math-1", "role": "math_expert", "stance": "critique", "content": "Binary framing reduces heap allocations from O(N) to O(1)."})`
+3. **Vote & Consensus**: Agents vote with confidence ratings (1-5): `gossip_cast_vote({"debate_id": "deb-1", "agent_id": "sec-1", "role": "security_specialist", "choice": "accept", "confidence": 5, "reasoning": "Limits memory exhaustion attacks."})`
+4. **Conclude & Commit**: Arbiter concludes debate, which automatically records the adopted consensus into the knowledge graph: `gossip_conclude_debate({"debate_id": "deb-1", "resolved_by": "critic-1", "summary": "Unanimous consensus for binary framing", "adopted_decision": "ADR-007"})`
+
+### B. Peer Review & Critique Cycles
+Before a task is completed, an author can request a structured peer critique:
+- **Request Review**: `gossip_request_review({"target_type": "task", "target_id": "task-4", "author_id": "worker-1", "reviewer_id": "qa-1"})`
+- **Submit Verdict**: Reviewer provides verdict with structured findings (`minor`, `major`, `critical`): `gossip_submit_review({"review_id": "rev-1", "reviewer_id": "qa-1", "status": "approved", "verdict": "All boundary tests validated."})`
+
+### C. Adversarial Red Team Probes
+The `red_team` agent continuously stress-tests code, protocols, and race conditions:
+- **Log Vulnerability**: `gossip_log_red_team_probe({"target": "pkg/state/state.go", "threat_category": "concurrency_race", "attacker_id": "red-team-alpha", "attack_vector": "Non-reentrant lock causes deadlock on nested call", "status": "vulnerable", "remediation_task_id": "task-8"})`
+
+---
+
+## 4. Storage Architecture (`.local/gossip`)
 
 All state is persisted under `.local/gossip/` inside the current project root:
 - `.lock`: Advisory lockfile preventing file corruption across concurrent agent processes.
 - `state.json`: Agent registry, last heartbeats, active project goals, and milestones.
 - `tasks.json`: Task DAG, blocker lists, assignees, progress logs, and deliverables.
+- `deliberations.json`: Open/past debates, vote tallies, peer reviews, and red team security probes.
 - `messages.jsonl`: Append-only audit ledger of every message sent between agents.
 - `graph.json`: Knowledge graph nodes and edges.
 - `roles.json`: JSON-driven role definitions, directives, prompts, and tools (extensible dynamically).
-- `BOARD.md`: Automatically rendered Markdown Kanban board showing goals and lanes.
+- `BOARD.md`: Automatically rendered Markdown Kanban board showing goals, debates, probes, and lanes.
 - `GRAPH_REPORT.md`: Automatically rendered knowledge analysis summarizing core hubs and proofs.
 
 ---
 
-## 4. MCP Tools Quick Reference
+## 5. MCP Tools Quick Reference
 
 | Tool | Key Parameters | Purpose |
 | :--- | :--- | :--- |
@@ -147,6 +174,32 @@ All state is persisted under `.local/gossip/` inside the current project root:
 | `gossip_get_role_definition`| `role_id` | Read system prompt and directives for a role. |
 | `gossip_list_roles` | _(none)_ | List all specialist roles loaded from JSON. |
 | `gossip_register_custom_role`| `id`, `title`, `description`, `system_prompt` | Dynamically register a new custom role in JSON. |
+| `gossip_start_debate` | `title`, `description`, `proposer`, `role` | Launch a multi-agent debate session. |
+| `gossip_post_argument` | `debate_id`, `agent_id`, `role`, `stance`, `content` | Contribute pro/con/critique to debate round. |
+| `gossip_cast_vote` | `debate_id`, `agent_id`, `role`, `choice`, `confidence` | Cast vote on proposal with confidence. |
+| `gossip_conclude_debate` | `debate_id`, `resolved_by`, `summary`, `adopted_decision`| Tally votes and register consensus decision. |
+| `gossip_request_review` | `target_type`, `target_id`, `author_id`, `reviewer_id` | Request formal peer review on deliverable. |
+| `gossip_submit_review` | `review_id`, `reviewer_id`, `status`, `verdict` | Issue formal critique verdict & findings. |
+| `gossip_log_red_team_probe` | `target`, `threat_category`, `attack_vector`, `poc` | Log red team exploit or race condition probe. |
+| `gossip_list_deliberations` | `type`, `status` | Query active debates, reviews, or probes. |
+| `gossip_send_message` | `from`, `role`, `to`, `subject`, `content` | Send point-to-point or role message. |
+| `gossip_broadcast_message`| `from`, `role`, `content`, `subject` | Broadcast announcement to all agents. |
+| `gossip_read_inbox` | `agent_id`, `role`, `only_unread`, `limit` | Check incoming communications. |
+| `gossip_mark_messages_read`| `agent_id`, `message_ids` | Acknowledge receipt of messages. |
+| `gossip_list_threads` | `limit` | Inspect active discussion threads. |
+| `gossip_set_goal` | `title`, `description`, `milestone_titles` | Set high-level strategic target. |
+| `gossip_get_goals` | _(none)_ | View active goals and milestone progress. |
+| `gossip_create_task` | `title`, `description`, `role`, `blocked_by` | Create task with dependency constraints. |
+| `gossip_update_task` | `task_id`, `status`, `assigned_to`, `notes` | Advance task lifecycle (`todo` $\to$ `done`). |
+| `gossip_list_tasks` | `status`, `role`, `assigned_to` | Query task board. |
+| `gossip_get_task` | `task_id` | View task details and history. |
+| `gossip_render_board` | _(none)_ | Fetch live Markdown Kanban board. |
+| `gossip_rag_add_node` | `id`, `type`, `label`, `summary`, `tags` | Record concept/symbol/proof in shared RAG. |
+| `gossip_rag_add_edge` | `source`, `target`, `relation`, `provenance` | Link two nodes with EXTRACTED/INFERRED edge. |
+| `gossip_rag_query` | `query`, `type`, `tag`, `limit` | Search shared knowledge graph. |
+| `gossip_rag_get_neighborhood`| `node_id`, `depth` | Inspect 1-hop or 2-hop connected subgraph. |
+| `gossip_rag_find_path` | `source`, `target` | Shortest path between two concepts. |
+| `gossip_rag_export_report`| _(none)_ | Fetch human-readable `GRAPH_REPORT.md`. |
 | `gossip_send_message` | `from`, `role`, `to`, `subject`, `content` | Send point-to-point or role message. |
 | `gossip_broadcast_message`| `from`, `role`, `content`, `subject` | Broadcast announcement to all agents. |
 | `gossip_read_inbox` | `agent_id`, `role`, `only_unread`, `limit` | Check incoming communications. |

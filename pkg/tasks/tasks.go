@@ -471,5 +471,56 @@ func (m *Manager) renderBoardContent(c *TasksContainer) (string, error) {
 		b.WriteString("\n")
 	}
 
+	// Deliberations, Debates & Red Team Probes Section
+	delibPath := filepath.Join(m.store.Dir(), "deliberations.json")
+	if delibBytes, err := os.ReadFile(delibPath); err == nil {
+		var ds struct {
+			Debates map[string]struct {
+				ID       string         `json:"id"`
+				Title    string         `json:"title"`
+				Proposer string         `json:"proposer"`
+				Role     string         `json:"role"`
+				Status   string         `json:"status"`
+				Votes    map[string]any `json:"votes"`
+			} `json:"debates"`
+			Reviews map[string]struct {
+				ID         string `json:"id"`
+				TargetType string `json:"target_type"`
+				TargetID   string `json:"target_id"`
+				ReviewerID string `json:"reviewer_id"`
+				Status     string `json:"status"`
+			} `json:"reviews"`
+			Probes map[string]struct {
+				ID             string `json:"id"`
+				Target         string `json:"target"`
+				ThreatCategory string `json:"threat_category"`
+				AttackerID     string `json:"attacker_id"`
+				Status         string `json:"status"`
+			} `json:"probes"`
+		}
+		if json.Unmarshal(delibBytes, &ds) == nil {
+			if len(ds.Debates) > 0 {
+				b.WriteString("## 🗳️ Active Debates & Voting Sessions\n\n")
+				b.WriteString("| Debate ID | Title | Proposer | Status | Votes Cast |\n")
+				b.WriteString("| :--- | :--- | :--- | :--- | :--- |\n")
+				for _, d := range ds.Debates {
+					b.WriteString(fmt.Sprintf("| `%s` | %s | `%s` (%s) | **%s** | %d |\n",
+						d.ID, d.Title, d.Proposer, d.Role, strings.ToUpper(d.Status), len(d.Votes)))
+				}
+				b.WriteString("\n")
+			}
+			if len(ds.Probes) > 0 {
+				b.WriteString("## 🛡️ Red Team Security & Stress Probes\n\n")
+				b.WriteString("| Probe ID | Target | Threat Vector | Attacker | Status |\n")
+				b.WriteString("| :--- | :--- | :--- | :--- | :--- |\n")
+				for _, p := range ds.Probes {
+					b.WriteString(fmt.Sprintf("| `%s` | `%s` | `%s` | `%s` | **%s** |\n",
+						p.ID, p.Target, p.ThreatCategory, p.AttackerID, strings.ToUpper(p.Status)))
+				}
+				b.WriteString("\n")
+			}
+		}
+	}
+
 	return b.String(), nil
 }
