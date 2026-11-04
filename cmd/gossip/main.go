@@ -16,10 +16,12 @@ import (
 	"github.com/tasmirz/gossip/pkg/guardrails"
 	"github.com/tasmirz/gossip/pkg/mcp"
 	"github.com/tasmirz/gossip/pkg/messages"
+	"github.com/tasmirz/gossip/pkg/moe"
 	"github.com/tasmirz/gossip/pkg/roles"
 	"github.com/tasmirz/gossip/pkg/sop"
 	"github.com/tasmirz/gossip/pkg/state"
 	"github.com/tasmirz/gossip/pkg/tasks"
+	"github.com/tasmirz/gossip/pkg/web"
 )
 
 const (
@@ -135,6 +137,12 @@ func main() {
 
 	case "resume", "reidentify", "gsp:resume":
 		runResume(os.Args[2:])
+
+	case "ui", "web":
+		runWebUI(os.Args[2:])
+
+	case "moe", "gsp:moe":
+		runMoE(os.Args[2:])
 
 	case "export-mcp", "mcp-export":
 		runExportMCP(os.Args[2:])
@@ -1131,6 +1139,106 @@ func runResume(args []string) {
 	}
 }
 
+func runWebUI(args []string) {
+	fs := flag.NewFlagSet("ui", flag.ExitOnError)
+	port := fs.Int("port", 8080, "Web dashboard port (default 8080)")
+	dir := fs.String("dir", "", "Custom gossip directory")
+	_ = fs.Parse(args)
+
+	store, err := state.NewStore(*dir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error initializing state store: %v\n", err)
+		os.Exit(1)
+	}
+
+	roleProv, _ := roles.NewService(store.Dir(), "")
+	srv := web.NewServer(*port, store, roleProv)
+	if err := srv.Start(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error running web server: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+func runMoE(args []string) {
+	if len(args) == 0 || args[0] == "list" {
+		dir := parseDirFlag(args)
+		store, err := state.NewStore(dir)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		mgr := moe.NewManager(store, nil)
+		panels, err := mgr.ListPanels("")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		if len(panels) == 0 {
+			fmt.Println("No active Mixture of Experts (MoE) councils. Convene one with 'gossip moe convene'.")
+			return
+		}
+		for _, p := range panels {
+			fmt.Print(p.RenderMarkdown())
+			fmt.Println("------------------------------------------------------------")
+		}
+		return
+	}
+
+	sub := args[0]
+	switch sub {
+	case "convene":
+		fs := flag.NewFlagSet("moe convene", flag.ExitOnError)
+		title := fs.String("title", "", "Panel topic / title (required)")
+		query := fs.String("query", "", "Problem statement or trade-off query (required)")
+		domain := fs.String("domain", "", "Domain keywords (e.g. 'concurrency, networking, crypto')")
+		dir := fs.String("dir", "", "Custom gossip storage directory")
+		parallel := fs.Int("parallel", 4, "Max parallel subagent workers (default: 4)")
+		_ = fs.Parse(args[1:])
+
+		if *title == "" || *query == "" {
+			fmt.Fprintf(os.Stderr, "Error: --title and --query are required\n")
+			os.Exit(1)
+		}
+
+		store, err := state.NewStore(*dir)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		mgr := moe.NewManager(store, nil)
+		panel, err := mgr.ConvenePanel(*title, *query, *domain, "cli-user", nil, *parallel)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error convening panel: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Print(panel.RenderMarkdown())
+
+	case "view":
+		if len(args) < 2 {
+			fmt.Fprintf(os.Stderr, "Usage: gossip moe view <panel_id>\n")
+			os.Exit(1)
+		}
+		panelID := args[1]
+		dir := parseDirFlag(args[2:])
+		store, err := state.NewStore(dir)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		mgr := moe.NewManager(store, nil)
+		panel, err := mgr.GetPanel(panelID)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Print(panel.RenderMarkdown())
+
+	default:
+		fmt.Fprintf(os.Stderr, "Unknown moe subcommand '%s'. Available: list, convene, view\n", sub)
+		os.Exit(1)
+	}
+}
+
 func printHelp() {
 	fmt.Printf("%s\n", BannerArt)
 	fmt.Print(`Usage:
@@ -1162,6 +1270,8 @@ Commands:
   system-todos    View unified cross-system backlog (alias: gsp:system_todos)
   assignments     View Orchestrator task allocation & workload matrix (alias: gsp:assignments)
   resume          Re-identify and resume agent session with instant catch-up briefing (alias: gsp:resume)
+  moe             Convene and inspect Mixture of Experts discussion panels (alias: gsp:moe)
+  ui              Launch local monochrome black & white web control panel (alias: web)
   export-mcp      Export MCP tool schemas (JSON) and instructions.md (alias: mcp-export)
   roles           Print complete directory of agent roles and directives
   send            Send a message to an agent, role, or broadcast to all

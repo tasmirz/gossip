@@ -268,6 +268,13 @@ All state is persisted under `.local/gossip/` inside the current project root:
   - Returns `server_time`, `has_updates`, `events`, `unread_messages_count`, `ready_tasks_count`, and `active_agents_count`.
 - `gossip_log_event`: Append an explicit custom milestone or event to the shared event ledger (`events.jsonl`).
 
+### Mixture of Experts (MoE) Councils & Subagent Parallelism
+- `gossip_moe_convene_panel` (alias `gsp_moe_convene`): Convene an MoE council with automated router gating and specialist expert summoning (`title`, `query`, `domain`, `roles`, `max_parallel`).
+- `gossip_moe_post_argument` (alias `gsp_moe_argument`): Submit domain-specific technical arguments and trade-off points (`panel_id`, `agent_id`, `role`, `stance`, `perspective`, `key_points`).
+- `gossip_moe_synthesize` (alias `gsp_moe_synthesize`): Synthesize expert council viewpoints into unified consensus and modular parallel work packages.
+- `gossip_moe_dispatch_subagents` (alias `gsp_parallel`, `gsp_moe_dispatch`): Dispatch concurrent subagent workers for decoupled parallel tracks.
+- `gossip_moe_list_panels` (alias `gsp_moe_list`): Inspect all active and historical MoE discussion panels.
+
 ### Guardrails, Role Derivation & Project Invariants
 - `gossip_derive_project_roles` (alias `gsp_derive_roles`): Synthesize LLM-derived specialist roles, cautions, and invariants for the project; generates `guardrails.json`, `AGENTS.md`, and `RULES.md`.
 - `gossip_guardrails_validate_action` (alias `gsp_guardrail_check`): Pre-action safety check checking caller role, action name, and target file against active invariants.
@@ -279,9 +286,11 @@ All state is persisted under `.local/gossip/` inside the current project root:
 
 ## 7. Native MCP Prompts as Slash Commands (`/gsp:...`)
 
-Gossip registers 13 official Model Context Protocol Prompts that modern MCP clients expose directly in chat as `/gsp:...`:
+Gossip registers 15 official Model Context Protocol Prompts that modern MCP clients expose directly in chat as `/gsp:...`:
 
-1. `/gsp:resume`: Re-identify an agent across restarts or in a new session with an instant catch-up briefing.
+1. `/gsp:moe`: Convene a Mixture of Experts discussion council to resolve a complex dilemma.
+2. `/gsp:parallel`: Dispatch parallel subagent execution tracks for decoupled tasks.
+3. `/gsp:resume`: Re-identify an agent across restarts or in a new session with an instant catch-up briefing.
 2. `/gsp:poll`: Set up continuous event polling and long-polling sync loop.
 3. `/gsp:assignments`: Inspect Orchestrator workload distribution, assigned tasks, and delegation suggestions.
 4. `/gsp:my_todos`: Inspect and update personal agent scratchpad checklist.

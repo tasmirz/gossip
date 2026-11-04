@@ -1,0 +1,64 @@
+{
+  "name": "gossip_moe_synthesize",
+  "description": "Synthesize the MoE council deliberations into a unified consensus decision and parallel subagent work packages",
+  "parameters": {
+    "properties": {
+      "agent_id": {
+        "description": "Synthesizing orchestrator agent ID",
+        "type": "string"
+      },
+      "consensus_decision": {
+        "description": "Final technical consensus",
+        "type": "string"
+      },
+      "panel_id": {
+        "description": "ID of the MoE panel",
+        "type": "string"
+      },
+      "recommended_actions": {
+        "description": "Concrete implementation actions",
+        "type": "array"
+      },
+      "trade_offs": {
+        "description": "Documented architectural trade-offs",
+        "type": "array"
+      }
+    },
+    "required": [
+      "panel_id",
+      "agent_id",
+      "consensus_decision"
+    ],
+    "type": "object"
+  },
+  "inputSchema": {
+    "properties": {
+      "agent_id": {
+        "description": "Synthesizing orchestrator agent ID",
+        "type": "string"
+      },
+      "consensus_decision": {
+        "description": "Final technical consensus",
+        "type": "string"
+      },
+      "panel_id": {
+        "description": "ID of the MoE panel",
+        "type": "string"
+      },
+      "recommended_actions": {
+        "description": "Concrete implementation actions",
+        "type": "array"
+      },
+      "trade_offs": {
+        "description": "Documented architectural trade-offs",
+        "type": "array"
+      }
+    },
+    "required": [
+      "panel_id",
+      "agent_id",
+      "consensus_decision"
+    ],
+    "type": "object"
+  }
+}

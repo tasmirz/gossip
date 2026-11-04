@@ -1,3 +1,21 @@
+# ⚠️ ACTIVE RESEARCH & UNDER HEAVY DEVELOPMENT ⚠️
+
+```
+┌────────────────────────────────────────────────────────────────────────┐
+│  WARNING: ACTIVE RESEARCH & EXPERIMENTAL PRE-RELEASE                   │
+│                                                                        │
+│  Gossip is under heavy active development. APIs, MCP tool signatures, │
+│  on-disk schemas (.local/gossip/), and protocols are subject to change │
+│  without notice. Community contributions & issue reports welcome!      │
+└────────────────────────────────────────────────────────────────────────┘
+```
+
+> [!WARNING]
+> **UNDER ACTIVE DEVELOPMENT / EXPERIMENTAL STAGE**
+> Gossip is an active research project exploring multi-agent software engineering meshes, Mixture of Experts (MoE) councils, deterministic knowledge graph RAG, and subagent parallelization.
+
+---
+
 # 🗣️ Gossip: Multi-Agent Collaboration Fabric & Shared Knowledge Graph RAG
 
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
@@ -114,7 +132,7 @@ Gossip implements three built-in SOP templates with strict phase gates and artif
 
 ---
 
-## 🛠️ Complete MCP Tool Directory (66 Tools & Prompts)
+## 🛠️ Complete MCP Tool Directory (79 Tools & Prompts)
 
 ### 1. Identity & Role Management
 - `gossip_register_agent`: Join the active gossip mesh with agent ID, role, capabilities, and active task. Supports multi-instance per role.
@@ -208,8 +226,17 @@ Gossip supports three distinct, coordinated task management scopes:
   - Automatically maintains agent presence via `auto_heartbeat`.
 - `gossip_log_event`: Append an explicit custom milestone or event to the shared event ledger (`events.jsonl`).
 
-### 11. MCP Prompts as Native Slash Commands (`/gsp:...`)
-Gossip exports 13 standardized Model Context Protocol Prompts that modern MCP clients (Claude, Antigravity) surface as `/gsp:...` slash commands:
+### 11. Mixture of Experts (MoE) Discussion Council & Subagent Parallelism
+- `gossip_moe_convene_panel` (alias `gsp_moe_convene`): Convene an expert discussion council with automated router gating and specialist expert summoning.
+- `gossip_moe_post_argument` (alias `gsp_moe_argument`): Submit domain-specific technical arguments, trade-off notes, and cautions from a specialist expert role.
+- `gossip_moe_synthesize` (alias `gsp_moe_synthesize`): Synthesize expert council perspectives into a unified consensus decision and modular parallel work packages.
+- `gossip_moe_dispatch_subagents` (alias `gsp_parallel`, `gsp_moe_dispatch`): Dispatch decoupled tasks across concurrent parallel subagent execution tracks.
+- `gossip_moe_list_panels` (alias `gsp_moe_list`): Inspect all active and historical MoE councils, syntheses, and subagent tracks.
+
+### 12. MCP Prompts as Native Slash Commands (`/gsp:...`)
+Gossip exports 15 standardized Model Context Protocol Prompts that modern MCP clients (Claude, Antigravity) surface as `/gsp:...` slash commands:
+- `/gsp:moe`: Convene a Mixture of Experts discussion council to resolve a complex dilemma.
+- `/gsp:parallel`: Dispatch parallel subagent execution tracks for decoupled tasks.
 - `/gsp:resume`: Re-identify an agent across restarts or in a new session with an instant catch-up briefing.
 - `/gsp:assignments`: Inspect Orchestrator workload distribution, assigned tasks, and delegation suggestions.
 - `/gsp:my_todos`: Inspect personal agent scratchpad checklist.
@@ -223,6 +250,31 @@ Gossip exports 13 standardized Model Context Protocol Prompts that modern MCP cl
 - `/gsp:review`: Request or submit a formal peer review on deliverables.
 - `/gsp:guardrail_check`: Pre-flight action inspection against caution rules.
 - `/gsp:repomap`: Fetch token-budgeted PageRank architectural repo map.
+
+---
+
+## 🖥️ Local Monochrome Web Dashboard (`gossip ui`)
+
+Gossip features an embedded, zero-dependency, local web control panel with an uncompromising **two-color monochrome brutalist aesthetic**:
+- **Strictly Two Colors**: Pure `#000000` (black) and `#ffffff` (white) — no grays, no RGB color badges, zero distractions.
+- **Zero Rounded Corners**: Every element (`button`, `input`, `box`, `table`, `panel`) enforces `border-radius: 0 !important` with crisp 90-degree corners.
+- **Pure Monospace Typography**: Hardcoded monospace terminal font (`Courier New, Courier, monospace, ui-monospace`).
+- **Real-Time Live Sync**: Auto-refreshes every 2.5 seconds via embedded JSON APIs without reloading the page.
+
+```bash
+# Launch the web control panel on http://localhost:8080
+./bin/gossip ui
+
+# Or specify a custom port and storage directory
+./bin/gossip ui --port 9090 --dir .local/gossip
+```
+
+### Dashboard Capabilities
+1. **[1] Tasks & DAG View**: Inspect tasks across statuses (`todo`, `in_progress`, `review`, `done`), view blocker chains, and create or quick-update tasks live.
+2. **[2] Live Agent Registry**: Track online/idle agents, active task bindings, session numbers, and real-time heartbeats.
+3. **[3] Live Chats & Broadcasts**: Monospace terminal transcript streaming direct messages (`agent:<id>`), role messages (`role:<role>`), and broadcast announcements (`all`). Send messages or broadcast directives directly from your browser.
+4. **[4] MoE Council Panel**: Convene Mixture of Experts councils, view gating rationale, inspect expert arguments, trigger consensus syntheses, and dispatch parallel subagents.
+5. **[5] Project Settings & Customization**: Configure project titles, declare strategic goals/milestones, and inspect active guardrails, invariants, and caution rules.
 
 ---
 
@@ -369,6 +421,15 @@ gossip send --from dev_terminal --role orchestrator --to role:math_expert --msg 
 
 # Print all defined roles and system prompts
 gossip roles
+
+# Launch the black & white monospace web control panel
+gossip ui --port 8080
+
+# Convene a Mixture of Experts discussion council
+gossip moe convene --title "WAL vs Memory" --query "Trade-offs under high write contention" --domain "concurrency"
+
+# List active MoE councils and subagent tracks
+gossip moe list
 ```
 
 ---
