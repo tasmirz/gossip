@@ -184,8 +184,16 @@ Gossip implements three built-in SOP templates with strict phase gates and artif
 - `gossip_get_guardrails`: Retrieve active invariants and caution rules.
 - `gossip_export_agents_md`: Render and return active `AGENTS.md` directives.
 
-### 9. MCP Prompts as Native Slash Commands (`/gsp:...`)
-Gossip exports 8 standardized Model Context Protocol Prompts that modern MCP clients (Claude, Antigravity) surface as `/gsp:...` slash commands:
+### 9. Continuous Event Polling & Long-Polling Engine (`events.jsonl`)
+- `gossip_poll_events` (alias `gsp_poll`, `gossip_sync`): Synchronize state and continuously poll or long-poll for updates (`since_time`, `timeout_seconds`, `event_types`).
+  - Supports configurable timeouts ($0$ to $60$ seconds): wakes up immediately when new messages, ready tasks, debate rounds, or SOP phase gate changes occur.
+  - Returns `has_updates`, `events`, `unread_messages_count`, `ready_tasks_count`, `active_agents_count`, and `server_time` (pass to next call for seamless event chaining).
+  - Automatically maintains agent presence via `auto_heartbeat`.
+- `gossip_log_event`: Append an explicit custom milestone or event to the shared event ledger (`events.jsonl`).
+
+### 10. MCP Prompts as Native Slash Commands (`/gsp:...`)
+Gossip exports 9 standardized Model Context Protocol Prompts that modern MCP clients (Claude, Antigravity) surface as `/gsp:...` slash commands:
+- `/gsp:poll`: Set up continuous event polling loop with long-polling timeout.
 - `/gsp:derive_roles`: Synthesize specialist roles and guardrails for the active project.
 - `/gsp:blast_radius`: Analyze reverse dependency impact before modifying files or symbols.
 - `/gsp:sop_advance`: Advance SOP phase gate with verification checklist.

@@ -254,6 +254,11 @@ All state is persisted under `.local/gossip/` inside the current project root:
 - `gossip_redteam_generate_audit_report`: Generate executive security audit report (`AUDIT_REPORT.md`).
 - `gossip_list_deliberations`: Query active debates, reviews, or probes (`type`, `status`).
 
+### Continuous Event Polling & State Synchronization
+- `gossip_poll_events` (alias `gsp_poll`, `gossip_sync`): Continuously poll or long-poll for incoming messages, unblocked ready tasks, debate rounds, SOP phase gates, and peer heartbeats with configurable timeout (`since_time`, `timeout_seconds`, `event_types`, `auto_heartbeat`).
+  - Returns `server_time`, `has_updates`, `events`, `unread_messages_count`, `ready_tasks_count`, and `active_agents_count`.
+- `gossip_log_event`: Append an explicit custom milestone or event to the shared event ledger (`events.jsonl`).
+
 ### Guardrails, Role Derivation & Project Invariants
 - `gossip_derive_project_roles` (alias `gsp_derive_roles`): Synthesize LLM-derived specialist roles, cautions, and invariants for the project; generates `guardrails.json`, `AGENTS.md`, and `RULES.md`.
 - `gossip_guardrails_validate_action` (alias `gsp_guardrail_check`): Pre-action safety check checking caller role, action name, and target file against active invariants.
@@ -265,16 +270,17 @@ All state is persisted under `.local/gossip/` inside the current project root:
 
 ## 7. Native MCP Prompts as Slash Commands (`/gsp:...`)
 
-Gossip registers 8 official Model Context Protocol Prompts that modern MCP clients expose directly in chat as `/gsp:...`:
+Gossip registers 9 official Model Context Protocol Prompts that modern MCP clients expose directly in chat as `/gsp:...`:
 
-1. `/gsp:derive_roles`: Synthesize specialist roles and guardrails tailored to the active repository.
-2. `/gsp:blast_radius`: Analyze reverse dependency impact before modifying files or symbols.
-3. `/gsp:sop_advance`: Advance SOP phase gate with verification checklist.
-4. `/gsp:debate`: Initiate an adversarial multi-agent debate with convergence tracking.
-5. `/gsp:stride_audit`: Execute automated STRIDE threat modeling against interfaces.
-6. `/gsp:review`: Request or submit a formal peer review on deliverables.
-7. `/gsp:guardrail_check`: Pre-flight action inspection against caution rules.
-8. `/gsp:repomap`: Fetch token-budgeted PageRank architectural repo map.
+1. `/gsp:poll`: Set up continuous event polling and long-polling sync loop.
+2. `/gsp:derive_roles`: Synthesize specialist roles and guardrails tailored to the active repository.
+3. `/gsp:blast_radius`: Analyze reverse dependency impact before modifying files or symbols.
+4. `/gsp:sop_advance`: Advance SOP phase gate with verification checklist.
+5. `/gsp:debate`: Initiate an adversarial multi-agent debate with convergence tracking.
+6. `/gsp:stride_audit`: Execute automated STRIDE threat modeling against interfaces.
+7. `/gsp:review`: Request or submit a formal peer review on deliverables.
+8. `/gsp:guardrail_check`: Pre-flight action inspection against caution rules.
+9. `/gsp:repomap`: Fetch token-budgeted PageRank architectural repo map.
 
 ---
 

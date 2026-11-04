@@ -1,13 +1,16 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/tasmirz/gossip/pkg/deliberation"
+	"github.com/tasmirz/gossip/pkg/events"
 	"github.com/tasmirz/gossip/pkg/graph"
 	"github.com/tasmirz/gossip/pkg/guardrails"
 	"github.com/tasmirz/gossip/pkg/mcp"
@@ -108,6 +111,12 @@ func main() {
 	case "agents", "gsp:agents":
 		dir := parseDirFlag(os.Args[2:])
 		runAgents(dir)
+
+	case "poll", "gsp:poll":
+		runPoll(os.Args[2:])
+
+	case "watch", "gsp:watch":
+		runWatch(os.Args[2:])
 
 	case "roles":
 		fmt.Println(roles.FormatRoleSummary())
@@ -719,6 +728,107 @@ func runAgents(customDir string) {
 	fmt.Print(md)
 }
 
+func runPoll(args []string) {
+	fs := flag.NewFlagSet("poll", flag.ExitOnError)
+	dir := fs.String("dir", "", "Path to gossip storage directory")
+	agent := fs.String("agent", "cli-agent", "Calling agent ID")
+	role := fs.String("role", "worker", "Calling agent role")
+	since := fs.String("since", "5m", "Since timestamp or relative duration (e.g. 5m, 1h, RFC3339)")
+	timeout := fs.Int("timeout", 0, "Long-polling timeout in seconds (0 returns immediately)")
+	_ = fs.Parse(args)
+
+	store, err := state.NewStore(*dir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	sinceTime := time.Now().Add(-5 * time.Minute)
+	if *since != "" {
+		clean := strings.TrimSuffix(*since, " ago")
+		if d, err := time.ParseDuration(clean); err == nil {
+			sinceTime = time.Now().Add(-d)
+		} else if t, err := time.Parse(time.RFC3339, *since); err == nil {
+			sinceTime = t
+		}
+	}
+
+	msgMgr := messages.NewManager(store)
+	taskMgr := tasks.NewManager(store)
+	delibMgr := deliberation.NewManager(store)
+	sopMgr := sop.NewManager(store)
+	evtMgr := events.NewManager(store, msgMgr, taskMgr, delibMgr, sopMgr)
+
+	resp, err := evtMgr.Poll(context.Background(), events.PollRequest{
+		AgentID:       *agent,
+		Role:          *role,
+		SinceTime:     sinceTime,
+		Timeout:       time.Duration(*timeout) * time.Second,
+		AutoHeartbeat: true,
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Poll error: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("⏱️ Server Time: %s | Poll Duration: %d ms | Updates Found: %v\n",
+		resp.ServerTime.Format(time.RFC3339), resp.PollDurationMs, resp.HasUpdates)
+	fmt.Printf("📬 Unread Messages: %d | 📋 Ready Tasks: %d | 👥 Active Agents: %d\n",
+		resp.UnreadMessagesCount, resp.ReadyTasksCount, resp.ActiveAgentsCount)
+
+	if len(resp.Events) > 0 {
+		fmt.Printf("\n=== Events (%d) ===\n", len(resp.Events))
+		for _, e := range resp.Events {
+			fmt.Printf("  • [%s] %s (%s)\n    %s\n",
+				e.Timestamp.Format("15:04:05"), strings.ToUpper(e.Type), e.ID, e.Summary)
+		}
+	} else {
+		fmt.Println("\nNo new events in polled window.")
+	}
+}
+
+func runWatch(args []string) {
+	fs := flag.NewFlagSet("watch", flag.ExitOnError)
+	dir := fs.String("dir", "", "Path to gossip storage directory")
+	agent := fs.String("agent", "cli-watcher", "Watcher agent ID")
+	role := fs.String("role", "orchestrator", "Watcher role")
+	_ = fs.Parse(args)
+
+	store, err := state.NewStore(*dir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	msgMgr := messages.NewManager(store)
+	taskMgr := tasks.NewManager(store)
+	delibMgr := deliberation.NewManager(store)
+	sopMgr := sop.NewManager(store)
+	evtMgr := events.NewManager(store, msgMgr, taskMgr, delibMgr, sopMgr)
+
+	fmt.Printf("%s\n", BannerArt)
+	fmt.Printf("👀 Watching Gossip event stream in %s (Ctrl+C to stop)...\n", store.Dir())
+	fmt.Println(strings.Repeat("-", 65))
+
+	cursor := time.Now().Add(-1 * time.Minute)
+	for {
+		resp, err := evtMgr.Poll(context.Background(), events.PollRequest{
+			AgentID:       *agent,
+			Role:          *role,
+			SinceTime:     cursor,
+			Timeout:       10 * time.Second,
+			AutoHeartbeat: true,
+		})
+		if err == nil {
+			cursor = resp.ServerTime
+			for _, e := range resp.Events {
+				fmt.Printf("[%s] %-16s %s\n", e.Timestamp.Format("15:04:05"), strings.ToUpper(e.Type), e.Summary)
+			}
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
 func printHelp() {
 	fmt.Printf("%s\n", BannerArt)
 	fmt.Print(`Usage:
@@ -743,6 +853,8 @@ Commands:
   check           Validate proposed agent action against active guardrails (alias: gsp:check)
   guardrails      Display project invariants and caution rules (alias: gsp:guardrails)
   agents          Print active AGENTS.md directives and role boundaries (alias: gsp:agents)
+  poll            Poll or long-poll for incoming messages & tasks with timeout (alias: gsp:poll)
+  watch           Live tail of events and mesh activities (alias: gsp:watch)
   roles           Print complete directory of agent roles and directives
   send            Send a message to an agent, role, or broadcast to all
   version         Show Gossip version
@@ -754,6 +866,8 @@ Options:
 Examples:
   gossip init
   gossip mcp
+  gossip poll --agent worker-1 --role worker --since 5m --timeout 20
+  gossip watch
   gossip derive --name "My Service" --stack "Go, gRPC, PostgreSQL"
   gossip check --role worker --action write_file --path .env
   gossip agents

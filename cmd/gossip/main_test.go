@@ -60,4 +60,7 @@ func TestCLICommands(t *testing.T) {
 
 	// Test Agents MD
 	runAgents(tmpDir)
+
+	// Test Poll
+	runPoll([]string{"--dir", tmpDir, "--agent", "worker-1", "--role", "worker", "--since", "5m", "--timeout", "0"})
 }
