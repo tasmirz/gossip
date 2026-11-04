@@ -9,6 +9,7 @@ import (
 
 	"github.com/tasmirz/gossip/pkg/deliberation"
 	"github.com/tasmirz/gossip/pkg/graph"
+	"github.com/tasmirz/gossip/pkg/guardrails"
 	"github.com/tasmirz/gossip/pkg/mcp"
 	"github.com/tasmirz/gossip/pkg/messages"
 	"github.com/tasmirz/gossip/pkg/roles"
@@ -93,6 +94,20 @@ func main() {
 	case "sop":
 		dir := parseDirFlag(os.Args[2:])
 		runSOP(dir)
+
+	case "derive", "gsp:derive":
+		runDerive(os.Args[2:])
+
+	case "check", "gsp:check":
+		runCheck(os.Args[2:])
+
+	case "guardrails", "gsp:guardrails":
+		dir := parseDirFlag(os.Args[2:])
+		runGuardrails(dir)
+
+	case "agents", "gsp:agents":
+		dir := parseDirFlag(os.Args[2:])
+		runAgents(dir)
 
 	case "roles":
 		fmt.Println(roles.FormatRoleSummary())
@@ -562,6 +577,148 @@ func runSOP(customDir string) {
 	}
 }
 
+func runDerive(args []string) {
+	fs := flag.NewFlagSet("derive", flag.ExitOnError)
+	dir := fs.String("dir", "", "Path to gossip storage directory")
+	name := fs.String("name", "", "Project name")
+	stack := fs.String("stack", "Go", "Comma-separated tech stack list")
+	goal := fs.String("goal", "High quality, resilient system implementation", "Project goal")
+	_ = fs.Parse(args)
+
+	store, err := state.NewStore(*dir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	projectName := *name
+	if projectName == "" {
+		wd, _ := os.Getwd()
+		projectName = filepath.Base(wd)
+	}
+
+	var stackList []string
+	for _, s := range strings.Split(*stack, ",") {
+		s = strings.TrimSpace(s)
+		if s != "" {
+			stackList = append(stackList, s)
+		}
+	}
+
+	gm := guardrails.NewManager(store)
+	pg, err := gm.DeriveProjectRoles(projectName, stackList, *goal)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Derive error: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Register with role provider
+	roleSrv, _ := roles.NewService(store.Dir(), "")
+	for _, r := range pg.Roles {
+		_ = roleSrv.RegisterRole(roles.RoleDefinition{
+			ID:           r.RoleID,
+			Title:        r.Title,
+			Category:     "derived",
+			Description:  r.Description,
+			SystemPrompt: r.SystemPrompt,
+			Directives:   append(r.CautionDirectives, r.ForbiddenActions...),
+		})
+	}
+	_ = roleSrv.SaveToFile(filepath.Join(store.Dir(), "roles.json"))
+
+	fmt.Printf("✓ Derived %d roles & guardrails for project '%s'\n", len(pg.Roles), pg.ProjectName)
+	fmt.Printf("  • Stored configuration: %s\n", filepath.Join(store.Dir(), "guardrails.json"))
+	fmt.Printf("  • Generated directives: %s\n", filepath.Join(store.Dir(), "AGENTS.md"))
+	fmt.Println("\n=== Derived Roles ===")
+	for _, r := range pg.Roles {
+		fmt.Printf("  • %-22s: %s (Permitted: %d, Forbidden: %d)\n", r.RoleID, r.Title, len(r.PermittedActions), len(r.ForbiddenActions))
+	}
+	fmt.Printf("\n=== Project Invariants (%d) ===\n", len(pg.Invariants))
+	for i, inv := range pg.Invariants {
+		fmt.Printf("  %d. %s\n", i+1, inv)
+	}
+}
+
+func runCheck(args []string) {
+	fs := flag.NewFlagSet("check", flag.ExitOnError)
+	dir := fs.String("dir", "", "Path to gossip storage directory")
+	role := fs.String("role", "worker", "Agent role attempting action")
+	action := fs.String("action", "write_file", "Action to perform (e.g. write_file, edit_config)")
+	path := fs.String("path", "", "Target file or resource path")
+	_ = fs.Parse(args)
+
+	store, err := state.NewStore(*dir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	gm := guardrails.NewManager(store)
+	res, err := gm.ValidateProposedAction(*role, *action, *path, "")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Check error: %v\n", err)
+		os.Exit(1)
+	}
+
+	if res.Allowed {
+		fmt.Printf("🟢 [ALLOWED] Action '%s' by role '%s' on '%s' is permitted.\n", *action, *role, *path)
+	} else {
+		fmt.Printf("🔴 [BLOCKED] Action '%s' by role '%s' on '%s' is BLOCKED.\n", *action, *role, *path)
+		fmt.Printf("   Reason: %s\n", res.Reason)
+		fmt.Printf("   Enforcement: %s\n", res.Enforcement)
+	}
+
+	if len(res.ViolatedDirectives) > 0 {
+		fmt.Println("\n⚠️ Directives Flagged:")
+		for _, c := range res.ViolatedDirectives {
+			fmt.Printf("   • %s\n", c)
+		}
+	}
+}
+
+func runGuardrails(customDir string) {
+	store, err := state.NewStore(customDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	gm := guardrails.NewManager(store)
+	pg, err := gm.GetGuardrails()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("=== Guardrails: %s ===\n", pg.ProjectName)
+	fmt.Printf("Tech Stack: %s\n", strings.Join(pg.TechStack, ", "))
+	fmt.Printf("\nProject Invariants (%d):\n", len(pg.Invariants))
+	for i, inv := range pg.Invariants {
+		fmt.Printf("  %d. %s\n", i+1, inv)
+	}
+
+	fmt.Printf("\nCaution Rules (%d):\n", len(pg.Cautions))
+	for _, c := range pg.Cautions {
+		fmt.Printf("  • [%s] %s (Trigger: %s | %s)\n", strings.ToUpper(c.Level), c.Directive, c.TriggerPattern, c.Enforcement)
+	}
+}
+
+func runAgents(customDir string) {
+	store, err := state.NewStore(customDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	gm := guardrails.NewManager(store)
+	md, err := gm.ExportAgentsMD()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error exporting AGENTS.md: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Print(md)
+}
+
 func printHelp() {
 	fmt.Printf("%s\n", BannerArt)
 	fmt.Print(`Usage:
@@ -582,6 +739,10 @@ Commands:
   repomap         Generate PageRank-prioritized token-budgeted repo map
   audit           Display executive red-team security audit report (AUDIT_REPORT.md)
   sop             List active Standard Operating Procedure workflows
+  derive          Synthesize LLM-derived specialist roles & guardrails (alias: gsp:derive)
+  check           Validate proposed agent action against active guardrails (alias: gsp:check)
+  guardrails      Display project invariants and caution rules (alias: gsp:guardrails)
+  agents          Print active AGENTS.md directives and role boundaries (alias: gsp:agents)
   roles           Print complete directory of agent roles and directives
   send            Send a message to an agent, role, or broadcast to all
   version         Show Gossip version
@@ -593,6 +754,9 @@ Options:
 Examples:
   gossip init
   gossip mcp
+  gossip derive --name "My Service" --stack "Go, gRPC, PostgreSQL"
+  gossip check --role worker --action write_file --path .env
+  gossip agents
   gossip impact util:core
   gossip pagerank
   gossip repomap

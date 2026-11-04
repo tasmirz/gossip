@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/tasmirz/gossip/pkg/security"
 )
 
 // DefaultDirName is the default directory relative to project root.
@@ -86,6 +88,11 @@ func (s *Store) Dir() string {
 	return s.dir
 }
 
+// GetBaseDir returns the root storage directory.
+func (s *Store) GetBaseDir() string {
+	return s.dir
+}
+
 // Lock acquires both process-internal mutex and cross-process file lock.
 func (s *Store) Lock() (func(), error) {
 	s.lockMu.Lock()
@@ -114,8 +121,13 @@ func (s *Store) Lock() (func(), error) {
 }
 
 // AtomicWriteFile safely writes data to a temporary file in the same directory, then renames it.
+// Enforces sandbox boundary checks to prevent path traversal attacks.
 func (s *Store) AtomicWriteFile(filename string, data []byte) error {
-	destPath := filepath.Join(s.dir, filename)
+	destPath, err := security.ValidateSafePath(s.dir, filename)
+	if err != nil {
+		return fmt.Errorf("security error on destination path: %w", err)
+	}
+
 	tmpPath := fmt.Sprintf("%s.tmp.%d.%d", destPath, os.Getpid(), time.Now().UnixNano())
 
 	if err := os.WriteFile(tmpPath, data, 0644); err != nil {
@@ -130,9 +142,12 @@ func (s *Store) AtomicWriteFile(filename string, data []byte) error {
 	return nil
 }
 
-// ReadFile reads the full contents of a file inside the store directory.
+// ReadFile reads the full contents of a file inside the store directory with path containment checks.
 func (s *Store) ReadFile(filename string) ([]byte, error) {
-	path := filepath.Join(s.dir, filename)
+	path, err := security.ValidateSafePath(s.dir, filename)
+	if err != nil {
+		return nil, fmt.Errorf("security error on read path: %w", err)
+	}
 	return os.ReadFile(path)
 }
 

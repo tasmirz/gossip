@@ -253,3 +253,38 @@ All state is persisted under `.local/gossip/` inside the current project root:
 - `gossip_redteam_generate_stride_probes`: Generate automated STRIDE attack scenarios for a target component.
 - `gossip_redteam_generate_audit_report`: Generate executive security audit report (`AUDIT_REPORT.md`).
 - `gossip_list_deliberations`: Query active debates, reviews, or probes (`type`, `status`).
+
+### Guardrails, Role Derivation & Project Invariants
+- `gossip_derive_project_roles` (alias `gsp_derive_roles`): Synthesize LLM-derived specialist roles, cautions, and invariants for the project; generates `guardrails.json`, `AGENTS.md`, and `RULES.md`.
+- `gossip_guardrails_validate_action` (alias `gsp_guardrail_check`): Pre-action safety check checking caller role, action name, and target file against active invariants.
+- `gossip_set_caution_rule`: Register a custom caution rule (`id`, `category`, `level`, `trigger_pattern`, `directive`, `enforcement`).
+- `gossip_get_guardrails`: Inspect project invariants, tech stack, and active caution rules.
+- `gossip_export_agents_md`: Export human-readable Markdown agent directives (`AGENTS.md`).
+
+---
+
+## 7. Native MCP Prompts as Slash Commands (`/gsp:...`)
+
+Gossip registers 8 official Model Context Protocol Prompts that modern MCP clients expose directly in chat as `/gsp:...`:
+
+1. `/gsp:derive_roles`: Synthesize specialist roles and guardrails tailored to the active repository.
+2. `/gsp:blast_radius`: Analyze reverse dependency impact before modifying files or symbols.
+3. `/gsp:sop_advance`: Advance SOP phase gate with verification checklist.
+4. `/gsp:debate`: Initiate an adversarial multi-agent debate with convergence tracking.
+5. `/gsp:stride_audit`: Execute automated STRIDE threat modeling against interfaces.
+6. `/gsp:review`: Request or submit a formal peer review on deliverables.
+7. `/gsp:guardrail_check`: Pre-flight action inspection against caution rules.
+8. `/gsp:repomap`: Fetch token-budgeted PageRank architectural repo map.
+
+---
+
+## 8. Research Citations & Attributions
+
+Gossip builds on foundational open-source multi-agent and AI security research. Formal citations are documented in `ATTRIBUTIONS.md`:
+- **MetaGPT (`geekan/MetaGPT`)**: Assembly-line Standard Operating Procedures ($\text{Code} = \text{SOP}(\text{Team})$).
+- **Graphify (`Graphify-Labs/graphify`)**: Deterministic knowledge graph RAG, reverse dependency blast radius (`affected.py`), and community clustering (`cluster.py`).
+- **Aider (`Aider-AI/aider`)**: PageRank centrality repo-mapping for compact token-budgeted codebase context injection.
+- **Multi-Agent Debate (Du et al., 2024 / Mohit Parkash)**: Multi-round dialectic deliberation with stance stability convergence tracking and Borda Count ranked-choice voting.
+- **Microsoft AutoGen & CrewAI**: Dynamic agent registration, task DAGs, and autonomous peer review protocols.
+- **PyRIT (`Azure/PyRIT`) & MultiAgent-RedTeam-Toolkit**: Adversarial red-team probing and STRIDE security audit generation.
+- **NVIDIA NeMo Guardrails**: Pre-action guardrail inspection, caution rule enforcement, and `AGENTS.md` synthesis.

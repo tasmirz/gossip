@@ -8,10 +8,13 @@
 
 > **Gossip** is a high-performance, single-binary Go Model Context Protocol (MCP) server and companion AI Agent Skill. It equips multi-agent systems (Antigravity, Claude Code, Cursor, Windsurf, OpenCode, and autonomous agent swarms) with:
 > - **Formally Defined Specialist Roles** (`orchestrator`, `network_engineer`, `math_expert`, `systems_architect`, `security_specialist`, `qa_engineer`, `researcher`, `worker`, `red_team`, `critic`).
+> - **LLM-Derived Per-Project Roles & Guardrails** (`guardrails.json`, `AGENTS.md`, and `RULES.md`) with pre-flight action authorization and caution rule enforcement.
+> - **MCP Prompts & Slash Commands** (`gsp:derive_roles`, `gsp:blast_radius`, `gsp:sop_advance`, `gsp:debate`, `gsp:stride_audit`, `gsp:review`, `gsp:guardrail_check`, `gsp:repomap`).
 > - **MetaGPT-Style Standard Operating Procedures (SOPs)** enforcing phase gates and versioned Markdown artifacts (`PRD` $\to$ `SystemDesign` $\to$ `TaskDAG` $\to$ `Code` $\to$ `Review` $\to$ `STRIDE Audit` $\to$ `Release`).
 > - **Deterministic Shared Knowledge Graph RAG Space** (Graphify & Aider inspired, zero embedding costs) with PageRank centrality, blast-radius impact analysis, community cluster detection, and token-budgeted repo-maps.
 > - **Multi-Agent Debate (MAD) & Consensus Engine** featuring multi-round convergence detection (Du et al., 2024) and confidence-weighted Borda Count ranked-choice voting.
 > - **Adversarial Red-Team & STRIDE Threat Modeling** with automated probe generation and executive audit reports (`AUDIT_REPORT.md`).
+> - **Comprehensive Security Hardening** (CWE-22 path traversal prevention, symlink escape checks, payload size bounds, deadlock-free flock backoff, role authorization).
 > - **Shared Source-of-Truth Task DAG & Kanban** persisted under `.local/gossip/` with atomic writes, POSIX `flock` / Win32 `LockFileEx` cross-platform concurrency safety, and live auto-rendered `BOARD.md`.
 > - **Standalone Precompiled Binaries** for Linux (amd64, arm64), macOS (Apple Silicon, Intel), and Windows.
 
@@ -174,6 +177,24 @@ Gossip implements three built-in SOP templates with strict phase gates and artif
 - `gossip_get_task`: Retrieve full task specification, dependencies, and history notes.
 - `gossip_render_board`: Regenerate and return the live Markdown Kanban board (`BOARD.md`).
 
+### 8. LLM-Derived Roles, Guardrails & Project Safety (`AGENTS.md`)
+- `gossip_derive_project_roles` (alias `gsp_derive_roles`): Synthesizes LLM-derived specialist roles, caution rules, invariants, and exports `guardrails.json`, `AGENTS.md`, and `RULES.md`.
+- `gossip_guardrails_validate_action` (alias `gsp_guardrail_check`): Pre-flight validation inspecting actions, roles, and target file paths against security and caution invariants.
+- `gossip_set_caution_rule`: Add or update a project caution rule with enforcement level (`block`, `require_peer_review`, `warn`).
+- `gossip_get_guardrails`: Retrieve active invariants and caution rules.
+- `gossip_export_agents_md`: Render and return active `AGENTS.md` directives.
+
+### 9. MCP Prompts as Native Slash Commands (`/gsp:...`)
+Gossip exports 8 standardized Model Context Protocol Prompts that modern MCP clients (Claude, Antigravity) surface as `/gsp:...` slash commands:
+- `/gsp:derive_roles`: Synthesize specialist roles and guardrails for the active project.
+- `/gsp:blast_radius`: Analyze reverse dependency impact before modifying files or symbols.
+- `/gsp:sop_advance`: Advance SOP phase gate with verification checklist.
+- `/gsp:debate`: Initiate an adversarial multi-agent debate with convergence tracking.
+- `/gsp:stride_audit`: Execute automated STRIDE threat modeling against interfaces.
+- `/gsp:review`: Request or submit a formal peer review on deliverables.
+- `/gsp:guardrail_check`: Pre-flight action inspection against caution rules.
+- `/gsp:repomap`: Fetch token-budgeted PageRank architectural repo map.
+
 ---
 
 ## 🚀 Quickstart & Installation
@@ -272,6 +293,18 @@ gossip audit
 # List active Standard Operating Procedure (SOP) workflows
 gossip sop
 
+# Derive project-specific roles, cautions, and invariants
+gossip derive --name "My Service" --stack "Go, gRPC, PostgreSQL"
+
+# Inspect and enforce guardrails before executing an action
+gossip check --role worker --action write_file --path .env
+
+# Display active guardrails and caution rules
+gossip guardrails
+
+# Print generated AGENTS.md directives
+gossip agents
+
 # List tasks in terminal table format
 gossip tasks
 
@@ -290,6 +323,39 @@ gossip roles
 
 ---
 
+## 🔒 Security Hardening & Vulnerability Defenses
+
+Gossip implements rigorous defense-in-depth across all tools and file operations:
+
+1. **CWE-22 Path Traversal & Symlink Escape Defense (`pkg/security/security.go`)**:
+   - Every file operation validates paths against the root boundary using `filepath.Abs`, `filepath.EvalSymlinks`, and strict `filepath.Rel` verification.
+   - Rejects null bytes (`\x00`), UNC network paths, and directory traversal attempts (`../../etc/passwd`).
+2. **Safe Identifier Validation (`SanitizeID`)**:
+   - All role, task, node, and workflow IDs are validated against strict alphanumeric-dash-underscore regex to prevent shell injection, command substitution, and CRLF injection.
+3. **DoS & Unbounded Memory Prevention (`ValidatePayloadSize`)**:
+   - Hard upper bound enforced on all message bodies, task descriptions, and artifact payloads (default: 512 KB), preventing heap exhaustion attacks.
+4. **Deadlock-Free POSIX File Locking (`pkg/state/lock_posix.go`)**:
+   - File locks use non-blocking `LOCK_EX | LOCK_NB` with exponential backoff and a strict 10-second deadline. Agent crashes or unreleased locks never freeze other agents permanently.
+5. **Role-Based Action Authorization (`AuthorizeAction`)**:
+   - Enforces capabilities by role: general workers cannot force-close debates or bypass phase gates; only authorized roles may perform destructive state mutations.
+
+---
+
+## 📚 Research & Formal Attributions
+
+Gossip synthesizes cutting-edge multi-agent coordination, graph analysis, and AI security research. All foundational research and open-source inspirations are formally attributed in [ATTRIBUTIONS.md](ATTRIBUTIONS.md):
+
+- **MetaGPT (`geekan/MetaGPT`)**: Assembly-line Standard Operating Procedures ($\text{Code} = \text{SOP}(\text{Team})$), phase gates, and structured artifact handoffs.
+- **Graphify (`Graphify-Labs/graphify`)**: Deterministic knowledge graph RAG, reverse dependency blast-radius analysis (`affected.py`), and community clustering (`cluster.py`).
+- **Aider (`Aider-AI/aider`)**: PageRank centrality repo-mapping for compact token-budgeted codebase context injection.
+- **Multi-Agent Debate (Du et al., 2024 / Mohit Parkash)**: Multi-round dialectic deliberation with stance stability convergence tracking and Borda Count ranked-choice voting.
+- **Microsoft AutoGen & CrewAI**: Dynamic agent registration, task DAGs, and autonomous peer review protocols.
+- **CAMEL & ChatDev**: Role-playing communication patterns and incremental software development phases.
+- **PyRIT (`Azure/PyRIT`) & MultiAgent-RedTeam-Toolkit**: Adversarial red-team probing and STRIDE security audit generation.
+- **NVIDIA NeMo Guardrails & Promptfoo**: Pre-action guardrail inspection, caution rule enforcement, and `AGENTS.md` synthesis.
+
+---
+
 ## 🧪 Testing & Verification
 
 Gossip includes unit and integration tests with concurrency race detection:
@@ -299,7 +365,7 @@ Gossip includes unit and integration tests with concurrency race detection:
 go test -v -race ./...
 ```
 
-All subsystems (state locking, append-only message streaming, task DAG validation, SOP phase gates, PageRank convergence, blast radius analysis, Borda count ranked voting, and MCP tool serialization) pass 100% cleanly.
+All subsystems (state locking, append-only message streaming, task DAG validation, SOP phase gates, PageRank convergence, blast radius analysis, Borda count ranked voting, security sanitization, and MCP tool serialization) pass 100% cleanly.
 
 ---
 
