@@ -1,0 +1,56 @@
+{
+  "name": "gossip_broadcast_message",
+  "description": "Broadcast a high-priority message or announcement to all active agents in the project",
+  "parameters": {
+    "properties": {
+      "content": {
+        "description": "Announcement content",
+        "type": "string"
+      },
+      "from": {
+        "description": "Sender identifier",
+        "type": "string"
+      },
+      "role": {
+        "description": "Sender role",
+        "type": "string"
+      },
+      "subject": {
+        "description": "Announcement subject",
+        "type": "string"
+      }
+    },
+    "required": [
+      "from",
+      "role",
+      "content"
+    ],
+    "type": "object"
+  },
+  "inputSchema": {
+    "properties": {
+      "content": {
+        "description": "Announcement content",
+        "type": "string"
+      },
+      "from": {
+        "description": "Sender identifier",
+        "type": "string"
+      },
+      "role": {
+        "description": "Sender role",
+        "type": "string"
+      },
+      "subject": {
+        "description": "Announcement subject",
+        "type": "string"
+      }
+    },
+    "required": [
+      "from",
+      "role",
+      "content"
+    ],
+    "type": "object"
+  }
+}

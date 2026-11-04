@@ -1,0 +1,56 @@
+{
+  "name": "gossip_conclude_debate",
+  "description": "Conclude a debate, tally votes, establish consensus, and record the final resolution",
+  "parameters": {
+    "properties": {
+      "adopted_decision": {
+        "description": "Adopted architectural decision or policy to register",
+        "type": "string"
+      },
+      "debate_id": {
+        "description": "ID of the debate to conclude",
+        "type": "string"
+      },
+      "resolved_by": {
+        "description": "Arbiter/Critic agent ID concluding the debate",
+        "type": "string"
+      },
+      "summary": {
+        "description": "Executive summary of deliberation and consensus",
+        "type": "string"
+      }
+    },
+    "required": [
+      "debate_id",
+      "resolved_by",
+      "summary"
+    ],
+    "type": "object"
+  },
+  "inputSchema": {
+    "properties": {
+      "adopted_decision": {
+        "description": "Adopted architectural decision or policy to register",
+        "type": "string"
+      },
+      "debate_id": {
+        "description": "ID of the debate to conclude",
+        "type": "string"
+      },
+      "resolved_by": {
+        "description": "Arbiter/Critic agent ID concluding the debate",
+        "type": "string"
+      },
+      "summary": {
+        "description": "Executive summary of deliberation and consensus",
+        "type": "string"
+      }
+    },
+    "required": [
+      "debate_id",
+      "resolved_by",
+      "summary"
+    ],
+    "type": "object"
+  }
+}

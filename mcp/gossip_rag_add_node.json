@@ -1,0 +1,80 @@
+{
+  "name": "gossip_rag_add_node",
+  "description": "Add a concept, file, code symbol, architectural decision, constraint, or formal proof to the shared knowledge graph",
+  "parameters": {
+    "properties": {
+      "created_by": {
+        "description": "Author agent ID",
+        "type": "string"
+      },
+      "id": {
+        "description": "Unique node ID (e.g. 'decision:adr-001', 'concept:crc32', 'file:pkg/mcp/server.go')",
+        "type": "string"
+      },
+      "label": {
+        "description": "Human-readable label or entity name",
+        "type": "string"
+      },
+      "source_path": {
+        "description": "Relevant source file path",
+        "type": "string"
+      },
+      "summary": {
+        "description": "Detailed description, specification, mathematical proof, or rationale",
+        "type": "string"
+      },
+      "tags": {
+        "description": "Categorical tags for filtering",
+        "type": "array"
+      },
+      "type": {
+        "description": "Node type: 'concept', 'file', 'symbol', 'decision', 'constraint', 'proof', 'architecture'",
+        "type": "string"
+      }
+    },
+    "required": [
+      "type",
+      "label",
+      "summary"
+    ],
+    "type": "object"
+  },
+  "inputSchema": {
+    "properties": {
+      "created_by": {
+        "description": "Author agent ID",
+        "type": "string"
+      },
+      "id": {
+        "description": "Unique node ID (e.g. 'decision:adr-001', 'concept:crc32', 'file:pkg/mcp/server.go')",
+        "type": "string"
+      },
+      "label": {
+        "description": "Human-readable label or entity name",
+        "type": "string"
+      },
+      "source_path": {
+        "description": "Relevant source file path",
+        "type": "string"
+      },
+      "summary": {
+        "description": "Detailed description, specification, mathematical proof, or rationale",
+        "type": "string"
+      },
+      "tags": {
+        "description": "Categorical tags for filtering",
+        "type": "array"
+      },
+      "type": {
+        "description": "Node type: 'concept', 'file', 'symbol', 'decision', 'constraint', 'proof', 'architecture'",
+        "type": "string"
+      }
+    },
+    "required": [
+      "type",
+      "label",
+      "summary"
+    ],
+    "type": "object"
+  }
+}

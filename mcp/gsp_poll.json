@@ -1,0 +1,86 @@
+{
+  "name": "gsp_poll",
+  "description": "Alias for gossip_poll_events: time-based continuous event polling and long-polling sync",
+  "parameters": {
+    "properties": {
+      "agent_id": {
+        "description": "Unique identifier of the calling agent",
+        "type": "string"
+      },
+      "auto_heartbeat": {
+        "description": "Automatically update agent's online heartbeat",
+        "type": "boolean"
+      },
+      "current_task_id": {
+        "description": "Active task ID",
+        "type": "string"
+      },
+      "event_types": {
+        "description": "Filter event categories",
+        "type": "array"
+      },
+      "role": {
+        "description": "Specialist role of the calling agent",
+        "type": "string"
+      },
+      "since_time": {
+        "description": "RFC3339 timestamp or relative duration",
+        "type": "string"
+      },
+      "status": {
+        "description": "Agent working status",
+        "type": "string"
+      },
+      "timeout_seconds": {
+        "description": "Long-polling timeout in seconds (0 to 60)",
+        "type": "integer"
+      }
+    },
+    "required": [
+      "agent_id",
+      "role"
+    ],
+    "type": "object"
+  },
+  "inputSchema": {
+    "properties": {
+      "agent_id": {
+        "description": "Unique identifier of the calling agent",
+        "type": "string"
+      },
+      "auto_heartbeat": {
+        "description": "Automatically update agent's online heartbeat",
+        "type": "boolean"
+      },
+      "current_task_id": {
+        "description": "Active task ID",
+        "type": "string"
+      },
+      "event_types": {
+        "description": "Filter event categories",
+        "type": "array"
+      },
+      "role": {
+        "description": "Specialist role of the calling agent",
+        "type": "string"
+      },
+      "since_time": {
+        "description": "RFC3339 timestamp or relative duration",
+        "type": "string"
+      },
+      "status": {
+        "description": "Agent working status",
+        "type": "string"
+      },
+      "timeout_seconds": {
+        "description": "Long-polling timeout in seconds (0 to 60)",
+        "type": "integer"
+      }
+    },
+    "required": [
+      "agent_id",
+      "role"
+    ],
+    "type": "object"
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "name": "gossip_debate_check_convergence",
+  "description": "Evaluate whether a multi-round debate has converged towards consensus or if further rounds are needed",
+  "parameters": {
+    "properties": {
+      "debate_id": {
+        "description": "ID of the debate",
+        "type": "string"
+      }
+    },
+    "required": [
+      "debate_id"
+    ],
+    "type": "object"
+  },
+  "inputSchema": {
+    "properties": {
+      "debate_id": {
+        "description": "ID of the debate",
+        "type": "string"
+      }
+    },
+    "required": [
+      "debate_id"
+    ],
+    "type": "object"
+  }
+}

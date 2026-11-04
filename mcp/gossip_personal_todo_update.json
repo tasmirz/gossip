@@ -1,0 +1,54 @@
+{
+  "name": "gossip_personal_todo_update",
+  "description": "Update status or notes for an agent's personal checklist item",
+  "parameters": {
+    "properties": {
+      "agent_id": {
+        "description": "Agent ID",
+        "type": "string"
+      },
+      "item_id": {
+        "description": "Personal to-do item ID",
+        "type": "string"
+      },
+      "notes": {
+        "description": "Updated scratchpad notes",
+        "type": "string"
+      },
+      "status": {
+        "description": "New status: 'pending', 'in_progress', 'done'",
+        "type": "string"
+      }
+    },
+    "required": [
+      "agent_id",
+      "item_id"
+    ],
+    "type": "object"
+  },
+  "inputSchema": {
+    "properties": {
+      "agent_id": {
+        "description": "Agent ID",
+        "type": "string"
+      },
+      "item_id": {
+        "description": "Personal to-do item ID",
+        "type": "string"
+      },
+      "notes": {
+        "description": "Updated scratchpad notes",
+        "type": "string"
+      },
+      "status": {
+        "description": "New status: 'pending', 'in_progress', 'done'",
+        "type": "string"
+      }
+    },
+    "required": [
+      "agent_id",
+      "item_id"
+    ],
+    "type": "object"
+  }
+}

@@ -1,0 +1,62 @@
+{
+  "name": "gossip_personal_todo_add",
+  "description": "Add a personal checklist item or scratchpad task for an agent to track internal sub-steps",
+  "parameters": {
+    "properties": {
+      "agent_id": {
+        "description": "Agent ID",
+        "type": "string"
+      },
+      "context_task_id": {
+        "description": "Parent global DAG task ID if applicable",
+        "type": "string"
+      },
+      "notes": {
+        "description": "Working notes, scratchpad remarks, or implementation thoughts",
+        "type": "string"
+      },
+      "priority": {
+        "description": "Priority: 'low', 'normal', 'high' (default: 'normal')",
+        "type": "string"
+      },
+      "title": {
+        "description": "Personal to-do item title",
+        "type": "string"
+      }
+    },
+    "required": [
+      "agent_id",
+      "title"
+    ],
+    "type": "object"
+  },
+  "inputSchema": {
+    "properties": {
+      "agent_id": {
+        "description": "Agent ID",
+        "type": "string"
+      },
+      "context_task_id": {
+        "description": "Parent global DAG task ID if applicable",
+        "type": "string"
+      },
+      "notes": {
+        "description": "Working notes, scratchpad remarks, or implementation thoughts",
+        "type": "string"
+      },
+      "priority": {
+        "description": "Priority: 'low', 'normal', 'high' (default: 'normal')",
+        "type": "string"
+      },
+      "title": {
+        "description": "Personal to-do item title",
+        "type": "string"
+      }
+    },
+    "required": [
+      "agent_id",
+      "title"
+    ],
+    "type": "object"
+  }
+}

@@ -1,0 +1,70 @@
+{
+  "name": "gossip_log_event",
+  "description": "Append an explicit custom event or checkpoint to the shared event ledger (events.jsonl)",
+  "parameters": {
+    "properties": {
+      "actor_id": {
+        "description": "Agent or system ID initiating the event",
+        "type": "string"
+      },
+      "actor_role": {
+        "description": "Role of the actor",
+        "type": "string"
+      },
+      "summary": {
+        "description": "Human-readable event summary",
+        "type": "string"
+      },
+      "target_id": {
+        "description": "Target entity, task ID, or recipient ID",
+        "type": "string"
+      },
+      "target_role": {
+        "description": "Target role",
+        "type": "string"
+      },
+      "type": {
+        "description": "Event category or action (e.g. 'build_finished', 'migration_complete')",
+        "type": "string"
+      }
+    },
+    "required": [
+      "type",
+      "summary"
+    ],
+    "type": "object"
+  },
+  "inputSchema": {
+    "properties": {
+      "actor_id": {
+        "description": "Agent or system ID initiating the event",
+        "type": "string"
+      },
+      "actor_role": {
+        "description": "Role of the actor",
+        "type": "string"
+      },
+      "summary": {
+        "description": "Human-readable event summary",
+        "type": "string"
+      },
+      "target_id": {
+        "description": "Target entity, task ID, or recipient ID",
+        "type": "string"
+      },
+      "target_role": {
+        "description": "Target role",
+        "type": "string"
+      },
+      "type": {
+        "description": "Event category or action (e.g. 'build_finished', 'migration_complete')",
+        "type": "string"
+      }
+    },
+    "required": [
+      "type",
+      "summary"
+    ],
+    "type": "object"
+  }
+}

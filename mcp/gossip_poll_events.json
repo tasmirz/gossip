@@ -1,0 +1,86 @@
+{
+  "name": "gossip_poll_events",
+  "description": "Continuously poll or long-poll for updates, new messages, newly unblocked ready tasks, debate rounds, and peer activity with timeout",
+  "parameters": {
+    "properties": {
+      "agent_id": {
+        "description": "Unique identifier of the calling agent",
+        "type": "string"
+      },
+      "auto_heartbeat": {
+        "description": "Automatically update agent's online heartbeat during poll (default: true)",
+        "type": "boolean"
+      },
+      "current_task_id": {
+        "description": "Active task ID currently being worked on",
+        "type": "string"
+      },
+      "event_types": {
+        "description": "Filter event categories: ['message_received', 'task_ready', 'task_assigned', 'task_updated', 'debate_activity', 'sop_advanced', 'agent_presence']",
+        "type": "array"
+      },
+      "role": {
+        "description": "Specialist role of the calling agent",
+        "type": "string"
+      },
+      "since_time": {
+        "description": "RFC3339 timestamp or relative duration (e.g. '2026-11-04T12:00:00Z', '30s', '5m')",
+        "type": "string"
+      },
+      "status": {
+        "description": "Agent working status: 'active', 'idle', 'blocked'",
+        "type": "string"
+      },
+      "timeout_seconds": {
+        "description": "Long-polling timeout in seconds (0 to 60; 0 returns immediately, \u003e0 waits for events)",
+        "type": "integer"
+      }
+    },
+    "required": [
+      "agent_id",
+      "role"
+    ],
+    "type": "object"
+  },
+  "inputSchema": {
+    "properties": {
+      "agent_id": {
+        "description": "Unique identifier of the calling agent",
+        "type": "string"
+      },
+      "auto_heartbeat": {
+        "description": "Automatically update agent's online heartbeat during poll (default: true)",
+        "type": "boolean"
+      },
+      "current_task_id": {
+        "description": "Active task ID currently being worked on",
+        "type": "string"
+      },
+      "event_types": {
+        "description": "Filter event categories: ['message_received', 'task_ready', 'task_assigned', 'task_updated', 'debate_activity', 'sop_advanced', 'agent_presence']",
+        "type": "array"
+      },
+      "role": {
+        "description": "Specialist role of the calling agent",
+        "type": "string"
+      },
+      "since_time": {
+        "description": "RFC3339 timestamp or relative duration (e.g. '2026-11-04T12:00:00Z', '30s', '5m')",
+        "type": "string"
+      },
+      "status": {
+        "description": "Agent working status: 'active', 'idle', 'blocked'",
+        "type": "string"
+      },
+      "timeout_seconds": {
+        "description": "Long-polling timeout in seconds (0 to 60; 0 returns immediately, \u003e0 waits for events)",
+        "type": "integer"
+      }
+    },
+    "required": [
+      "agent_id",
+      "role"
+    ],
+    "type": "object"
+  }
+}

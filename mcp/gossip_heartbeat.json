@@ -1,0 +1,44 @@
+{
+  "name": "gossip_heartbeat",
+  "description": "Send a heartbeat to keep agent session active and update current task or status",
+  "parameters": {
+    "properties": {
+      "agent_id": {
+        "description": "Unique identifier for this agent",
+        "type": "string"
+      },
+      "current_task_id": {
+        "description": "Current task ID being worked on",
+        "type": "string"
+      },
+      "status": {
+        "description": "Session status: 'active', 'idle', or 'offline'",
+        "type": "string"
+      }
+    },
+    "required": [
+      "agent_id"
+    ],
+    "type": "object"
+  },
+  "inputSchema": {
+    "properties": {
+      "agent_id": {
+        "description": "Unique identifier for this agent",
+        "type": "string"
+      },
+      "current_task_id": {
+        "description": "Current task ID being worked on",
+        "type": "string"
+      },
+      "status": {
+        "description": "Session status: 'active', 'idle', or 'offline'",
+        "type": "string"
+      }
+    },
+    "required": [
+      "agent_id"
+    ],
+    "type": "object"
+  }
+}

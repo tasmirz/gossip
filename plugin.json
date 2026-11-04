@@ -1,0 +1,38 @@
+{
+  "name": "gossip",
+  "displayName": "Gossip Multi-Agent Mesh",
+  "version": "1.0.0",
+  "description": "Multi-agent coordination fabric, task DAG delegation, MetaGPT-style Standard Operating Procedures (SOPs), inter-agent messaging, Graphify blast-radius RAG, Aider-style PageRank repo-mapping, Multi-Agent Debate (MAD) with Borda consensus, and STRIDE red-teaming.",
+  "author": {
+    "name": "tasmirz",
+    "url": "https://github.com/tasmirz"
+  },
+  "repository": "https://github.com/tasmirz/gossip",
+  "license": "AGPL-3.0",
+  "keywords": [
+    "multi-agent",
+    "mcp",
+    "rag",
+    "graphify",
+    "sop",
+    "metagpt",
+    "debate",
+    "stride",
+    "coordination",
+    "aider"
+  ],
+  "mcpServers": {
+    "gossip": {
+      "command": "./bin/gossip-mcp",
+      "args": [
+        "serve"
+      ],
+      "env": {
+        "GOSSIP_DIR": ".local/gossip"
+      }
+    }
+  },
+  "skills": [
+    "skills/gossip"
+  ]
+}

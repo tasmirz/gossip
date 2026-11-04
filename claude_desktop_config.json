@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "gossip": {
+      "command": "/home/user/Projects/gossip/bin/gossip-mcp",
+      "args": [
+        "serve"
+      ],
+      "env": {
+        "GOSSIP_DIR": ".local/gossip"
+      }
+    }
+  }
+}

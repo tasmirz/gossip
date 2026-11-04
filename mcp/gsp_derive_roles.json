@@ -1,0 +1,40 @@
+{
+  "name": "gsp_derive_roles",
+  "description": "Alias for gossip_derive_project_roles: derive roles, guardrails, cautions, and AGENTS.md",
+  "parameters": {
+    "properties": {
+      "project_goal": {
+        "description": "High-level architectural goal or purpose",
+        "type": "string"
+      },
+      "project_name": {
+        "description": "Name of the project",
+        "type": "string"
+      },
+      "tech_stack": {
+        "description": "List of core languages and frameworks",
+        "type": "array"
+      }
+    },
+    "required": [],
+    "type": "object"
+  },
+  "inputSchema": {
+    "properties": {
+      "project_goal": {
+        "description": "High-level architectural goal or purpose",
+        "type": "string"
+      },
+      "project_name": {
+        "description": "Name of the project",
+        "type": "string"
+      },
+      "tech_stack": {
+        "description": "List of core languages and frameworks",
+        "type": "array"
+      }
+    },
+    "required": [],
+    "type": "object"
+  }
+}

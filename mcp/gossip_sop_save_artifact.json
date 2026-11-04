@@ -1,0 +1,78 @@
+{
+  "name": "gossip_sop_save_artifact",
+  "description": "Save a versioned SOP artifact deliverable (PRD, System Design, Task Plan, Review, Security Audit)",
+  "parameters": {
+    "properties": {
+      "artifact_type": {
+        "description": "Type: 'prd', 'system_design', 'task_plan', 'code_manifest', 'peer_review', 'security_audit', 'release_notes'",
+        "type": "string"
+      },
+      "content": {
+        "description": "Full Markdown artifact document content",
+        "type": "string"
+      },
+      "created_by": {
+        "description": "Author Agent ID",
+        "type": "string"
+      },
+      "stage_id": {
+        "description": "Stage ID (e.g. 'requirements', 'architecture', 'planning', 'implementation', 'qa_review', 'security_audit')",
+        "type": "string"
+      },
+      "title": {
+        "description": "Artifact title",
+        "type": "string"
+      },
+      "workflow_id": {
+        "description": "Active SOP workflow ID",
+        "type": "string"
+      }
+    },
+    "required": [
+      "workflow_id",
+      "stage_id",
+      "artifact_type",
+      "title",
+      "content",
+      "created_by"
+    ],
+    "type": "object"
+  },
+  "inputSchema": {
+    "properties": {
+      "artifact_type": {
+        "description": "Type: 'prd', 'system_design', 'task_plan', 'code_manifest', 'peer_review', 'security_audit', 'release_notes'",
+        "type": "string"
+      },
+      "content": {
+        "description": "Full Markdown artifact document content",
+        "type": "string"
+      },
+      "created_by": {
+        "description": "Author Agent ID",
+        "type": "string"
+      },
+      "stage_id": {
+        "description": "Stage ID (e.g. 'requirements', 'architecture', 'planning', 'implementation', 'qa_review', 'security_audit')",
+        "type": "string"
+      },
+      "title": {
+        "description": "Artifact title",
+        "type": "string"
+      },
+      "workflow_id": {
+        "description": "Active SOP workflow ID",
+        "type": "string"
+      }
+    },
+    "required": [
+      "workflow_id",
+      "stage_id",
+      "artifact_type",
+      "title",
+      "content",
+      "created_by"
+    ],
+    "type": "object"
+  }
+}
