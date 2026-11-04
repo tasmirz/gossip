@@ -1,0 +1,36 @@
+{
+  "name": "gsp_parallel",
+  "description": "Dispatch parallel subagent tracks to execute decoupled DAG tasks concurrently",
+  "parameters": {
+    "properties": {
+      "agent_id": {
+        "description": "Orchestrator authorizing dispatch",
+        "type": "string"
+      },
+      "panel_id": {
+        "description": "ID of the synthesized MoE panel",
+        "type": "string"
+      }
+    },
+    "required": [
+      "panel_id"
+    ],
+    "type": "object"
+  },
+  "inputSchema": {
+    "properties": {
+      "agent_id": {
+        "description": "Orchestrator authorizing dispatch",
+        "type": "string"
+      },
+      "panel_id": {
+        "description": "ID of the synthesized MoE panel",
+        "type": "string"
+      }
+    },
+    "required": [
+      "panel_id"
+    ],
+    "type": "object"
+  }
+}

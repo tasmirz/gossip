@@ -1,0 +1,70 @@
+{
+  "name": "gsp_moe_convene",
+  "description": "Convene a dynamic Mixture of Experts (MoE) discussion council with automated router gating and specialist expert summoning",
+  "parameters": {
+    "properties": {
+      "domain": {
+        "description": "Domain keywords for router gating (e.g. 'concurrency, networking, crypto')",
+        "type": "string"
+      },
+      "initiator": {
+        "description": "Agent ID initiating the panel",
+        "type": "string"
+      },
+      "max_parallel": {
+        "description": "Maximum concurrent subagent workers for parallel tracks (default: 4)",
+        "type": "number"
+      },
+      "query": {
+        "description": "Complex dilemma or architectural question",
+        "type": "string"
+      },
+      "roles": {
+        "description": "Optional specific roles to summon (if omitted, router gates top-K experts automatically)",
+        "type": "array"
+      },
+      "title": {
+        "description": "Discussion council title",
+        "type": "string"
+      }
+    },
+    "required": [
+      "title",
+      "query"
+    ],
+    "type": "object"
+  },
+  "inputSchema": {
+    "properties": {
+      "domain": {
+        "description": "Domain keywords for router gating (e.g. 'concurrency, networking, crypto')",
+        "type": "string"
+      },
+      "initiator": {
+        "description": "Agent ID initiating the panel",
+        "type": "string"
+      },
+      "max_parallel": {
+        "description": "Maximum concurrent subagent workers for parallel tracks (default: 4)",
+        "type": "number"
+      },
+      "query": {
+        "description": "Complex dilemma or architectural question",
+        "type": "string"
+      },
+      "roles": {
+        "description": "Optional specific roles to summon (if omitted, router gates top-K experts automatically)",
+        "type": "array"
+      },
+      "title": {
+        "description": "Discussion council title",
+        "type": "string"
+      }
+    },
+    "required": [
+      "title",
+      "query"
+    ],
+    "type": "object"
+  }
+}

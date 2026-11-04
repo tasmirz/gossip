@@ -108,6 +108,26 @@
       "description": "Mark messages as read for this agent"
     },
     {
+      "name": "gossip_moe_convene_panel",
+      "description": "Convene a dynamic Mixture of Experts (MoE) discussion council with automated router gating and specialist expert summoning"
+    },
+    {
+      "name": "gossip_moe_dispatch_subagents",
+      "description": "Dispatch parallel subagent tracks to execute decoupled DAG tasks concurrently"
+    },
+    {
+      "name": "gossip_moe_list_panels",
+      "description": "List all active and past Mixture of Experts panels and their subagent tracks"
+    },
+    {
+      "name": "gossip_moe_post_argument",
+      "description": "Post a specialist expert domain perspective and technical argument to an active MoE panel"
+    },
+    {
+      "name": "gossip_moe_synthesize",
+      "description": "Synthesize the MoE council deliberations into a unified consensus decision and parallel subagent work packages"
+    },
+    {
       "name": "gossip_orchestrator_assignments",
       "description": "Orchestrator central assignment matrix: active tasks per agent, workload distribution, bottleneck tasks, and idle-worker delegation suggestions"
     },
@@ -280,6 +300,26 @@
       "description": "Alias for gossip_rag_index_codebase: parse AST and index codebase into RAG space"
     },
     {
+      "name": "gsp_moe_argument",
+      "description": "Post a specialist expert domain perspective and technical argument to an active MoE panel"
+    },
+    {
+      "name": "gsp_moe_convene",
+      "description": "Convene a dynamic Mixture of Experts (MoE) discussion council with automated router gating and specialist expert summoning"
+    },
+    {
+      "name": "gsp_moe_list",
+      "description": "List all active and past Mixture of Experts panels and their subagent tracks"
+    },
+    {
+      "name": "gsp_moe_synthesize",
+      "description": "Synthesize the MoE council deliberations into a unified consensus decision and parallel subagent work packages"
+    },
+    {
+      "name": "gsp_parallel",
+      "description": "Dispatch parallel subagent tracks to execute decoupled DAG tasks concurrently"
+    },
+    {
       "name": "gsp_poll",
       "description": "Alias for gossip_poll_events: time-based continuous event polling and long-polling sync"
     },
@@ -310,8 +350,16 @@
       "description": "Validate an action or code edit against active caution rules and project invariants"
     },
     {
+      "name": "gsp:moe",
+      "description": "Convene a dynamic Mixture of Experts (MoE) panel to resolve an architectural or algorithmic dilemma"
+    },
+    {
       "name": "gsp:my_todos",
       "description": "Inspect personal scratchpad checklist items and sub-tasks for an agent"
+    },
+    {
+      "name": "gsp:parallel",
+      "description": "Dispatch parallel subagent tracks to execute decoupled DAG tasks concurrently"
     },
     {
       "name": "gsp:poll",
