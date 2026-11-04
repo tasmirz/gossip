@@ -121,6 +121,17 @@ func main() {
 	case "watch", "gsp:watch":
 		runWatch(os.Args[2:])
 
+	case "todo", "gsp:my_todos":
+		runPersonalTodo(os.Args[2:])
+
+	case "system-todos", "gsp:system_todos":
+		dir := parseDirFlag(os.Args[2:])
+		runSystemTodos(dir)
+
+	case "assignments", "gsp:assignments":
+		dir := parseDirFlag(os.Args[2:])
+		runAssignments(dir)
+
 	case "roles":
 		fmt.Println(roles.FormatRoleSummary())
 
@@ -862,6 +873,117 @@ func runIndex(args []string) {
 	fmt.Printf("  • Report Generated : %s\n", filepath.Join(store.Dir(), "GRAPH_REPORT.md"))
 }
 
+func runPersonalTodo(args []string) {
+	if len(args) > 0 && args[0] == "add" {
+		fs := flag.NewFlagSet("todo add", flag.ExitOnError)
+		dir := fs.String("dir", "", "Path to gossip storage directory")
+		agent := fs.String("agent", "cli-agent", "Agent ID")
+		title := fs.String("title", "", "To-do item title")
+		priority := fs.String("priority", "normal", "Priority: low, normal, high")
+		taskID := fs.String("task", "", "Context DAG task ID")
+		notes := fs.String("notes", "", "Working notes")
+		_ = fs.Parse(args[1:])
+
+		if *title == "" {
+			fmt.Fprintln(os.Stderr, "Error: --title is required")
+			os.Exit(1)
+		}
+
+		store, err := state.NewStore(*dir)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+
+		tm := tasks.NewManager(store)
+		item, err := tm.AddPersonalTodo(*agent, *title, *priority, *taskID, *notes)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+
+		fmt.Printf("✓ Added personal to-do for agent '%s': [%s] %s (%s)\n",
+			*agent, item.ID, item.Title, item.Priority)
+		return
+	}
+
+	fs := flag.NewFlagSet("todo", flag.ExitOnError)
+	dir := fs.String("dir", "", "Path to gossip storage directory")
+	agent := fs.String("agent", "cli-agent", "Agent ID")
+	status := fs.String("status", "", "Filter by status: pending, in_progress, done")
+	_ = fs.Parse(args)
+
+	store, err := state.NewStore(*dir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	tm := tasks.NewManager(store)
+	items, err := tm.ListPersonalTodos(*agent, *status)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("=== Personal To-Do List: %s (%d items) ===\n", *agent, len(items))
+	if len(items) == 0 {
+		fmt.Println("No personal to-do items found.")
+		return
+	}
+
+	for i, it := range items {
+		statusMark := "[ ]"
+		if it.Status == "done" {
+			statusMark = "[✓]"
+		} else if it.Status == "in_progress" {
+			statusMark = "[→]"
+		}
+		contextStr := ""
+		if it.ContextTaskID != "" {
+			contextStr = fmt.Sprintf(" (DAG: %s)", it.ContextTaskID)
+		}
+		fmt.Printf("  %d. %s %s [%s]%s\n", i+1, statusMark, it.Title, strings.ToUpper(it.Priority), contextStr)
+		if it.Notes != "" {
+			fmt.Printf("     Notes: %s\n", it.Notes)
+		}
+	}
+}
+
+func runSystemTodos(customDir string) {
+	store, err := state.NewStore(customDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	tm := tasks.NewManager(store)
+	sysList, err := tm.GetSystemTodoList()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Print(sysList.RenderMarkdown())
+}
+
+func runAssignments(customDir string) {
+	store, err := state.NewStore(customDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	tm := tasks.NewManager(store)
+	matrix, err := tm.GetOrchestratorAssignments()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Print(matrix.RenderMarkdown())
+}
+
 func printHelp() {
 	fmt.Printf("%s\n", BannerArt)
 	fmt.Print(`Usage:
@@ -889,6 +1011,9 @@ Commands:
   agents          Print active AGENTS.md directives and role boundaries (alias: gsp:agents)
   poll            Poll or long-poll for incoming messages & tasks with timeout (alias: gsp:poll)
   watch           Live tail of events and mesh activities (alias: gsp:watch)
+  todo            List or add personal agent scratchpad to-dos (alias: gsp:my_todos)
+  system-todos    View unified cross-system backlog (alias: gsp:system_todos)
+  assignments     View Orchestrator task allocation & workload matrix (alias: gsp:assignments)
   roles           Print complete directory of agent roles and directives
   send            Send a message to an agent, role, or broadcast to all
   version         Show Gossip version
@@ -900,6 +1025,10 @@ Options:
 Examples:
   gossip init
   gossip index
+  gossip assignments
+  gossip system-todos
+  gossip todo --agent worker-1
+  gossip todo add --agent worker-1 --title "Verify memory alignment" --task task-1
   gossip mcp
   gossip repomap
   gossip pagerank
