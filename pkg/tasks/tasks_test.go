@@ -141,3 +141,49 @@ func TestDAGCycleDetection(t *testing.T) {
 		t.Fatalf("Expected cycle detection failure, but succeeded")
 	}
 }
+
+func TestModifyTask(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "gossip-task-modify-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	store, err := state.NewStore(tmpDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	mgr := tasks.NewManager(store)
+	task, err := mgr.CreateTask("Original Title", "Original Desc", "worker", tasks.PriorityLow, nil, []string{"criteria 1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	newTitle := "Updated Title"
+	newDesc := "Updated Description"
+	newRole := "systems_architect"
+	newPriority := tasks.PriorityHigh
+	newAssigned := "sysarch-1"
+	newCriteria := []string{"criteria 1", "criteria 2"}
+
+	modified, err := mgr.ModifyTask(task.ID, tasks.TaskModifications{
+		Title:              &newTitle,
+		Description:        &newDesc,
+		Role:               &newRole,
+		Priority:           &newPriority,
+		AssignedTo:         &newAssigned,
+		AcceptanceCriteria: &newCriteria,
+		ProgressNote:       "Updated details from dashboard",
+	})
+	if err != nil {
+		t.Fatalf("ModifyTask failed: %v", err)
+	}
+
+	if modified.Title != newTitle || modified.Role != newRole || modified.Priority != newPriority {
+		t.Fatalf("ModifyTask did not update fields correctly: %+v", modified)
+	}
+	if len(modified.Notes) != 1 {
+		t.Fatalf("Expected 1 note, got %d", len(modified.Notes))
+	}
+}

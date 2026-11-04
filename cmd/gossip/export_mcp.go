@@ -19,12 +19,12 @@ type toolExportSchema struct {
 }
 
 type mcpServerManifest struct {
-	Name         string                `json:"name"`
-	Version      string                `json:"version"`
-	Description  string                `json:"description"`
+	Name         string                 `json:"name"`
+	Version      string                 `json:"version"`
+	Description  string                 `json:"description"`
 	Capabilities map[string]interface{} `json:"capabilities"`
-	Tools        []toolExportSummary   `json:"tools"`
-	Prompts      []promptExportSummary `json:"prompts"`
+	Tools        []toolExportSummary    `json:"tools"`
+	Prompts      []promptExportSummary  `json:"prompts"`
 }
 
 type toolExportSummary struct {

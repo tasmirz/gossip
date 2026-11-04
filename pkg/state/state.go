@@ -16,9 +16,9 @@ const DefaultDirName = ".local/gossip"
 
 // Store manages thread-safe and process-safe persistence under .local/gossip.
 type Store struct {
-	dir     string
-	lockMu  sync.Mutex // in-process mutex
-	lockFd  *os.File   // inter-process lockfile
+	dir    string
+	lockMu sync.Mutex // in-process mutex
+	lockFd *os.File   // inter-process lockfile
 }
 
 // Milestone represents an interim checkpoint under a high-level goal.

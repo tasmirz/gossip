@@ -196,8 +196,22 @@ func (m *Manager) CreateTask(title, description, role, priority string, blockedB
 	return &task, nil
 }
 
-// UpdateTask transitions task status and updates notes or assignees.
-func (m *Manager) UpdateTask(taskID, status, assignedTo, progressNote, artifact string) (*Task, error) {
+// TaskModifications specifies fields to update on an existing task.
+type TaskModifications struct {
+	Title              *string
+	Description        *string
+	Role               *string
+	Priority           *string
+	Status             *string
+	AssignedTo         *string
+	BlockedBy          *[]string
+	AcceptanceCriteria *[]string
+	ProgressNote       string
+	Artifact           string
+}
+
+// ModifyTask updates task details, maintaining DAG consistency and invariants.
+func (m *Manager) ModifyTask(taskID string, mods TaskModifications) (*Task, error) {
 	unlock, err := m.store.Lock()
 	if err != nil {
 		return nil, err
@@ -215,32 +229,105 @@ func (m *Manager) UpdateTask(taskID, status, assignedTo, progressNote, artifact 
 	}
 
 	now := time.Now()
-	if assignedTo != "" {
-		task.AssignedTo = assignedTo
+
+	if mods.Title != nil && *mods.Title != "" {
+		task.Title = *mods.Title
+	}
+	if mods.Description != nil {
+		task.Description = *mods.Description
+	}
+	if mods.Role != nil && *mods.Role != "" {
+		task.Role = *mods.Role
+	}
+	if mods.Priority != nil && *mods.Priority != "" {
+		task.Priority = *mods.Priority
+	}
+	if mods.AssignedTo != nil {
+		task.AssignedTo = *mods.AssignedTo
+	}
+	if mods.AcceptanceCriteria != nil {
+		task.AcceptanceCriteria = *mods.AcceptanceCriteria
 	}
 
-	if status != "" {
-		// If trying to mark in_progress or completed, check if any blockers remain
-		if status == StatusInProgress || status == StatusCompleted {
+	// If BlockedBy is modified, adjust inverse references and check for cycles
+	if mods.BlockedBy != nil {
+		newBlockedBy := *mods.BlockedBy
+		// Remove taskID from old dependencies' Blocks lists
+		for _, oldDepID := range task.BlockedBy {
+			if oldDep, ok := c.Tasks[oldDepID]; ok {
+				var updatedBlocks []string
+				for _, bID := range oldDep.Blocks {
+					if bID != taskID {
+						updatedBlocks = append(updatedBlocks, bID)
+					}
+				}
+				oldDep.Blocks = updatedBlocks
+				c.Tasks[oldDepID] = oldDep
+			}
+		}
+
+		// Verify new dependencies exist and no self-blocker
+		for _, depID := range newBlockedBy {
+			if depID == taskID {
+				return nil, fmt.Errorf("task %s cannot block itself", taskID)
+			}
+			if _, exists := c.Tasks[depID]; !exists {
+				return nil, fmt.Errorf("prerequisite task %s does not exist", depID)
+			}
+		}
+
+		// Add taskID to new dependencies' Blocks lists
+		for _, depID := range newBlockedBy {
+			dep := c.Tasks[depID]
+			found := false
+			for _, bID := range dep.Blocks {
+				if bID == taskID {
+					found = true
+					break
+				}
+			}
+			if !found {
+				dep.Blocks = append(dep.Blocks, taskID)
+				c.Tasks[depID] = dep
+			}
+		}
+
+		task.BlockedBy = newBlockedBy
+
+		// Cycle check
+		c.Tasks[taskID] = task
+		if err := m.validateNoCycles(c.Tasks); err != nil {
+			return nil, fmt.Errorf("modifying dependencies creates cycle: %w", err)
+		}
+	}
+
+	// Status transitions
+	if mods.Status != nil && *mods.Status != "" {
+		newStatus := *mods.Status
+		if newStatus == StatusInProgress || newStatus == StatusCompleted {
 			for _, depID := range task.BlockedBy {
 				if dep, ok := c.Tasks[depID]; ok && dep.Status != StatusCompleted {
 					return nil, fmt.Errorf("cannot advance %s: still blocked by incomplete task %s (%s)", taskID, depID, dep.Title)
 				}
 			}
 		}
-		task.Status = status
+		task.Status = newStatus
 	}
 
-	if progressNote != "" {
+	if mods.ProgressNote != "" {
+		author := task.AssignedTo
+		if author == "" {
+			author = "user"
+		}
 		task.Notes = append(task.Notes, TaskNote{
-			Author:    assignedTo,
-			Content:   progressNote,
+			Author:    author,
+			Content:   mods.ProgressNote,
 			Timestamp: now,
 		})
 	}
 
-	if artifact != "" {
-		task.ResultArtifacts = append(task.ResultArtifacts, artifact)
+	if mods.Artifact != "" {
+		task.ResultArtifacts = append(task.ResultArtifacts, mods.Artifact)
 	}
 
 	task.UpdatedAt = now
@@ -271,6 +358,21 @@ func (m *Manager) UpdateTask(taskID, status, assignedTo, progressNote, artifact 
 	}
 
 	return &task, nil
+}
+
+// UpdateTask transitions task status and updates notes or assignees.
+func (m *Manager) UpdateTask(taskID, status, assignedTo, progressNote, artifact string) (*Task, error) {
+	mods := TaskModifications{
+		ProgressNote: progressNote,
+		Artifact:     artifact,
+	}
+	if status != "" {
+		mods.Status = &status
+	}
+	if assignedTo != "" {
+		mods.AssignedTo = &assignedTo
+	}
+	return m.ModifyTask(taskID, mods)
 }
 
 // GetTask returns a single task by ID.

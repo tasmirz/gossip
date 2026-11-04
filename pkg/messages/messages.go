@@ -15,14 +15,14 @@ import (
 // Message represents an inter-agent communication event.
 type Message struct {
 	ID        string    `json:"id"`
-	From      string    `json:"from"`       // e.g. "agent:orch_1" or "orchestrator"
-	Role      string    `json:"role"`       // Sender's role
-	To        string    `json:"to"`         // "agent:<id>", "role:<role_id>", "all", "*"
-	ThreadID  string    `json:"thread_id"`  // Thread grouping
+	From      string    `json:"from"`      // e.g. "agent:orch_1" or "orchestrator"
+	Role      string    `json:"role"`      // Sender's role
+	To        string    `json:"to"`        // "agent:<id>", "role:<role_id>", "all", "*"
+	ThreadID  string    `json:"thread_id"` // Thread grouping
 	Subject   string    `json:"subject"`
 	Content   string    `json:"content"`
 	CreatedAt time.Time `json:"created_at"`
-	ReadBy    []string  `json:"read_by"`    // List of agent IDs who have acknowledged reading
+	ReadBy    []string  `json:"read_by"` // List of agent IDs who have acknowledged reading
 }
 
 // ThreadSummary groups messages for high-level conversation inspection.

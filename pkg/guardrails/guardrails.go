@@ -210,13 +210,13 @@ func (m *Manager) DeriveProjectRoles(projectName string, techStack []string, pro
 	// Derive tech-stack-specific specialist roles
 	if strings.Contains(stackLower, "go") || strings.Contains(stackLower, "golang") {
 		pg.Roles["go_systems_engineer"] = RoleGuardrail{
-			RoleID:            "go_systems_engineer",
-			Title:             "Go Systems & Concurrency Engineer",
-			Description:       "Specializes in goroutines, channel synchronization, race detection, and atomic OS primitives.",
-			SystemPrompt:      "You are a Go Systems Engineer. Always write race-free, idiomatic Go code with proper error wrapping.",
-			PermittedActions:  []string{"write_code", "run_tests", "inspect_graph", "post_argument"},
-			ForbiddenActions:  []string{"bypass_race_detector", "suppress_flock_errors"},
-			CautionDirectives: []string{"Always run 'go test -v -race ./...' on code modifications.", "Use sync.Mutex with defer unlock carefully to prevent deadlocks."},
+			RoleID:                "go_systems_engineer",
+			Title:                 "Go Systems & Concurrency Engineer",
+			Description:           "Specializes in goroutines, channel synchronization, race detection, and atomic OS primitives.",
+			SystemPrompt:          "You are a Go Systems Engineer. Always write race-free, idiomatic Go code with proper error wrapping.",
+			PermittedActions:      []string{"write_code", "run_tests", "inspect_graph", "post_argument"},
+			ForbiddenActions:      []string{"bypass_race_detector", "suppress_flock_errors"},
+			CautionDirectives:     []string{"Always run 'go test -v -race ./...' on code modifications.", "Use sync.Mutex with defer unlock carefully to prevent deadlocks."},
 			SensitivePathPatterns: []string{"pkg/state/lock*"},
 		}
 	}
