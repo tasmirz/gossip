@@ -65,7 +65,7 @@ type DebateRound struct {
 type Vote struct {
 	AgentID    string    `json:"agent_id"`
 	Role       string    `json:"role"`
-	Choice     string    `json:"choice"` // accept, reject, abstain
+	Choice     string    `json:"choice"`     // accept, reject, abstain
 	Confidence int       `json:"confidence"` // 1 to 5
 	Reasoning  string    `json:"reasoning"`
 	CreatedAt  time.Time `json:"created_at"`
@@ -123,16 +123,16 @@ type Review struct {
 
 // RedTeamProbe models an adversarial penetration or fuzzing test vector.
 type RedTeamProbe struct {
-	ID                 string    `json:"id"`
-	Target             string    `json:"target"`
-	ThreatCategory     string    `json:"threat_category"` // STRIDE category or concurrency_race, boundary_overflow
-	AttackerID         string    `json:"attacker_id"`
-	AttackVector       string    `json:"attack_vector"`
-	PoCPayload         string    `json:"poc_payload,omitempty"`
-	Status             string    `json:"status"` // vulnerable, mitigated, false_positive
-	RemediationTaskID  string    `json:"remediation_task_id,omitempty"`
-	CreatedAt          time.Time `json:"created_at"`
-	UpdatedAt          time.Time `json:"updated_at"`
+	ID                string    `json:"id"`
+	Target            string    `json:"target"`
+	ThreatCategory    string    `json:"threat_category"` // STRIDE category or concurrency_race, boundary_overflow
+	AttackerID        string    `json:"attacker_id"`
+	AttackVector      string    `json:"attack_vector"`
+	PoCPayload        string    `json:"poc_payload,omitempty"`
+	Status            string    `json:"status"` // vulnerable, mitigated, false_positive
+	RemediationTaskID string    `json:"remediation_task_id,omitempty"`
+	CreatedAt         time.Time `json:"created_at"`
+	UpdatedAt         time.Time `json:"updated_at"`
 }
 
 // DeliberationStore holds all debates, reviews, and red-team probes in deliberations.json.

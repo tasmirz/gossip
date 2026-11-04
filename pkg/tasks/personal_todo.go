@@ -25,8 +25,8 @@ type PersonalTodoItem struct {
 	ID            string    `json:"id"`
 	AgentID       string    `json:"agent_id"`
 	Title         string    `json:"title"`
-	Status        string    `json:"status"` // pending, in_progress, done
-	Priority      string    `json:"priority"` // low, normal, high
+	Status        string    `json:"status"`                    // pending, in_progress, done
+	Priority      string    `json:"priority"`                  // low, normal, high
 	ContextTaskID string    `json:"context_task_id,omitempty"` // Parent global DAG task
 	Notes         string    `json:"notes,omitempty"`
 	CreatedAt     time.Time `json:"created_at"`

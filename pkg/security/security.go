@@ -10,10 +10,10 @@ import (
 
 // Standard payload size limits to prevent memory exhaustion and DoS attacks.
 const (
-	MaxMessageSizeBytes  = 512 * 1024       // 512 KB
-	MaxArtifactSizeBytes = 4 * 1024 * 1024  // 4 MB
-	MaxGraphSummaryBytes = 64 * 1024        // 64 KB
-	MaxStringParamBytes  = 256 * 1024       // 256 KB
+	MaxMessageSizeBytes  = 512 * 1024      // 512 KB
+	MaxArtifactSizeBytes = 4 * 1024 * 1024 // 4 MB
+	MaxGraphSummaryBytes = 64 * 1024       // 64 KB
+	MaxStringParamBytes  = 256 * 1024      // 256 KB
 	MaxIDLength          = 128
 )
 

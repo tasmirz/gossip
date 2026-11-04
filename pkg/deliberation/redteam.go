@@ -8,12 +8,12 @@ import (
 
 // STRIDE threat modeling categories
 const (
-	ThreatSpoofing          = "SPOOFING"
-	ThreatTampering         = "TAMPERING"
-	ThreatRepudiation       = "REPUDIATION"
-	ThreatInfoDisclosure    = "INFO_DISCLOSURE"
-	ThreatDenialOfService   = "DENIAL_OF_SERVICE"
-	ThreatElevationOfPriv   = "ELEVATION_OF_PRIVILEGE"
+	ThreatSpoofing        = "SPOOFING"
+	ThreatTampering       = "TAMPERING"
+	ThreatRepudiation     = "REPUDIATION"
+	ThreatInfoDisclosure  = "INFO_DISCLOSURE"
+	ThreatDenialOfService = "DENIAL_OF_SERVICE"
+	ThreatElevationOfPriv = "ELEVATION_OF_PRIVILEGE"
 )
 
 // GenerateSTRIDEProbes generates structured red-team attack scenarios against a target component across all 6 STRIDE dimensions.
