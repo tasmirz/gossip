@@ -69,6 +69,30 @@ func TestStateStoreLifecycle(t *testing.T) {
 		t.Fatalf("Expected task-100, got %s", agents[0].CurrentTaskID)
 	}
 
+	// Test Re-identification across sessions
+	origRegisteredAt := agents[0].RegisteredAt
+	time.Sleep(10 * time.Millisecond)
+	reidentSession := state.AgentSession{
+		ID:        "test-agent-1",
+		SessionID: "sess-2",
+	}
+	if err := store.RegisterAgent(reidentSession); err != nil {
+		t.Fatalf("RegisterAgent re-identification failed: %v", err)
+	}
+	fetched, found, err := store.GetAgent("test-agent-1")
+	if err != nil || !found {
+		t.Fatalf("GetAgent failed: found=%v, err=%v", found, err)
+	}
+	if fetched.SessionCount != 2 {
+		t.Fatalf("Expected SessionCount=2, got %d", fetched.SessionCount)
+	}
+	if !fetched.RegisteredAt.Equal(origRegisteredAt) {
+		t.Fatalf("Expected RegisteredAt to be preserved across sessions")
+	}
+	if fetched.Role != "qa_engineer" {
+		t.Fatalf("Expected Role='qa_engineer' to be retained, got %s", fetched.Role)
+	}
+
 	// Test Goals & Milestones
 	goal, err := store.SetGoal("Design Protocol", "Design binary framing", []state.Milestone{
 		{ID: "ms-1", Title: "Define Header", Completed: false},

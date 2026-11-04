@@ -1,0 +1,60 @@
+{
+  "name": "gossip_reidentify_agent",
+  "description": "Re-identify or resume an agent session across restarts or new context sessions, returning an instant catch-up briefing of assigned tasks, unread inbox messages, active SOP stages, and personal to-dos",
+  "parameters": {
+    "properties": {
+      "agent_id": {
+        "description": "Unique identifier of the agent re-identifying",
+        "type": "string"
+      },
+      "format": {
+        "description": "Output format: 'markdown' (default) or 'json'",
+        "type": "string"
+      },
+      "role": {
+        "description": "Optional role override (if omitted, existing role is retained)",
+        "type": "string"
+      },
+      "session_id": {
+        "description": "Optional external session or conversation ID",
+        "type": "string"
+      },
+      "status": {
+        "description": "Optional status (default: 'active')",
+        "type": "string"
+      }
+    },
+    "required": [
+      "agent_id"
+    ],
+    "type": "object"
+  },
+  "inputSchema": {
+    "properties": {
+      "agent_id": {
+        "description": "Unique identifier of the agent re-identifying",
+        "type": "string"
+      },
+      "format": {
+        "description": "Output format: 'markdown' (default) or 'json'",
+        "type": "string"
+      },
+      "role": {
+        "description": "Optional role override (if omitted, existing role is retained)",
+        "type": "string"
+      },
+      "session_id": {
+        "description": "Optional external session or conversation ID",
+        "type": "string"
+      },
+      "status": {
+        "description": "Optional status (default: 'active')",
+        "type": "string"
+      }
+    },
+    "required": [
+      "agent_id"
+    ],
+    "type": "object"
+  }
+}

@@ -200,12 +200,20 @@
       "description": "Dynamically define and register a new custom agent role at runtime (stored in JSON)"
     },
     {
+      "name": "gossip_reidentify_agent",
+      "description": "Re-identify or resume an agent session across restarts or new context sessions, returning an instant catch-up briefing of assigned tasks, unread inbox messages, active SOP stages, and personal to-dos"
+    },
+    {
       "name": "gossip_render_board",
       "description": "Render and return the live Markdown Kanban board (BOARD.md) representing current multi-agent work state"
     },
     {
       "name": "gossip_request_review",
       "description": "Request a formal peer review or critique cycle on a task, artifact, or code file"
+    },
+    {
+      "name": "gossip_resume_session",
+      "description": "Re-identify or resume an agent session across restarts or new context sessions, returning an instant catch-up briefing of assigned tasks, unread inbox messages, active SOP stages, and personal to-dos"
     },
     {
       "name": "gossip_send_message",
@@ -274,6 +282,10 @@
     {
       "name": "gsp_poll",
       "description": "Alias for gossip_poll_events: time-based continuous event polling and long-polling sync"
+    },
+    {
+      "name": "gsp_reidentify",
+      "description": "Re-identify or resume an agent session across restarts or new context sessions, returning an instant catch-up briefing of assigned tasks, unread inbox messages, active SOP stages, and personal to-dos"
     }
   ],
   "prompts": [
@@ -308,6 +320,10 @@
     {
       "name": "gsp:repomap",
       "description": "Fetch PageRank-ranked architectural repo map for context injection"
+    },
+    {
+      "name": "gsp:resume",
+      "description": "Re-identify this agent in a new or resuming session and receive full catch-up context"
     },
     {
       "name": "gsp:review",

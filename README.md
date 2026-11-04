@@ -118,6 +118,7 @@ Gossip implements three built-in SOP templates with strict phase gates and artif
 
 ### 1. Identity & Role Management
 - `gossip_register_agent`: Join the active gossip mesh with agent ID, role, capabilities, and active task. Supports multi-instance per role.
+- `gossip_reidentify_agent` (aliases: `gsp_reidentify`, `gossip_resume_session`): Re-identify or resume an agent session across restarts or new context sessions, returning an instant catch-up briefing of in-progress tasks, unread inbox messages, active SOP stages, and personal to-dos.
 - `gossip_list_agents`: List all active agents, their statuses, tasks, and last heartbeats.
 - `gossip_heartbeat`: Refresh session timestamp and update current task or status.
 - `gossip_get_role_definition`: Fetch complete system prompt, directives, and tool recommendations for any role.
@@ -208,7 +209,8 @@ Gossip supports three distinct, coordinated task management scopes:
 - `gossip_log_event`: Append an explicit custom milestone or event to the shared event ledger (`events.jsonl`).
 
 ### 11. MCP Prompts as Native Slash Commands (`/gsp:...`)
-Gossip exports 12 standardized Model Context Protocol Prompts that modern MCP clients (Claude, Antigravity) surface as `/gsp:...` slash commands:
+Gossip exports 13 standardized Model Context Protocol Prompts that modern MCP clients (Claude, Antigravity) surface as `/gsp:...` slash commands:
+- `/gsp:resume`: Re-identify an agent across restarts or in a new session with an instant catch-up briefing.
 - `/gsp:assignments`: Inspect Orchestrator workload distribution, assigned tasks, and delegation suggestions.
 - `/gsp:my_todos`: Inspect personal agent scratchpad checklist.
 - `/gsp:system_todos`: Inspect unified project-wide action backlog.

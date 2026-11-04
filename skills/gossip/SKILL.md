@@ -195,6 +195,7 @@ All state is persisted under `.local/gossip/` inside the current project root:
 
 ### Agent & Role Management
 - `gossip_register_agent`: Join the active agent mesh (`agent_id`, `role`, `name`, `capabilities`).
+- `gossip_reidentify_agent` (aliases: `gsp_reidentify`, `gossip_resume_session`): Re-identify or resume an agent session across restarts or new context sessions, returning an instant catch-up briefing of in-progress tasks, unread inbox messages, active SOP stages, and personal to-dos.
 - `gossip_list_agents`: View online/idle agents and their current tasks.
 - `gossip_heartbeat`: Send heartbeat and update active status (`agent_id`, `current_task_id`, `status`).
 - `gossip_get_role_definition`: Read system prompt and directives for a role (`role_id`).
@@ -278,20 +279,21 @@ All state is persisted under `.local/gossip/` inside the current project root:
 
 ## 7. Native MCP Prompts as Slash Commands (`/gsp:...`)
 
-Gossip registers 12 official Model Context Protocol Prompts that modern MCP clients expose directly in chat as `/gsp:...`:
+Gossip registers 13 official Model Context Protocol Prompts that modern MCP clients expose directly in chat as `/gsp:...`:
 
-1. `/gsp:poll`: Set up continuous event polling and long-polling sync loop.
-2. `/gsp:assignments`: Inspect Orchestrator workload distribution, assigned tasks, and delegation suggestions.
-3. `/gsp:my_todos`: Inspect and update personal agent scratchpad checklist.
-4. `/gsp:system_todos`: Inspect unified project-wide action backlog.
-5. `/gsp:derive_roles`: Synthesize specialist roles and guardrails tailored to the active repository.
-6. `/gsp:blast_radius`: Analyze reverse dependency impact before modifying files or symbols.
-7. `/gsp:sop_advance`: Advance SOP phase gate with verification checklist.
-8. `/gsp:debate`: Initiate an adversarial multi-agent debate with convergence tracking.
-9. `/gsp:stride_audit`: Execute automated STRIDE threat modeling against interfaces.
-10. `/gsp:review`: Request or submit a formal peer review on deliverables.
-11. `/gsp:guardrail_check`: Pre-flight action inspection against caution rules.
-12. `/gsp:repomap`: Fetch token-budgeted PageRank architectural repo map.
+1. `/gsp:resume`: Re-identify an agent across restarts or in a new session with an instant catch-up briefing.
+2. `/gsp:poll`: Set up continuous event polling and long-polling sync loop.
+3. `/gsp:assignments`: Inspect Orchestrator workload distribution, assigned tasks, and delegation suggestions.
+4. `/gsp:my_todos`: Inspect and update personal agent scratchpad checklist.
+5. `/gsp:system_todos`: Inspect unified project-wide action backlog.
+6. `/gsp:derive_roles`: Synthesize specialist roles and guardrails tailored to the active repository.
+7. `/gsp:blast_radius`: Analyze reverse dependency impact before modifying files or symbols.
+8. `/gsp:sop_advance`: Advance SOP phase gate with verification checklist.
+9. `/gsp:debate`: Initiate an adversarial multi-agent debate with convergence tracking.
+10. `/gsp:stride_audit`: Execute automated STRIDE threat modeling against interfaces.
+11. `/gsp:review`: Request or submit a formal peer review on deliverables.
+12. `/gsp:guardrail_check`: Pre-flight action inspection against caution rules.
+13. `/gsp:repomap`: Fetch token-budgeted PageRank architectural repo map.
 
 ---
 
