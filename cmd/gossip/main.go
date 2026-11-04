@@ -248,7 +248,7 @@ func runInit(customDir string) {
 	_ = gm.SaveGraph(g)
 
 	fmt.Printf("%s\n", BannerArt)
-	fmt.Printf("✓ Initialized Gossip mesh in: %s\n", store.Dir())
+	fmt.Printf("[OK] Initialized Gossip mesh in: %s\n", store.Dir())
 	fmt.Printf("  ├── state.json\n")
 	fmt.Printf("  ├── tasks.json\n")
 	fmt.Printf("  ├── messages.jsonl\n")
@@ -446,7 +446,7 @@ func runSend(args []string) {
 		os.Exit(1)
 	}
 
-	fmt.Printf("✓ Message sent [%s] to %s: %s\n", m.ID, m.To, m.Content)
+	fmt.Printf("[OK] Message sent [%s] to %s: %s\n", m.ID, m.To, m.Content)
 }
 
 func runPageRank(customDir string) {
@@ -499,13 +499,13 @@ func runImpact(args []string) {
 		os.Exit(1)
 	}
 
-	fmt.Printf("🎯 Blast-Radius Impact Analysis for [%s] (%s)\n", report.SeedNodeID, report.SeedLabel)
+	fmt.Printf("[IMPACT] Blast-Radius Impact Analysis for [%s] (%s)\n", report.SeedNodeID, report.SeedLabel)
 	fmt.Printf("Total Affected Components: %d | Blast Radius Score: %.2f / 100.0\n\n", report.TotalAffectedCount, report.BlastRadiusScore)
 
 	if len(report.DirectHits) > 0 {
 		fmt.Printf("=== Direct Dependents (Depth 1) [%d] ===\n", len(report.DirectHits))
 		for _, h := range report.DirectHits {
-			fmt.Printf("  • %-20s (%s) via %s from %s\n", h.NodeID, h.Type, h.ViaRelation, h.ViaSource)
+			fmt.Printf("  * %-20s (%s) via %s from %s\n", h.NodeID, h.Type, h.ViaRelation, h.ViaSource)
 		}
 		fmt.Println()
 	}
@@ -513,7 +513,7 @@ func runImpact(args []string) {
 	if len(report.IndirectHits) > 0 {
 		fmt.Printf("=== Transitive Dependents (Depth 2+) [%d] ===\n", len(report.IndirectHits))
 		for _, h := range report.IndirectHits {
-			fmt.Printf("  • %-20s (Depth %d, %s) via %s from %s\n", h.NodeID, h.Depth, h.Type, h.ViaRelation, h.ViaSource)
+			fmt.Printf("  * %-20s (Depth %d, %s) via %s from %s\n", h.NodeID, h.Depth, h.Type, h.ViaRelation, h.ViaSource)
 		}
 		fmt.Println()
 	}
@@ -521,7 +521,7 @@ func runImpact(args []string) {
 	if len(report.RecommendedVerifications) > 0 {
 		fmt.Println("=== Recommended Verifications ===")
 		for _, rec := range report.RecommendedVerifications {
-			fmt.Printf("  ✓ %s\n", rec)
+			fmt.Printf("  [OK] %s\n", rec)
 		}
 	}
 }
@@ -546,7 +546,7 @@ func runClusters(customDir string) {
 	}
 
 	for _, c := range clusters {
-		fmt.Printf("📦 %s (Hub: %s, Size: %d)\n", c.ClusterName, c.HubNode, c.Size)
+		fmt.Printf("[CLUSTER] %s (Hub: %s, Size: %d)\n", c.ClusterName, c.HubNode, c.Size)
 		for _, n := range c.Nodes {
 			fmt.Printf("   - %s\n", n)
 		}
@@ -664,12 +664,12 @@ func runDerive(args []string) {
 	}
 	_ = roleSrv.SaveToFile(filepath.Join(store.Dir(), "roles.json"))
 
-	fmt.Printf("✓ Derived %d roles & guardrails for project '%s'\n", len(pg.Roles), pg.ProjectName)
-	fmt.Printf("  • Stored configuration: %s\n", filepath.Join(store.Dir(), "guardrails.json"))
-	fmt.Printf("  • Generated directives: %s\n", filepath.Join(store.Dir(), "AGENTS.md"))
+	fmt.Printf("[OK] Derived %d roles & guardrails for project '%s'\n", len(pg.Roles), pg.ProjectName)
+	fmt.Printf("  * Stored configuration: %s\n", filepath.Join(store.Dir(), "guardrails.json"))
+	fmt.Printf("  * Generated directives: %s\n", filepath.Join(store.Dir(), "AGENTS.md"))
 	fmt.Println("\n=== Derived Roles ===")
 	for _, r := range pg.Roles {
-		fmt.Printf("  • %-22s: %s (Permitted: %d, Forbidden: %d)\n", r.RoleID, r.Title, len(r.PermittedActions), len(r.ForbiddenActions))
+		fmt.Printf("  * %-22s: %s (Permitted: %d, Forbidden: %d)\n", r.RoleID, r.Title, len(r.PermittedActions), len(r.ForbiddenActions))
 	}
 	fmt.Printf("\n=== Project Invariants (%d) ===\n", len(pg.Invariants))
 	for i, inv := range pg.Invariants {
@@ -699,17 +699,17 @@ func runCheck(args []string) {
 	}
 
 	if res.Allowed {
-		fmt.Printf("🟢 [ALLOWED] Action '%s' by role '%s' on '%s' is permitted.\n", *action, *role, *path)
+		fmt.Printf("[ALLOWED] Action '%s' by role '%s' on '%s' is permitted.\n", *action, *role, *path)
 	} else {
-		fmt.Printf("🔴 [BLOCKED] Action '%s' by role '%s' on '%s' is BLOCKED.\n", *action, *role, *path)
+		fmt.Printf("[BLOCKED] Action '%s' by role '%s' on '%s' is BLOCKED.\n", *action, *role, *path)
 		fmt.Printf("   Reason: %s\n", res.Reason)
 		fmt.Printf("   Enforcement: %s\n", res.Enforcement)
 	}
 
 	if len(res.ViolatedDirectives) > 0 {
-		fmt.Println("\n⚠️ Directives Flagged:")
+		fmt.Println("\n[WARN] Directives Flagged:")
 		for _, c := range res.ViolatedDirectives {
-			fmt.Printf("   • %s\n", c)
+			fmt.Printf("   * %s\n", c)
 		}
 	}
 }
@@ -800,15 +800,15 @@ func runPoll(args []string) {
 		os.Exit(1)
 	}
 
-	fmt.Printf("⏱️ Server Time: %s | Poll Duration: %d ms | Updates Found: %v\n",
+	fmt.Printf("[TIME] Server Time: %s | Poll Duration: %d ms | Updates Found: %v\n",
 		resp.ServerTime.Format(time.RFC3339), resp.PollDurationMs, resp.HasUpdates)
-	fmt.Printf("📬 Unread Messages: %d | 📋 Ready Tasks: %d | 👥 Active Agents: %d\n",
+	fmt.Printf("[MESSAGES] Unread: %d | [TASKS] Ready: %d | [AGENTS] Active: %d\n",
 		resp.UnreadMessagesCount, resp.ReadyTasksCount, resp.ActiveAgentsCount)
 
 	if len(resp.Events) > 0 {
 		fmt.Printf("\n=== Events (%d) ===\n", len(resp.Events))
 		for _, e := range resp.Events {
-			fmt.Printf("  • [%s] %s (%s)\n    %s\n",
+			fmt.Printf("  * [%s] %s (%s)\n    %s\n",
 				e.Timestamp.Format("15:04:05"), strings.ToUpper(e.Type), e.ID, e.Summary)
 		}
 	} else {
@@ -836,7 +836,7 @@ func runWatch(args []string) {
 	evtMgr := events.NewManager(store, msgMgr, taskMgr, delibMgr, sopMgr)
 
 	fmt.Printf("%s\n", BannerArt)
-	fmt.Printf("👀 Watching Gossip event stream in %s (Ctrl+C to stop)...\n", store.Dir())
+	fmt.Printf("[WATCH] Watching Gossip event stream in %s (Ctrl+C to stop)...\n", store.Dir())
 	fmt.Println(strings.Repeat("-", 65))
 
 	cursor := time.Now().Add(-1 * time.Minute)
@@ -879,13 +879,13 @@ func runIndex(args []string) {
 	}
 
 	fmt.Printf("%s\n", BannerArt)
-	fmt.Printf("✓ Codebase indexed into shared RAG knowledge graph (%s) in %d ms\n", store.Dir(), summary.DurationMs)
-	fmt.Printf("  • Files Scanned    : %d\n", summary.FilesScanned)
-	fmt.Printf("  • Packages Found   : %d\n", summary.PackagesFound)
-	fmt.Printf("  • Symbols Extracted: %d\n", summary.SymbolsExtracted)
-	fmt.Printf("  • Total Nodes Added: %d\n", summary.NodesAdded)
-	fmt.Printf("  • Total Edges Added: %d\n", summary.EdgesAdded)
-	fmt.Printf("  • Report Generated : %s\n", filepath.Join(store.Dir(), "GRAPH_REPORT.md"))
+	fmt.Printf("[OK] Codebase indexed into shared RAG knowledge graph (%s) in %d ms\n", store.Dir(), summary.DurationMs)
+	fmt.Printf("  * Files Scanned    : %d\n", summary.FilesScanned)
+	fmt.Printf("  * Packages Found   : %d\n", summary.PackagesFound)
+	fmt.Printf("  * Symbols Extracted: %d\n", summary.SymbolsExtracted)
+	fmt.Printf("  * Total Nodes Added: %d\n", summary.NodesAdded)
+	fmt.Printf("  * Total Edges Added: %d\n", summary.EdgesAdded)
+	fmt.Printf("  * Report Generated : %s\n", filepath.Join(store.Dir(), "GRAPH_REPORT.md"))
 }
 
 func runPersonalTodo(args []string) {
@@ -917,7 +917,7 @@ func runPersonalTodo(args []string) {
 			os.Exit(1)
 		}
 
-		fmt.Printf("✓ Added personal to-do for agent '%s': [%s] %s (%s)\n",
+		fmt.Printf("[OK] Added personal to-do for agent '%s': [%s] %s (%s)\n",
 			*agent, item.ID, item.Title, item.Priority)
 		return
 	}
@@ -950,9 +950,9 @@ func runPersonalTodo(args []string) {
 	for i, it := range items {
 		statusMark := "[ ]"
 		if it.Status == "done" {
-			statusMark = "[✓]"
+			statusMark = "[X]"
 		} else if it.Status == "in_progress" {
-			statusMark = "[→]"
+			statusMark = "[>]"
 		}
 		contextStr := ""
 		if it.ContextTaskID != "" {
@@ -1113,7 +1113,7 @@ func runResume(args []string) {
 		return
 	}
 
-	fmt.Printf("🔄 Agent Re-Identification Briefing: %s\n", *agentID)
+	fmt.Printf("[RE-IDENTIFY] Agent Re-Identification Briefing: %s\n", *agentID)
 	fmt.Printf("  Role:            %s\n", effectiveRole)
 	fmt.Printf("  Session:         #%d (Time away: %s)\n", sessionCount, timeAwayStr)
 	fmt.Printf("  Assigned Tasks:  %d in progress/pending\n", len(pendingTasks))

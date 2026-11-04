@@ -1,4 +1,4 @@
-# ⚠️ ACTIVE RESEARCH & UNDER HEAVY DEVELOPMENT ⚠️
+# [!] ACTIVE RESEARCH & UNDER HEAVY DEVELOPMENT [!]
 
 ```
 ┌────────────────────────────────────────────────────────────────────────┐
@@ -16,7 +16,7 @@
 
 ---
 
-# 🗣️ Gossip: Multi-Agent Collaboration Fabric & Shared Knowledge Graph RAG
+# Gossip: Multi-Agent Collaboration Fabric & Shared Knowledge Graph RAG
 
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
 [![Go Version](https://img.shields.io/badge/Go-1.24+-00ADD8?logo=go)](https://go.dev)
@@ -38,32 +38,32 @@
 
 ---
 
-## 🏛️ System Architecture
+## System Architecture
 
 ```mermaid
 flowchart TB
-    subgraph Agents["👥 Multi-Agent Mesh"]
-        Orch["👑 Orchestrator"]
-        NetEng["🌐 Network Engineer"]
-        Math["📐 Math Expert"]
-        SysArch["⚙️ Systems Architect"]
-        SecSpec["🛡️ Security Specialist"]
-        QA["🧪 QA Specialist"]
-        Worker["🔨 General Worker"]
-        RedTeam["⚔️ Red Team Attacker"]
-        Critic["⚖️ Consensus Arbiter"]
+    subgraph Agents["Multi-Agent Mesh"]
+        Orch["Orchestrator"]
+        NetEng["Network Engineer"]
+        Math["Math Expert"]
+        SysArch["Systems Architect"]
+        SecSpec["Security Specialist"]
+        QA["QA Specialist"]
+        Worker["General Worker"]
+        RedTeam["Red Team Attacker"]
+        Critic["Consensus Arbiter"]
     end
 
-    subgraph GossipMCP["⚡ Gossip Server (Single Go Binary)"]
+    subgraph GossipMCP["Gossip Server (Single Go Binary)"]
         MCPEngine["MCP Stdio Protocol Handler<br/>(47 Specialized Tools)"]
-        MsgBroker["📨 Message Broker<br/>(Direct, Role, Broadcast)"]
-        DAGManager["📊 Task DAG & State Engine<br/>(Cycle Detection & Auto-Unblock)"]
-        SOPEngine["⚙️ MetaGPT-Style SOP Pipeline<br/>(Phase Gates & Artifact Handoffs)"]
-        GraphRAG["🧠 Graphify/Aider Knowledge Graph<br/>(PageRank, Blast-Radius, Clusters, Paths)"]
-        DelibEngine["⚖️ MAD & Red-Team Deliberation<br/>(Convergence, Borda Voting, STRIDE)"]
+        MsgBroker["Message Broker<br/>(Direct, Role, Broadcast)"]
+        DAGManager["Task DAG & State Engine<br/>(Cycle Detection & Auto-Unblock)"]
+        SOPEngine["MetaGPT-Style SOP Pipeline<br/>(Phase Gates & Artifact Handoffs)"]
+        GraphRAG["Graphify/Aider Knowledge Graph<br/>(PageRank, Blast-Radius, Clusters, Paths)"]
+        DelibEngine["MAD & Red-Team Deliberation<br/>(Convergence, Borda Voting, STRIDE)"]
     end
 
-    subgraph LocalStorage["💾 Shared Source of Truth (.local/gossip/)"]
+    subgraph LocalStorage["Shared Source of Truth (.local/gossip/)"]
         LockFile[".lock (POSIX flock / Win32 LockFileEx)"]
         StateJSON["state.json (Agents & Goals)"]
         TasksJSON["tasks.json (Task DAG & Kanban)"]
@@ -93,7 +93,7 @@ flowchart TB
 
 ---
 
-## 🎭 JSON-Driven Role Taxonomy (SOLID Design)
+## JSON-Driven Role Taxonomy (SOLID Design)
 
 Roles in Gossip are **never hardcoded in Go source code**. They are dynamically loaded from `roles.json` (`config/roles.json` or `.local/gossip/roles.json`) and can be extended at runtime by agents or operators without recompiling.
 
@@ -119,7 +119,7 @@ Adhering strictly to **SOLID Principles**:
 
 ---
 
-## ⚙️ Standard Operating Procedures (MetaGPT-Style)
+## Standard Operating Procedures (MetaGPT-Style)
 
 Multi-agent engineering succeeds when agents follow structured assembly-line workflows instead of unconstrained chatting:
 
@@ -132,7 +132,7 @@ Gossip implements three built-in SOP templates with strict phase gates and artif
 
 ---
 
-## 🛠️ Complete MCP Tool Directory (79 Tools & Prompts)
+## Complete MCP Tool Directory (79 Tools & Prompts)
 
 ### 1. Identity & Role Management
 - `gossip_register_agent`: Join the active gossip mesh with agent ID, role, capabilities, and active task. Supports multi-instance per role.
@@ -253,7 +253,7 @@ Gossip exports 15 standardized Model Context Protocol Prompts that modern MCP cl
 
 ---
 
-## 🖥️ Local Monochrome Web Dashboard (`gossip ui`)
+## Local Monochrome Web Dashboard (`gossip ui`)
 
 Gossip features an embedded, zero-dependency, local web control panel with an uncompromising **two-color monochrome brutalist aesthetic**:
 - **Strictly Two Colors**: Pure `#000000` (black) and `#ffffff` (white) — no grays, no RGB color badges, zero distractions.
@@ -278,7 +278,7 @@ Gossip features an embedded, zero-dependency, local web control panel with an un
 
 ---
 
-## 🚀 Quickstart & Installation
+## Quickstart & Installation
 
 ### Option A: Using Precompiled Binary (Instant)
 
@@ -311,7 +311,7 @@ go build -ldflags="-s -w" -o bin/gossip ./cmd/gossip
 
 ---
 
-## ⚙️ MCP Server Files & Client Configurations
+## MCP Server Files & Client Configurations
 
 Gossip is packaged with all required configuration files and schemas for seamless integration into any AI IDE or MCP client:
 
@@ -360,7 +360,7 @@ To re-export all tool JSON schemas and `instructions.md`:
 
 ---
 
-## 🖥️ Command-Line Interface (CLI)
+## Command-Line Interface (CLI)
 
 Gossip functions both as an MCP server and a fast developer CLI:
 
@@ -434,7 +434,7 @@ gossip moe list
 
 ---
 
-## 🔒 Security Hardening & Vulnerability Defenses
+## Security Hardening & Vulnerability Defenses
 
 Gossip implements rigorous defense-in-depth across all tools and file operations:
 
@@ -452,7 +452,7 @@ Gossip implements rigorous defense-in-depth across all tools and file operations
 
 ---
 
-## 📚 Research & Formal Attributions
+## Research & Formal Attributions
 
 Gossip synthesizes cutting-edge multi-agent coordination, graph analysis, and AI security research. All foundational research and open-source inspirations are formally attributed in [ATTRIBUTIONS.md](ATTRIBUTIONS.md):
 
@@ -467,7 +467,7 @@ Gossip synthesizes cutting-edge multi-agent coordination, graph analysis, and AI
 
 ---
 
-## 🧪 Testing & Verification
+## Testing & Verification
 
 Gossip includes unit and integration tests with concurrency race detection:
 
@@ -480,6 +480,6 @@ All subsystems (state locking, append-only message streaming, task DAG validatio
 
 ---
 
-## 📜 License
+## License
 
 This project is licensed under the **GNU Affero General Public License v3.0 (AGPLv3)**. See [LICENSE](LICENSE) for the full license text.

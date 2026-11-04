@@ -377,11 +377,11 @@ func (m *Manager) renderBoardContent(c *TasksContainer) (string, error) {
 	agents, _ := m.store.ListAgentsUnlocked()
 
 	var b strings.Builder
-	b.WriteString("# 🧭 Gossip Multi-Agent Task Board\n\n")
+	b.WriteString("# [GOSSIP] Gossip Multi-Agent Task Board\n\n")
 	b.WriteString(fmt.Sprintf("*Last Synchronized: %s*\n\n", time.Now().Format(time.RFC1123)))
 
 	// Goals Section
-	b.WriteString("## 🎯 Project Goals & Milestones\n\n")
+	b.WriteString("## [GOALS] Project Goals & Milestones\n\n")
 	if len(goals) == 0 {
 		b.WriteString("_No active goals specified yet. Orchestrator can define goals via `gossip_set_goal`._\n\n")
 	} else {
@@ -446,15 +446,15 @@ func (m *Manager) renderBoardContent(c *TasksContainer) (string, error) {
 		}
 	}
 
-	renderColumn("In Progress", "🚀", StatusInProgress)
-	renderColumn("Blocked", "⚠️", StatusBlocked)
-	renderColumn("Ready / Todo", "📋", StatusTodo)
-	renderColumn("In Review", "🔍", StatusInReview)
-	renderColumn("Completed", "✅", StatusCompleted)
-	renderColumn("Backlog", "📦", StatusBacklog)
+	renderColumn("In Progress", "[>>]", StatusInProgress)
+	renderColumn("Blocked", "[!]", StatusBlocked)
+	renderColumn("Ready / Todo", "[ ]", StatusTodo)
+	renderColumn("In Review", "[?]", StatusInReview)
+	renderColumn("Completed", "[OK]", StatusCompleted)
+	renderColumn("Backlog", "[-]", StatusBacklog)
 
 	// Agent Workload Section
-	b.WriteString("## 👥 Active Agents & Workload\n\n")
+	b.WriteString("## [AGENTS] Active Agents & Workload\n\n")
 	if len(agents) == 0 {
 		b.WriteString("_No active agents currently registered._\n\n")
 	} else {
@@ -500,7 +500,7 @@ func (m *Manager) renderBoardContent(c *TasksContainer) (string, error) {
 		}
 		if json.Unmarshal(delibBytes, &ds) == nil {
 			if len(ds.Debates) > 0 {
-				b.WriteString("## 🗳️ Active Debates & Voting Sessions\n\n")
+				b.WriteString("## [DEBATES] Active Debates & Voting Sessions\n\n")
 				b.WriteString("| Debate ID | Title | Proposer | Status | Votes Cast |\n")
 				b.WriteString("| :--- | :--- | :--- | :--- | :--- |\n")
 				for _, d := range ds.Debates {
@@ -510,7 +510,7 @@ func (m *Manager) renderBoardContent(c *TasksContainer) (string, error) {
 				b.WriteString("\n")
 			}
 			if len(ds.Probes) > 0 {
-				b.WriteString("## 🛡️ Red Team Security & Stress Probes\n\n")
+				b.WriteString("## [RED TEAM] Security & Stress Probes\n\n")
 				b.WriteString("| Probe ID | Target | Threat Vector | Attacker | Status |\n")
 				b.WriteString("| :--- | :--- | :--- | :--- | :--- |\n")
 				for _, p := range ds.Probes {

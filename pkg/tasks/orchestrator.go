@@ -165,11 +165,11 @@ func (m *Manager) GetOrchestratorAssignments() (*OrchestratorAssignmentMatrix, e
 // RenderMarkdown renders the assignment matrix into a human-readable Orchestrator Dashboard.
 func (m *OrchestratorAssignmentMatrix) RenderMarkdown() string {
 	var b strings.Builder
-	b.WriteString("# 👑 Orchestrator Task Assignment & Delegation Matrix\n\n")
+	b.WriteString("# [ORCHESTRATOR] Task Assignment & Delegation Matrix\n\n")
 	b.WriteString(fmt.Sprintf("*Synchronized: %s | Total Tasks: %d | Assigned: %d | Unassigned: %d*\n\n",
 		m.GeneratedAt.Format(time.RFC1123), m.TotalTasks, m.AssignedTasksCount, m.UnassignedTasksCount))
 
-	b.WriteString("### 👥 Agent Workload Breakdown\n\n")
+	b.WriteString("### [AGENTS] Agent Workload Breakdown\n\n")
 	b.WriteString("| Agent ID | Role | Status | Active Tasks | In Review | Blocked | Completed | Total Load |\n")
 	b.WriteString("| :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: |\n")
 
@@ -185,23 +185,23 @@ func (m *OrchestratorAssignmentMatrix) RenderMarkdown() string {
 	b.WriteString("\n")
 
 	if len(m.CriticalBottlenecks) > 0 {
-		b.WriteString("### ⚠️ Critical Dependency Bottlenecks\n\n")
+		b.WriteString("### [BOTTLENECKS] Critical Dependency Bottlenecks\n\n")
 		for _, c := range m.CriticalBottlenecks {
-			b.WriteString(fmt.Sprintf("- 🛑 %s\n", c))
+			b.WriteString(fmt.Sprintf("- [BLOCKED] %s\n", c))
 		}
 		b.WriteString("\n")
 	}
 
 	if len(m.DelegationSuggestions) > 0 {
-		b.WriteString("### 💡 Delegation Recommendations\n\n")
+		b.WriteString("### [DELEGATION] Delegation Recommendations\n\n")
 		for _, s := range m.DelegationSuggestions {
-			b.WriteString(fmt.Sprintf("- 🎯 %s\n", s))
+			b.WriteString(fmt.Sprintf("- [SUGGEST] %s\n", s))
 		}
 		b.WriteString("\n")
 	}
 
 	if len(m.UnassignedTasks) > 0 {
-		b.WriteString("### 📋 Unassigned Backlog Tasks\n\n")
+		b.WriteString("### [BACKLOG] Unassigned Backlog Tasks\n\n")
 		b.WriteString("| ID | Title | Role | Priority | Status |\n")
 		b.WriteString("| :--- | :--- | :--- | :---: | :---: |\n")
 		for _, t := range m.UnassignedTasks {

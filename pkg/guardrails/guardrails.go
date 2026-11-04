@@ -386,7 +386,7 @@ func (m *Manager) ValidateProposedAction(role, action, targetPath, payload strin
 // RenderAgentsMD renders a comprehensive AGENTS.md document.
 func (m *Manager) RenderAgentsMD(pg *ProjectGuardrails) string {
 	var b strings.Builder
-	b.WriteString(fmt.Sprintf("# 👥 Project Agent Directives & Guardrails: %s\n\n", pg.ProjectName))
+	b.WriteString(fmt.Sprintf("# [AGENTS] Project Agent Directives & Guardrails: %s\n\n", pg.ProjectName))
 	b.WriteString(fmt.Sprintf("*Synchronized: %s | Active Roles: %d*\n\n",
 		pg.UpdatedAt.Format(time.RFC1123), len(pg.Roles)))
 
@@ -395,30 +395,30 @@ func (m *Manager) RenderAgentsMD(pg *ProjectGuardrails) string {
 	}
 
 	// Core Invariants
-	b.WriteString("## 🛡️ Project Invariants & Mandatory Rules\n\n")
+	b.WriteString("## [INVARIANTS] Project Invariants & Mandatory Rules\n\n")
 	for i, inv := range pg.Invariants {
 		b.WriteString(fmt.Sprintf("%d. **%s**\n", i+1, inv))
 	}
 	b.WriteString("\n---\n\n")
 
 	// Role Directory
-	b.WriteString("## 🎭 Active Agent Role Specifications\n\n")
+	b.WriteString("## [ROLES] Active Agent Role Specifications\n\n")
 	for _, r := range pg.Roles {
 		b.WriteString(fmt.Sprintf("### Role: `%s` — %s\n\n", r.RoleID, r.Title))
 		b.WriteString(fmt.Sprintf("**Description:** %s\n\n", r.Description))
 		b.WriteString(fmt.Sprintf("> **System Directive:**\n> %s\n\n", r.SystemPrompt))
 
 		if len(r.ForbiddenActions) > 0 {
-			b.WriteString(fmt.Sprintf("- 🛑 **Forbidden Actions:** `%s`\n", strings.Join(r.ForbiddenActions, "`, `")))
+			b.WriteString(fmt.Sprintf("- [FORBIDDEN] **Forbidden Actions:** `%s`\n", strings.Join(r.ForbiddenActions, "`, `")))
 		}
 		if len(r.CautionDirectives) > 0 {
-			b.WriteString("- ⚠️ **Caution Directives:**\n")
+			b.WriteString("- [CAUTION] **Caution Directives:**\n")
 			for _, cd := range r.CautionDirectives {
 				b.WriteString(fmt.Sprintf("  - %s\n", cd))
 			}
 		}
 		if len(r.SensitivePathPatterns) > 0 {
-			b.WriteString(fmt.Sprintf("- 🔒 **Protected File Patterns:** `%s`\n", strings.Join(r.SensitivePathPatterns, "`, `")))
+			b.WriteString(fmt.Sprintf("- [PROTECTED] **Protected File Patterns:** `%s`\n", strings.Join(r.SensitivePathPatterns, "`, `")))
 		}
 		b.WriteString("\n")
 	}
@@ -429,7 +429,7 @@ func (m *Manager) RenderAgentsMD(pg *ProjectGuardrails) string {
 // RenderRulesMD renders a dedicated RULES.md caution and constraint document.
 func (m *Manager) RenderRulesMD(pg *ProjectGuardrails) string {
 	var b strings.Builder
-	b.WriteString(fmt.Sprintf("# 📜 Project Caution Rules & Enforcement Policy: %s\n\n", pg.ProjectName))
+	b.WriteString(fmt.Sprintf("# [RULES] Project Caution Rules & Enforcement Policy: %s\n\n", pg.ProjectName))
 	b.WriteString(fmt.Sprintf("*Synchronized: %s*\n\n", pg.UpdatedAt.Format(time.RFC1123)))
 
 	b.WriteString("| Rule ID | Category | Severity | Trigger Pattern | Directive | Enforcement |\n")

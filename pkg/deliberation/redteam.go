@@ -129,7 +129,7 @@ func (m *Manager) GenerateAuditReport() (string, error) {
 
 func (m *Manager) buildAuditReport(ds *DeliberationStore) string {
 	var b strings.Builder
-	b.WriteString("# 🛡️ Gossip Red-Team Security Assessment & STRIDE Audit\n\n")
+	b.WriteString("# [RED-TEAM] Security Assessment & STRIDE Audit\n\n")
 	b.WriteString(fmt.Sprintf("*Generated at: %s | Total Probes Logged: %d*\n\n",
 		time.Now().Format(time.RFC1123), len(ds.Probes)))
 
@@ -154,11 +154,11 @@ func (m *Manager) buildAuditReport(ds *DeliberationStore) string {
 		}
 	}
 
-	statusClass := "🟡 ACTION REQUIRED"
+	statusClass := "[ACTION REQUIRED]"
 	if vulnerableCount == 0 && len(ds.Probes) > 0 {
-		statusClass = "🟢 SYSTEM SECURE / ALL PROBES MITIGATED"
+		statusClass = "[SECURE] ALL PROBES MITIGATED"
 	} else if vulnerableCount > 3 {
-		statusClass = "🔴 CRITICAL RISK / UNMITIGATED VULNERABILITIES"
+		statusClass = "[CRITICAL RISK] UNMITIGATED VULNERABILITIES"
 	}
 
 	b.WriteString(fmt.Sprintf("## Overall Security Status: **%s**\n\n", statusClass))
@@ -170,7 +170,7 @@ func (m *Manager) buildAuditReport(ds *DeliberationStore) string {
 	b.WriteString(fmt.Sprintf("| False Positives Marked | %d |\n\n", falsePositiveCount))
 
 	// STRIDE Threat Matrix
-	b.WriteString("### 📐 STRIDE Coverage Matrix\n\n")
+	b.WriteString("### [STRIDE] Coverage Matrix\n\n")
 	b.WriteString("| STRIDE Category | Probes Tested |\n")
 	b.WriteString("| :--- | :--- |\n")
 	strideList := []string{
@@ -188,7 +188,7 @@ func (m *Manager) buildAuditReport(ds *DeliberationStore) string {
 	b.WriteString("\n")
 
 	// Vulnerable items table
-	b.WriteString("### ⚠️ Active Unmitigated Vulnerabilities\n\n")
+	b.WriteString("### [VULNERABILITIES] Active Unmitigated Vulnerabilities\n\n")
 	if vulnerableCount == 0 {
 		b.WriteString("_No active vulnerabilities logged._\n\n")
 	} else {
@@ -211,7 +211,7 @@ func (m *Manager) buildAuditReport(ds *DeliberationStore) string {
 
 	// Mitigated items table
 	if mitigatedCount > 0 {
-		b.WriteString("### ✅ Mitigated Probes & Verified Defenses\n\n")
+		b.WriteString("### [MITIGATED] Verified Defenses\n\n")
 		b.WriteString("| Probe ID | Target | Category | Remediation Task |\n")
 		b.WriteString("| :--- | :--- | :--- | :--- |\n")
 		for _, p := range ds.Probes {

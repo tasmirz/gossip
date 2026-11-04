@@ -37,14 +37,25 @@ func TestWebDashboardEndpoints(t *testing.T) {
 		t.Fatalf("Expected 200 for /, got %d", rec.Code)
 	}
 	body := rec.Body.String()
-	if !bytes.Contains([]byte(body), []byte("GOSSIP MESH // CONTROL PANEL")) {
+	if !bytes.Contains([]byte(body), []byte("GOSSIP MESH // MULTI-PROJECT CONTROL PANEL")) {
 		t.Fatalf("Expected HTML to contain title")
 	}
 	if !bytes.Contains([]byte(body), []byte("border-radius: 0 !important")) {
 		t.Fatalf("Expected zero border radius style constraint")
 	}
+	if !bytes.Contains([]byte(body), []byte("body.light-theme")) {
+		t.Fatalf("Expected light theme support in stylesheet")
+	}
 
-	// 2. Test GET /api/status
+	// 2. Test GET /api/projects
+	req = httptest.NewRequest(http.MethodGet, "/api/projects", nil)
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Expected 200 for /api/projects, got %d", rec.Code)
+	}
+
+	// 3. Test GET /api/status
 	req = httptest.NewRequest(http.MethodGet, "/api/status", nil)
 	rec = httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)

@@ -479,7 +479,7 @@ func (m *Manager) GenerateReport() (string, error) {
 
 func (m *Manager) generateReport(g *KnowledgeGraph) string {
 	var b strings.Builder
-	b.WriteString("# 🧠 Gossip Shared Knowledge Graph Report\n\n")
+	b.WriteString("# [GRAPH] Gossip Shared Knowledge Graph Report\n\n")
 	b.WriteString(fmt.Sprintf("*Generated at: %s | Nodes: %d | Edges: %d*\n\n",
 		time.Now().Format(time.RFC1123), len(g.Nodes), len(g.Edges)))
 
@@ -493,7 +493,7 @@ func (m *Manager) generateReport(g *KnowledgeGraph) string {
 			inferredCount++
 		}
 	}
-	b.WriteString("### 📊 Relational Provenance Breakdown\n")
+	b.WriteString("### [PROVENANCE] Relational Provenance Breakdown\n")
 	b.WriteString(fmt.Sprintf("- **EXTRACTED (Deterministic Code/File Links):** %d\n", extractedCount))
 	b.WriteString(fmt.Sprintf("- **INFERRED (Specialist Reasoning & Invariants):** %d\n\n", inferredCount))
 
@@ -520,7 +520,7 @@ func (m *Manager) generateReport(g *KnowledgeGraph) string {
 		return hubs[i].Degree > hubs[j].Degree
 	})
 
-	b.WriteString("### 🏛️ Core Architectural Hubs (Highest Degree)\n\n")
+	b.WriteString("### [HUBS] Core Architectural Hubs (Highest Degree)\n\n")
 	if len(hubs) == 0 {
 		b.WriteString("_No connected nodes yet._\n\n")
 	} else {
@@ -537,7 +537,7 @@ func (m *Manager) generateReport(g *KnowledgeGraph) string {
 	}
 
 	// Architectural Decisions & Formal Proofs
-	b.WriteString("### 📜 Architectural Decisions & Formal Proofs\n\n")
+	b.WriteString("### [DECISIONS] Architectural Decisions & Formal Proofs\n\n")
 	foundSpecial := false
 	for _, n := range g.Nodes {
 		if n.Type == TypeDecision || n.Type == TypeProof || n.Type == TypeConstraint {
@@ -551,7 +551,7 @@ func (m *Manager) generateReport(g *KnowledgeGraph) string {
 	}
 
 	// Recent Nodes
-	b.WriteString("### 📌 Node Directory\n\n")
+	b.WriteString("### [DIRECTORY] Node Directory\n\n")
 	for _, n := range g.Nodes {
 		tags := ""
 		if len(n.Tags) > 0 {

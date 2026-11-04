@@ -410,7 +410,7 @@ func (s *Server) registerRoleTools() {
 		}
 
 		var summary strings.Builder
-		summary.WriteString(fmt.Sprintf("### 🔄 Agent Re-Identification Briefing: `%s`\n", agentID))
+		summary.WriteString(fmt.Sprintf("### [RE-IDENTIFY] Agent Re-Identification Briefing: `%s`\n", agentID))
 		summary.WriteString(fmt.Sprintf("- **Role**: `%s`\n", role))
 		summary.WriteString(fmt.Sprintf("- **Session**: #%d (Time away: %s)\n", sessionCount, timeAwayStr))
 		summary.WriteString(fmt.Sprintf("- **Assigned Tasks**: %d in progress/pending\n", len(pendingTasks)))
