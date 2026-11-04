@@ -177,22 +177,41 @@ Gossip implements three built-in SOP templates with strict phase gates and artif
 - `gossip_get_task`: Retrieve full task specification, dependencies, and history notes.
 - `gossip_render_board`: Regenerate and return the live Markdown Kanban board (`BOARD.md`).
 
-### 8. LLM-Derived Roles, Guardrails & Project Safety (`AGENTS.md`)
+### 8. Multi-Level Task Lists: Personal, System & Orchestrator Assignments
+Gossip supports three distinct, coordinated task management scopes:
+- **Personal To-Do List (Agent Working Memory & Scratchpad)**:
+  - `gossip_personal_todo_add`: Add internal sub-steps, checklist items, and working notes for an individual agent without cluttering the global DAG.
+  - `gossip_personal_todo_list`: View an agent's active personal checklist items (`pending`, `in_progress`, `done`).
+  - `gossip_personal_todo_update`: Advance status or append implementation notes.
+  - `gossip_personal_todo_delete`: Remove finished scratchpad items.
+- **System To-Do Backlog (Unified Cross-Subsystem Work)**:
+  - `gossip_system_todo_list`: Aggregates all actionable project items into a single unified backlog:
+    1. Unassigned ready tasks from the DAG (`tasks.json`).
+    2. Incomplete strategic milestones (`state.json`).
+    3. Pending SOP phase gates requiring artifact deliverables (`sop.json`).
+    4. Open, unmitigated STRIDE security vulnerabilities (`deliberations.json`).
+- **Orchestrator Assignment & Delegation Matrix**:
+  - `gossip_orchestrator_assignments`: Centralized overview showing active tasks per agent, workload distribution, bottleneck tasks (blocking $\ge 2$ downstream tasks), and automated idle-worker delegation suggestions.
+
+### 9. LLM-Derived Roles, Guardrails & Project Safety (`AGENTS.md`)
 - `gossip_derive_project_roles` (alias `gsp_derive_roles`): Synthesizes LLM-derived specialist roles, caution rules, invariants, and exports `guardrails.json`, `AGENTS.md`, and `RULES.md`.
 - `gossip_guardrails_validate_action` (alias `gsp_guardrail_check`): Pre-flight validation inspecting actions, roles, and target file paths against security and caution invariants.
 - `gossip_set_caution_rule`: Add or update a project caution rule with enforcement level (`block`, `require_peer_review`, `warn`).
 - `gossip_get_guardrails`: Retrieve active invariants and caution rules.
 - `gossip_export_agents_md`: Render and return active `AGENTS.md` directives.
 
-### 9. Continuous Event Polling & Long-Polling Engine (`events.jsonl`)
+### 10. Continuous Event Polling & Long-Polling Engine (`events.jsonl`)
 - `gossip_poll_events` (alias `gsp_poll`, `gossip_sync`): Synchronize state and continuously poll or long-poll for updates (`since_time`, `timeout_seconds`, `event_types`).
   - Supports configurable timeouts ($0$ to $60$ seconds): wakes up immediately when new messages, ready tasks, debate rounds, or SOP phase gate changes occur.
   - Returns `has_updates`, `events`, `unread_messages_count`, `ready_tasks_count`, `active_agents_count`, and `server_time` (pass to next call for seamless event chaining).
   - Automatically maintains agent presence via `auto_heartbeat`.
 - `gossip_log_event`: Append an explicit custom milestone or event to the shared event ledger (`events.jsonl`).
 
-### 10. MCP Prompts as Native Slash Commands (`/gsp:...`)
-Gossip exports 9 standardized Model Context Protocol Prompts that modern MCP clients (Claude, Antigravity) surface as `/gsp:...` slash commands:
+### 11. MCP Prompts as Native Slash Commands (`/gsp:...`)
+Gossip exports 12 standardized Model Context Protocol Prompts that modern MCP clients (Claude, Antigravity) surface as `/gsp:...` slash commands:
+- `/gsp:assignments`: Inspect Orchestrator workload distribution, assigned tasks, and delegation suggestions.
+- `/gsp:my_todos`: Inspect personal agent scratchpad checklist.
+- `/gsp:system_todos`: Inspect unified project-wide action backlog.
 - `/gsp:poll`: Set up continuous event polling loop with long-polling timeout.
 - `/gsp:derive_roles`: Synthesize specialist roles and guardrails for the active project.
 - `/gsp:blast_radius`: Analyze reverse dependency impact before modifying files or symbols.

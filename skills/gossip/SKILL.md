@@ -217,6 +217,14 @@ All state is persisted under `.local/gossip/` inside the current project root:
 - `gossip_get_task`: View task details and history (`task_id`).
 - `gossip_render_board`: Fetch live Markdown Kanban board (`BOARD.md`).
 
+### Multi-Level To-Do & Orchestrator Delegation Lists
+- `gossip_personal_todo_add`: Add a personal checklist item or scratchpad task for an agent (`agent_id`, `title`, `priority`, `context_task_id`, `notes`).
+- `gossip_personal_todo_list`: List an agent's personal to-do items and working scratchpad (`agent_id`, `status`).
+- `gossip_personal_todo_update`: Update status (`pending`, `in_progress`, `done`) or notes on a personal task.
+- `gossip_personal_todo_delete`: Remove a personal checklist item (`agent_id`, `item_id`).
+- `gossip_system_todo_list`: Unified cross-system backlog aggregating ready DAG tasks, incomplete milestones, pending SOP phase gates, and open STRIDE security vulnerabilities.
+- `gossip_orchestrator_assignments`: Centralized workload and assignment matrix showing active tasks per agent, bottlenecks, and idle-worker delegation recommendations.
+
 ### MetaGPT-Style Standard Operating Procedures (SOPs)
 - `gossip_sop_list_workflows`: List active workflows and available templates (`feature_delivery`, `bug_investigation`, `security_hardening`).
 - `gossip_sop_start`: Initiate an SOP workflow (`template`, `title`, `description`, `initiator`).
@@ -270,17 +278,20 @@ All state is persisted under `.local/gossip/` inside the current project root:
 
 ## 7. Native MCP Prompts as Slash Commands (`/gsp:...`)
 
-Gossip registers 9 official Model Context Protocol Prompts that modern MCP clients expose directly in chat as `/gsp:...`:
+Gossip registers 12 official Model Context Protocol Prompts that modern MCP clients expose directly in chat as `/gsp:...`:
 
 1. `/gsp:poll`: Set up continuous event polling and long-polling sync loop.
-2. `/gsp:derive_roles`: Synthesize specialist roles and guardrails tailored to the active repository.
-3. `/gsp:blast_radius`: Analyze reverse dependency impact before modifying files or symbols.
-4. `/gsp:sop_advance`: Advance SOP phase gate with verification checklist.
-5. `/gsp:debate`: Initiate an adversarial multi-agent debate with convergence tracking.
-6. `/gsp:stride_audit`: Execute automated STRIDE threat modeling against interfaces.
-7. `/gsp:review`: Request or submit a formal peer review on deliverables.
-8. `/gsp:guardrail_check`: Pre-flight action inspection against caution rules.
-9. `/gsp:repomap`: Fetch token-budgeted PageRank architectural repo map.
+2. `/gsp:assignments`: Inspect Orchestrator workload distribution, assigned tasks, and delegation suggestions.
+3. `/gsp:my_todos`: Inspect and update personal agent scratchpad checklist.
+4. `/gsp:system_todos`: Inspect unified project-wide action backlog.
+5. `/gsp:derive_roles`: Synthesize specialist roles and guardrails tailored to the active repository.
+6. `/gsp:blast_radius`: Analyze reverse dependency impact before modifying files or symbols.
+7. `/gsp:sop_advance`: Advance SOP phase gate with verification checklist.
+8. `/gsp:debate`: Initiate an adversarial multi-agent debate with convergence tracking.
+9. `/gsp:stride_audit`: Execute automated STRIDE threat modeling against interfaces.
+10. `/gsp:review`: Request or submit a formal peer review on deliverables.
+11. `/gsp:guardrail_check`: Pre-flight action inspection against caution rules.
+12. `/gsp:repomap`: Fetch token-budgeted PageRank architectural repo map.
 
 ---
 

@@ -693,6 +693,137 @@ func (s *Server) registerTaskTools() {
 		}
 		return mcp.NewToolResultText(board), nil
 	})
+
+	// gossip_personal_todo_add
+	s.mcpServer.AddTool(mcp.NewTool("gossip_personal_todo_add",
+		mcp.WithDescription("Add a personal checklist item or scratchpad task for an agent to track internal sub-steps"),
+		mcp.WithString("agent_id", mcp.Required(), mcp.Description("Agent ID")),
+		mcp.WithString("title", mcp.Required(), mcp.Description("Personal to-do item title")),
+		mcp.WithString("priority", mcp.Description("Priority: 'low', 'normal', 'high' (default: 'normal')")),
+		mcp.WithString("context_task_id", mcp.Description("Parent global DAG task ID if applicable")),
+		mcp.WithString("notes", mcp.Description("Working notes, scratchpad remarks, or implementation thoughts")),
+	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		args := getArgsMap(req)
+		agentID := getString(args, "agent_id")
+		title := getString(args, "title")
+		priority := getString(args, "priority")
+		contextTaskID := getString(args, "context_task_id")
+		notes := getString(args, "notes")
+
+		if agentID == "" || title == "" {
+			return mcp.NewToolResultError("'agent_id' and 'title' are required"), nil
+		}
+
+		item, err := s.tasks.AddPersonalTodo(agentID, title, priority, contextTaskID, notes)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("failed to add personal todo: %v", err)), nil
+		}
+		return toJSONText(item)
+	})
+
+	// gossip_personal_todo_list
+	s.mcpServer.AddTool(mcp.NewTool("gossip_personal_todo_list",
+		mcp.WithDescription("List an agent's personal to-do scratchpad items and working checklist"),
+		mcp.WithString("agent_id", mcp.Required(), mcp.Description("Agent ID")),
+		mcp.WithString("status", mcp.Description("Filter by status: 'pending', 'in_progress', 'done'")),
+	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		args := getArgsMap(req)
+		agentID := getString(args, "agent_id")
+		status := getString(args, "status")
+
+		if agentID == "" {
+			return mcp.NewToolResultError("'agent_id' is required"), nil
+		}
+
+		items, err := s.tasks.ListPersonalTodos(agentID, status)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("failed to list personal todos: %v", err)), nil
+		}
+		return toJSONText(items)
+	})
+
+	// gossip_personal_todo_update
+	s.mcpServer.AddTool(mcp.NewTool("gossip_personal_todo_update",
+		mcp.WithDescription("Update status or notes for an agent's personal checklist item"),
+		mcp.WithString("agent_id", mcp.Required(), mcp.Description("Agent ID")),
+		mcp.WithString("item_id", mcp.Required(), mcp.Description("Personal to-do item ID")),
+		mcp.WithString("status", mcp.Description("New status: 'pending', 'in_progress', 'done'")),
+		mcp.WithString("notes", mcp.Description("Updated scratchpad notes")),
+	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		args := getArgsMap(req)
+		agentID := getString(args, "agent_id")
+		itemID := getString(args, "item_id")
+		status := getString(args, "status")
+		notes := getString(args, "notes")
+
+		if agentID == "" || itemID == "" {
+			return mcp.NewToolResultError("'agent_id' and 'item_id' are required"), nil
+		}
+
+		updated, err := s.tasks.UpdatePersonalTodo(agentID, itemID, status, notes)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("failed to update personal todo: %v", err)), nil
+		}
+		return toJSONText(updated)
+	})
+
+	// gossip_personal_todo_delete
+	s.mcpServer.AddTool(mcp.NewTool("gossip_personal_todo_delete",
+		mcp.WithDescription("Delete an item from an agent's personal checklist"),
+		mcp.WithString("agent_id", mcp.Required(), mcp.Description("Agent ID")),
+		mcp.WithString("item_id", mcp.Required(), mcp.Description("Personal to-do item ID")),
+	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		args := getArgsMap(req)
+		agentID := getString(args, "agent_id")
+		itemID := getString(args, "item_id")
+
+		if agentID == "" || itemID == "" {
+			return mcp.NewToolResultError("'agent_id' and 'item_id' are required"), nil
+		}
+
+		if err := s.tasks.DeletePersonalTodo(agentID, itemID); err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("failed to delete personal todo: %v", err)), nil
+		}
+		return toJSONText(map[string]string{"status": "deleted", "id": itemID})
+	})
+
+	// gossip_system_todo_list
+	s.mcpServer.AddTool(mcp.NewTool("gossip_system_todo_list",
+		mcp.WithDescription("Retrieve unified system-wide backlog aggregating unassigned ready DAG tasks, incomplete milestones, pending SOP phase gates, and open security vulnerabilities"),
+		mcp.WithString("format", mcp.Description("Output format: 'json' or 'markdown' (default: 'json')")),
+	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		args := getArgsMap(req)
+		format := getString(args, "format")
+
+		sysList, err := s.tasks.GetSystemTodoList()
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("failed to get system todos: %v", err)), nil
+		}
+
+		if format == "markdown" || format == "md" {
+			return mcp.NewToolResultText(sysList.RenderMarkdown()), nil
+		}
+		return toJSONText(sysList)
+	})
+
+	// gossip_orchestrator_assignments
+	s.mcpServer.AddTool(mcp.NewTool("gossip_orchestrator_assignments",
+		mcp.WithDescription("Orchestrator central assignment matrix: active tasks per agent, workload distribution, bottleneck tasks, and idle-worker delegation suggestions"),
+		mcp.WithString("format", mcp.Description("Output format: 'json' or 'markdown' (default: 'json')")),
+	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		args := getArgsMap(req)
+		format := getString(args, "format")
+
+		matrix, err := s.tasks.GetOrchestratorAssignments()
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("failed to get orchestrator assignments: %v", err)), nil
+		}
+
+		if format == "markdown" || format == "md" {
+			return mcp.NewToolResultText(matrix.RenderMarkdown()), nil
+		}
+		return toJSONText(matrix)
+	})
 }
 
 // --- Knowledge Graph RAG Tools ---
@@ -1734,6 +1865,38 @@ func (s *Server) registerPrompts() {
 		}
 		promptText := fmt.Sprintf("Event Sync & Continuous Polling Loop:\nCall `gossip_poll_events` with agent_id='%s', role='%s', and timeout_seconds=%s.\nIf has_updates=true, process incoming messages or claim ready tasks; then poll again with returned server_time.", agentID, role, timeout)
 		return mcp.NewGetPromptResult("Event polling loop", []mcp.PromptMessage{
+			mcp.NewPromptMessage(mcp.RoleUser, mcp.NewTextContent(promptText)),
+		}), nil
+	})
+
+	// gsp:assignments
+	s.mcpServer.AddPrompt(mcp.NewPrompt("gsp:assignments",
+		mcp.WithPromptDescription("Inspect Orchestrator workload distribution, task assignments per agent, blockers, and delegation recommendations"),
+	), func(ctx context.Context, req mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
+		promptText := "Orchestrator Task Allocation & Delegation Review:\n1. Call `gossip_orchestrator_assignments` with format='markdown'.\n2. Review active task loads, bottleneck tasks, and delegation suggestions.\n3. Delegate ready unassigned tasks to idle agents via `gossip_update_task`."
+		return mcp.NewGetPromptResult("Orchestrator assignments", []mcp.PromptMessage{
+			mcp.NewPromptMessage(mcp.RoleUser, mcp.NewTextContent(promptText)),
+		}), nil
+	})
+
+	// gsp:my_todos
+	s.mcpServer.AddPrompt(mcp.NewPrompt("gsp:my_todos",
+		mcp.WithPromptDescription("Inspect personal scratchpad checklist items and sub-tasks for an agent"),
+		mcp.WithArgument("agent_id", mcp.ArgumentDescription("Agent ID")),
+	), func(ctx context.Context, req mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
+		agentID := req.Params.Arguments["agent_id"]
+		promptText := fmt.Sprintf("Personal To-Do Checklist for `%s`:\nCall `gossip_personal_todo_list` with agent_id='%s'.\nDeconstruct your assigned global task into personal checklist items via `gossip_personal_todo_add`.", agentID, agentID)
+		return mcp.NewGetPromptResult("Personal todo list", []mcp.PromptMessage{
+			mcp.NewPromptMessage(mcp.RoleUser, mcp.NewTextContent(promptText)),
+		}), nil
+	})
+
+	// gsp:system_todos
+	s.mcpServer.AddPrompt(mcp.NewPrompt("gsp:system_todos",
+		mcp.WithPromptDescription("Inspect unified project-wide action backlog across DAG, milestones, SOP gates, and vulnerabilities"),
+	), func(ctx context.Context, req mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
+		promptText := "System-Wide Backlog Review:\nCall `gossip_system_todo_list` with format='markdown' to inspect ready unassigned tasks, incomplete milestones, pending SOP phase gates, and open security vulnerabilities."
+		return mcp.NewGetPromptResult("System todo list", []mcp.PromptMessage{
 			mcp.NewPromptMessage(mcp.RoleUser, mcp.NewTextContent(promptText)),
 		}), nil
 	})

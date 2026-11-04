@@ -66,4 +66,14 @@ func TestCLICommands(t *testing.T) {
 
 	// Test Index
 	runIndex([]string{"--dir", tmpDir, "--root", tmpDir})
+
+	// Test Personal Todo
+	runPersonalTodo([]string{"add", "--dir", tmpDir, "--agent", "worker-1", "--title", "Fix buffer", "--priority", "high"})
+	runPersonalTodo([]string{"--dir", tmpDir, "--agent", "worker-1"})
+
+	// Test System Todos
+	runSystemTodos(tmpDir)
+
+	// Test Orchestrator Assignments
+	runAssignments(tmpDir)
 }
