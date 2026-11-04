@@ -944,6 +944,43 @@ func (s *Server) registerGraphTools() {
 		}
 		return mcp.NewToolResultText(repoMap), nil
 	})
+
+	// gossip_rag_index_codebase
+	s.mcpServer.AddTool(mcp.NewTool("gossip_rag_index_codebase",
+		mcp.WithDescription("Automatically index the codebase (files, packages, AST symbols, decisions, invariants) into the shared RAG knowledge graph"),
+		mcp.WithString("root_path", mcp.Description("Root directory of the project to index (default: project root)")),
+	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		args := getArgsMap(req)
+		rootPath := getString(args, "root_path")
+		if rootPath == "" {
+			rootPath = filepath.Dir(s.store.GetBaseDir())
+		}
+
+		summary, err := s.graph.IndexCodebase(rootPath)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("indexing error: %v", err)), nil
+		}
+
+		return toJSONText(summary)
+	})
+
+	s.mcpServer.AddTool(mcp.NewTool("gsp_index",
+		mcp.WithDescription("Alias for gossip_rag_index_codebase: parse AST and index codebase into RAG space"),
+		mcp.WithString("root_path", mcp.Description("Root directory of the project to index")),
+	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		args := getArgsMap(req)
+		rootPath := getString(args, "root_path")
+		if rootPath == "" {
+			rootPath = filepath.Dir(s.store.GetBaseDir())
+		}
+
+		summary, err := s.graph.IndexCodebase(rootPath)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("indexing error: %v", err)), nil
+		}
+
+		return toJSONText(summary)
+	})
 }
 
 // --- Multi-Agent Debate, Review & Red Teaming Tools ---

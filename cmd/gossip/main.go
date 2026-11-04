@@ -90,6 +90,9 @@ func main() {
 		dir := parseDirFlag(os.Args[2:])
 		runRepoMap(dir)
 
+	case "index", "gsp:index":
+		runIndex(os.Args[2:])
+
 	case "audit":
 		dir := parseDirFlag(os.Args[2:])
 		runAudit(dir)
@@ -829,6 +832,36 @@ func runWatch(args []string) {
 	}
 }
 
+func runIndex(args []string) {
+	fs := flag.NewFlagSet("index", flag.ExitOnError)
+	dir := fs.String("dir", "", "Path to gossip storage directory")
+	root := fs.String("root", ".", "Root codebase directory to index")
+	_ = fs.Parse(args)
+
+	store, err := state.NewStore(*dir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	gm := graph.NewManager(store)
+	absRoot, _ := filepath.Abs(*root)
+	summary, err := gm.IndexCodebase(absRoot)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Indexing error: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("%s\n", BannerArt)
+	fmt.Printf("✓ Codebase indexed into shared RAG knowledge graph (%s) in %d ms\n", store.Dir(), summary.DurationMs)
+	fmt.Printf("  • Files Scanned    : %d\n", summary.FilesScanned)
+	fmt.Printf("  • Packages Found   : %d\n", summary.PackagesFound)
+	fmt.Printf("  • Symbols Extracted: %d\n", summary.SymbolsExtracted)
+	fmt.Printf("  • Total Nodes Added: %d\n", summary.NodesAdded)
+	fmt.Printf("  • Total Edges Added: %d\n", summary.EdgesAdded)
+	fmt.Printf("  • Report Generated : %s\n", filepath.Join(store.Dir(), "GRAPH_REPORT.md"))
+}
+
 func printHelp() {
 	fmt.Printf("%s\n", BannerArt)
 	fmt.Print(`Usage:
@@ -847,6 +880,7 @@ Commands:
   impact <id>     Perform blast-radius impact analysis when modifying a node/file
   clusters        Detect architectural submodules and connected clusters
   repomap         Generate PageRank-prioritized token-budgeted repo map
+  index           Index codebase AST (files, symbols, ADRs) into RAG graph (alias: gsp:index)
   audit           Display executive red-team security audit report (AUDIT_REPORT.md)
   sop             List active Standard Operating Procedure workflows
   derive          Synthesize LLM-derived specialist roles & guardrails (alias: gsp:derive)
@@ -865,15 +899,17 @@ Options:
 
 Examples:
   gossip init
+  gossip index
   gossip mcp
+  gossip repomap
+  gossip pagerank
+  gossip report
   gossip poll --agent worker-1 --role worker --since 5m --timeout 20
   gossip watch
   gossip derive --name "My Service" --stack "Go, gRPC, PostgreSQL"
   gossip check --role worker --action write_file --path .env
   gossip agents
   gossip impact util:core
-  gossip pagerank
-  gossip repomap
   gossip audit
   gossip send --from agent_1 --role network_engineer --to role:math_expert --msg "Check polynomial"
   gossip board
