@@ -438,17 +438,17 @@ func (m *Manager) ListPanels(statusFilter string) ([]MoEPanel, error) {
 // RenderMarkdown creates a formatted markdown view of an MoE panel.
 func (p *MoEPanel) RenderMarkdown() string {
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("## 🧠 Mixture of Experts Council: %s (`%s`)\n\n", p.Title, p.ID))
+	sb.WriteString(fmt.Sprintf("## [MOE] Mixture of Experts Council: %s (`%s`)\n\n", p.Title, p.ID))
 	sb.WriteString(fmt.Sprintf("- **Domain**: `%s` | **Status**: `%s` | **Max Parallel Subagents**: %d\n", p.Domain, p.Status, p.MaxParallel))
 	sb.WriteString(fmt.Sprintf("- **Problem Statement**: %s\n\n", p.Query))
 
-	sb.WriteString("### 👥 Selected Expert Panel\n")
+	sb.WriteString("### [EXPERTS] Selected Expert Panel\n")
 	for _, e := range p.SelectedExperts {
 		sb.WriteString(fmt.Sprintf("- **`%s`** (Confidence: %.0f%%): %s\n", e.Role, e.Confidence*100, e.Rationale))
 	}
 	sb.WriteString("\n")
 
-	sb.WriteString("### 💬 Expert Perspectives & Deliberation\n")
+	sb.WriteString("### [DEBATE] Expert Perspectives & Deliberation\n")
 	if len(p.Arguments) == 0 {
 		sb.WriteString("*Awaiting expert contributions...*\n\n")
 	} else {
@@ -466,7 +466,7 @@ func (p *MoEPanel) RenderMarkdown() string {
 	}
 
 	if p.Synthesis != nil {
-		sb.WriteString("### ⚖️ MoE Council Synthesis & Decision\n")
+		sb.WriteString("### [SYNTHESIS] MoE Council Synthesis & Decision\n")
 		sb.WriteString(fmt.Sprintf("**Consensus**: %s\n\n", p.Synthesis.ConsensusDecision))
 
 		if len(p.Synthesis.TradeOffs) > 0 {
@@ -478,11 +478,11 @@ func (p *MoEPanel) RenderMarkdown() string {
 		}
 
 		if len(p.Synthesis.ParallelWorkPackages) > 0 {
-			sb.WriteString("### ⚡ Parallel Subagent Work Packages\n")
+			sb.WriteString("### [PACKAGES] Parallel Subagent Work Packages\n")
 			for _, pkg := range p.Synthesis.ParallelWorkPackages {
-				parallelStr := "Sequential"
+				parallelStr := "[SERIAL] Sequential"
 				if pkg.CanRunInParallel {
-					parallelStr = "⚡ Concurrent Parallel"
+					parallelStr = "[PARALLEL] Concurrent"
 				}
 				sb.WriteString(fmt.Sprintf("- **`[%s]` %s** (Role: `%s`, Mode: %s)\n", pkg.PackageID, pkg.Title, pkg.AssignedRole, parallelStr))
 				sb.WriteString(fmt.Sprintf("  - %s\n", pkg.Description))
@@ -492,7 +492,7 @@ func (p *MoEPanel) RenderMarkdown() string {
 	}
 
 	if len(p.SubagentTracks) > 0 {
-		sb.WriteString("### 🚀 Active Subagent Parallel Execution Tracks\n")
+		sb.WriteString("### [TRACKS] Active Subagent Parallel Execution Tracks\n")
 		for _, track := range p.SubagentTracks {
 			sb.WriteString(fmt.Sprintf("- Track `%s` -> Agent `%s` (%s) [%s]\n", track.TrackID, track.AgentID, track.Role, track.Status))
 		}

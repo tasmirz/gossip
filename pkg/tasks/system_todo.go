@@ -185,22 +185,22 @@ func (m *Manager) GetSystemTodoList() (*SystemTodoList, error) {
 // RenderSystemTodoListMarkdown formats the system backlog into a clean Markdown table.
 func (s *SystemTodoList) RenderMarkdown() string {
 	var b strings.Builder
-	b.WriteString(fmt.Sprintf("# 📋 System To-Do Backlog: %s\n\n", s.ProjectName))
+	b.WriteString(fmt.Sprintf("# [SYSTEM] To-Do Backlog: %s\n\n", s.ProjectName))
 	b.WriteString(fmt.Sprintf("*Synchronized: %s | Total Action Items: %d*\n\n",
 		s.GeneratedAt.Format(time.RFC1123), s.TotalActionItems))
 
 	b.WriteString("| Metric | Count |\n| :--- | :---: |\n")
-	b.WriteString(fmt.Sprintf("| 📋 Ready DAG Tasks | **%d** |\n", s.ReadyTasksCount))
-	b.WriteString(fmt.Sprintf("| 🎯 Incomplete Milestones | **%d** |\n", s.PendingMilestonesCount))
-	b.WriteString(fmt.Sprintf("| ⚙️ Pending SOP Phase Gates | **%d** |\n", s.PendingSOPGatesCount))
-	b.WriteString(fmt.Sprintf("| 🛡️ Open Security Vulnerabilities | **%d** |\n\n", s.OpenVulnerabilitiesCount))
+	b.WriteString(fmt.Sprintf("| [TASKS] Ready DAG Tasks | **%d** |\n", s.ReadyTasksCount))
+	b.WriteString(fmt.Sprintf("| [GOALS] Incomplete Milestones | **%d** |\n", s.PendingMilestonesCount))
+	b.WriteString(fmt.Sprintf("| [SOP] Pending SOP Phase Gates | **%d** |\n", s.PendingSOPGatesCount))
+	b.WriteString(fmt.Sprintf("| [SECURITY] Open Security Vulnerabilities | **%d** |\n\n", s.OpenVulnerabilitiesCount))
 
 	if len(s.Items) == 0 {
 		b.WriteString("_No pending action items found. All systems operational!_\n")
 		return b.String()
 	}
 
-	b.WriteString("### 🚀 Pending Action Items\n\n")
+	b.WriteString("### [ACTION ITEMS] Pending Action Items\n\n")
 	b.WriteString("| ID | Category | Priority | Target Role | Title | Context |\n")
 	b.WriteString("| :--- | :---: | :---: | :--- | :--- | :--- |\n")
 
