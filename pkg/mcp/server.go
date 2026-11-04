@@ -294,6 +294,155 @@ func (s *Server) registerRoleTools() {
 		return mcp.NewToolResultText("Heartbeat recorded successfully"), nil
 	})
 
+	// gossip_reidentify_agent (alias: gossip_resume_session, gsp_reidentify)
+	reidentifyTool := mcp.NewTool("gossip_reidentify_agent",
+		mcp.WithDescription("Re-identify or resume an agent session across restarts or new context sessions, returning an instant catch-up briefing of assigned tasks, unread inbox messages, active SOP stages, and personal to-dos"),
+		mcp.WithString("agent_id", mcp.Required(), mcp.Description("Unique identifier of the agent re-identifying")),
+		mcp.WithString("role", mcp.Description("Optional role override (if omitted, existing role is retained)")),
+		mcp.WithString("session_id", mcp.Description("Optional external session or conversation ID")),
+		mcp.WithString("status", mcp.Description("Optional status (default: 'active')")),
+		mcp.WithString("format", mcp.Description("Output format: 'markdown' (default) or 'json'")),
+	)
+	reidentifyHandler := func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		args := getArgsMap(req)
+		agentID := getString(args, "agent_id")
+		if agentID == "" {
+			return mcp.NewToolResultError("agent_id is required"), nil
+		}
+		role := getString(args, "role")
+		sessionID := getString(args, "session_id")
+		status := getString(args, "status")
+		if status == "" {
+			status = "active"
+		}
+
+		existing, found, err := s.store.GetAgent(agentID)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("failed to check existing agent: %v", err)), nil
+		}
+
+		var timeAway time.Duration
+		sessionCount := 1
+		if found {
+			timeAway = time.Since(existing.LastHeartbeat)
+			sessionCount = existing.SessionCount + 1
+			if role == "" {
+				role = existing.Role
+			}
+		} else {
+			if role == "" {
+				role = "worker"
+			}
+		}
+
+		sess := state.AgentSession{
+			ID:           agentID,
+			Role:         role,
+			Status:       status,
+			SessionID:    sessionID,
+			SessionCount: sessionCount,
+		}
+		if found {
+			sess.Name = existing.Name
+			sess.Capabilities = existing.Capabilities
+			sess.CurrentTaskID = existing.CurrentTaskID
+		}
+
+		if err := s.store.RegisterAgent(sess); err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("failed to reidentify agent: %v", err)), nil
+		}
+
+		unreadMsgs, _ := s.messages.ReadInbox(agentID, role, true, "", 20)
+		allTasks, _ := s.tasks.ListTasks("", "", agentID)
+		var pendingTasks []tasks.Task
+		for _, t := range allTasks {
+			if t.Status != "done" {
+				pendingTasks = append(pendingTasks, t)
+			}
+		}
+
+		personalTodos, _ := s.tasks.ListPersonalTodos(agentID, "pending")
+		inProgressTodos, _ := s.tasks.ListPersonalTodos(agentID, "in_progress")
+		activeTodos := append(personalTodos, inProgressTodos...)
+
+		debates, _ := s.deliberations.ListDebates("in_progress")
+		workflows, _ := s.sop.ListWorkflows()
+		var activeWf *sop.SOPWorkflow
+		for i := range workflows {
+			if workflows[i].Status == "active" {
+				activeWf = &workflows[i]
+				break
+			}
+		}
+
+		timeAwayStr := "first session"
+		if found {
+			timeAwayStr = timeAway.Round(time.Second).String()
+		}
+
+		format := getString(args, "format")
+		if format == "json" {
+			briefing := map[string]interface{}{
+				"agent_id":        agentID,
+				"role":            role,
+				"session_count":   sessionCount,
+				"time_away":       timeAwayStr,
+				"unread_messages": len(unreadMsgs),
+				"assigned_tasks":  len(pendingTasks),
+				"personal_todos":  len(activeTodos),
+				"active_debates":  len(debates),
+				"status":          status,
+			}
+			if activeWf != nil {
+				briefing["active_sop"] = map[string]interface{}{
+					"workflow_id":   activeWf.ID,
+					"template_name": activeWf.Template,
+					"current_stage": activeWf.Stages[activeWf.CurrentStageIndex].Name,
+				}
+			}
+			data, _ := json.MarshalIndent(briefing, "", "  ")
+			return mcp.NewToolResultText(string(data)), nil
+		}
+
+		var summary strings.Builder
+		summary.WriteString(fmt.Sprintf("### 🔄 Agent Re-Identification Briefing: `%s`\n", agentID))
+		summary.WriteString(fmt.Sprintf("- **Role**: `%s`\n", role))
+		summary.WriteString(fmt.Sprintf("- **Session**: #%d (Time away: %s)\n", sessionCount, timeAwayStr))
+		summary.WriteString(fmt.Sprintf("- **Assigned Tasks**: %d in progress/pending\n", len(pendingTasks)))
+		for _, t := range pendingTasks {
+			summary.WriteString(fmt.Sprintf("  - `[%s]` (%s) %s\n", t.ID, t.Status, t.Title))
+		}
+		summary.WriteString(fmt.Sprintf("- **Unread Messages**: %d waiting in inbox\n", len(unreadMsgs)))
+		for _, m := range unreadMsgs {
+			summary.WriteString(fmt.Sprintf("  - From `%s` (%s): %s\n", m.From, m.Role, m.Subject))
+		}
+		summary.WriteString(fmt.Sprintf("- **Personal Scratchpad To-Dos**: %d active items\n", len(activeTodos)))
+		for _, td := range activeTodos {
+			summary.WriteString(fmt.Sprintf("  - `[%s]` (%s) %s\n", td.ID, td.Priority, td.Title))
+		}
+		if len(debates) > 0 {
+			summary.WriteString(fmt.Sprintf("- **Active Debates**: %d awaiting consensus\n", len(debates)))
+			for _, d := range debates {
+				summary.WriteString(fmt.Sprintf("  - `[%s]` (Round %d): %s\n", d.ID, len(d.Rounds), d.Title))
+			}
+		}
+		if activeWf != nil {
+			summary.WriteString(fmt.Sprintf("- **Active SOP Workflow**: `%s` (Stage: %s)\n", activeWf.Template, activeWf.Stages[activeWf.CurrentStageIndex].Name))
+		}
+
+		return mcp.NewToolResultText(summary.String()), nil
+	}
+
+	s.mcpServer.AddTool(reidentifyTool, reidentifyHandler)
+
+	reidentifyToolAlias := reidentifyTool
+	reidentifyToolAlias.Name = "gsp_reidentify"
+	s.mcpServer.AddTool(reidentifyToolAlias, reidentifyHandler)
+
+	reidentifyToolAlias2 := reidentifyTool
+	reidentifyToolAlias2.Name = "gossip_resume_session"
+	s.mcpServer.AddTool(reidentifyToolAlias2, reidentifyHandler)
+
 	// gossip_get_role_definition
 	s.mcpServer.AddTool(mcp.NewTool("gossip_get_role_definition",
 		mcp.WithDescription("Retrieve system prompt, responsibilities, guidelines, and recommended tools for a specific role"),
@@ -1897,6 +2046,20 @@ func (s *Server) registerPrompts() {
 	), func(ctx context.Context, req mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
 		promptText := "System-Wide Backlog Review:\nCall `gossip_system_todo_list` with format='markdown' to inspect ready unassigned tasks, incomplete milestones, pending SOP phase gates, and open security vulnerabilities."
 		return mcp.NewGetPromptResult("System todo list", []mcp.PromptMessage{
+			mcp.NewPromptMessage(mcp.RoleUser, mcp.NewTextContent(promptText)),
+		}), nil
+	})
+
+	// gsp:resume
+	s.mcpServer.AddPrompt(mcp.NewPrompt("gsp:resume",
+		mcp.WithPromptDescription("Re-identify this agent in a new or resuming session and receive full catch-up context"),
+		mcp.WithArgument("agent_id", mcp.ArgumentDescription("Agent ID (e.g. 'worker-1')")),
+		mcp.WithArgument("role", mcp.ArgumentDescription("Optional role override")),
+	), func(ctx context.Context, req mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
+		agentID := req.Params.Arguments["agent_id"]
+		role := req.Params.Arguments["role"]
+		promptText := fmt.Sprintf("Agent Session Re-Identification & Catch-Up:\n1. Call `gossip_reidentify_agent` with agent_id='%s' and role='%s'.\n2. Review returned briefing: in-progress tasks, unread messages, personal scratchpad to-dos, and active SOP stage.\n3. Resume execution on assigned tasks.", agentID, role)
+		return mcp.NewGetPromptResult("Agent re-identification", []mcp.PromptMessage{
 			mcp.NewPromptMessage(mcp.RoleUser, mcp.NewTextContent(promptText)),
 		}), nil
 	})
