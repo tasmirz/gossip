@@ -63,4 +63,7 @@ func TestCLICommands(t *testing.T) {
 
 	// Test Poll
 	runPoll([]string{"--dir", tmpDir, "--agent", "worker-1", "--role", "worker", "--since", "5m", "--timeout", "0"})
+
+	// Test Index
+	runIndex([]string{"--dir", tmpDir, "--root", tmpDir})
 }
