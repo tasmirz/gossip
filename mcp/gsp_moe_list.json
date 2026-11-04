@@ -1,0 +1,24 @@
+{
+  "name": "gsp_moe_list",
+  "description": "List all active and past Mixture of Experts panels and their subagent tracks",
+  "parameters": {
+    "properties": {
+      "status": {
+        "description": "Filter by status: 'deliberating', 'synthesized', 'executing', 'completed'",
+        "type": "string"
+      }
+    },
+    "required": [],
+    "type": "object"
+  },
+  "inputSchema": {
+    "properties": {
+      "status": {
+        "description": "Filter by status: 'deliberating', 'synthesized', 'executing', 'completed'",
+        "type": "string"
+      }
+    },
+    "required": [],
+    "type": "object"
+  }
+}

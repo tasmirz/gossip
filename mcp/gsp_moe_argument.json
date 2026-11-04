@@ -1,0 +1,76 @@
+{
+  "name": "gsp_moe_argument",
+  "description": "Post a specialist expert domain perspective and technical argument to an active MoE panel",
+  "parameters": {
+    "properties": {
+      "agent_id": {
+        "description": "Contributing expert agent ID",
+        "type": "string"
+      },
+      "key_points": {
+        "description": "List of actionable takeaway points",
+        "type": "array"
+      },
+      "panel_id": {
+        "description": "ID of the MoE panel",
+        "type": "string"
+      },
+      "perspective": {
+        "description": "Detailed technical domain perspective",
+        "type": "string"
+      },
+      "role": {
+        "description": "Expert role",
+        "type": "string"
+      },
+      "stance": {
+        "description": "Stance: 'propose', 'counter', 'caution', or 'endorse'",
+        "type": "string"
+      }
+    },
+    "required": [
+      "panel_id",
+      "agent_id",
+      "role",
+      "stance",
+      "perspective"
+    ],
+    "type": "object"
+  },
+  "inputSchema": {
+    "properties": {
+      "agent_id": {
+        "description": "Contributing expert agent ID",
+        "type": "string"
+      },
+      "key_points": {
+        "description": "List of actionable takeaway points",
+        "type": "array"
+      },
+      "panel_id": {
+        "description": "ID of the MoE panel",
+        "type": "string"
+      },
+      "perspective": {
+        "description": "Detailed technical domain perspective",
+        "type": "string"
+      },
+      "role": {
+        "description": "Expert role",
+        "type": "string"
+      },
+      "stance": {
+        "description": "Stance: 'propose', 'counter', 'caution', or 'endorse'",
+        "type": "string"
+      }
+    },
+    "required": [
+      "panel_id",
+      "agent_id",
+      "role",
+      "stance",
+      "perspective"
+    ],
+    "type": "object"
+  }
+}

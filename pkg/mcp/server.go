@@ -15,6 +15,7 @@ import (
 	"github.com/tasmirz/gossip/pkg/graph"
 	"github.com/tasmirz/gossip/pkg/guardrails"
 	"github.com/tasmirz/gossip/pkg/messages"
+	"github.com/tasmirz/gossip/pkg/moe"
 	"github.com/tasmirz/gossip/pkg/roles"
 	"github.com/tasmirz/gossip/pkg/security"
 	"github.com/tasmirz/gossip/pkg/sop"
@@ -33,6 +34,7 @@ type Server struct {
 	sop           *sop.Manager
 	guardrails    *guardrails.Manager
 	events        *events.Manager
+	moe           *moe.Manager
 	roleProvider  roles.Provider
 }
 
@@ -51,6 +53,7 @@ func NewServer(store *state.Store, roleProv roles.Provider) *Server {
 	delibMgr := deliberation.NewManager(store)
 	sopMgr := sop.NewManager(store)
 	evtMgr := events.NewManager(store, msgMgr, taskMgr, delibMgr, sopMgr)
+	moeMgr := moe.NewManager(store, roleProv)
 
 	s := &Server{
 		store:         store,
@@ -61,6 +64,7 @@ func NewServer(store *state.Store, roleProv roles.Provider) *Server {
 		sop:           sopMgr,
 		guardrails:    guardrails.NewManager(store),
 		events:        evtMgr,
+		moe:           moeMgr,
 		roleProvider:  roleProv,
 	}
 
@@ -96,6 +100,7 @@ func (s *Server) registerTools() {
 	s.registerSOPTools()
 	s.registerGuardrailTools()
 	s.registerEventTools()
+	s.registerMoETools()
 }
 
 // --- Helper Functions for Extracting Tool Arguments ---
@@ -2063,6 +2068,34 @@ func (s *Server) registerPrompts() {
 			mcp.NewPromptMessage(mcp.RoleUser, mcp.NewTextContent(promptText)),
 		}), nil
 	})
+
+	// gsp:moe
+	s.mcpServer.AddPrompt(mcp.NewPrompt("gsp:moe",
+		mcp.WithPromptDescription("Convene a dynamic Mixture of Experts (MoE) panel to resolve an architectural or algorithmic dilemma"),
+		mcp.WithArgument("topic", mcp.ArgumentDescription("Discussion topic / title")),
+		mcp.WithArgument("query", mcp.ArgumentDescription("Technical dilemma or trade-off statement")),
+		mcp.WithArgument("domain", mcp.ArgumentDescription("Domain keywords (e.g. 'concurrency, networking, crypto')")),
+	), func(ctx context.Context, req mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
+		topic := req.Params.Arguments["topic"]
+		query := req.Params.Arguments["query"]
+		domain := req.Params.Arguments["domain"]
+		promptText := fmt.Sprintf("Mixture of Experts (MoE) Council Convening:\n1. Call `gossip_moe_convene_panel` with title='%s', query='%s', domain='%s'.\n2. Elicit specialist perspectives across the summoned experts.\n3. Synthesize the consensus decision and parallel subagent work packages using `gossip_moe_synthesize`.", topic, query, domain)
+		return mcp.NewGetPromptResult("MoE panel discussion", []mcp.PromptMessage{
+			mcp.NewPromptMessage(mcp.RoleUser, mcp.NewTextContent(promptText)),
+		}), nil
+	})
+
+	// gsp:parallel
+	s.mcpServer.AddPrompt(mcp.NewPrompt("gsp:parallel",
+		mcp.WithPromptDescription("Dispatch parallel subagent tracks to execute decoupled DAG tasks concurrently"),
+		mcp.WithArgument("panel_id", mcp.ArgumentDescription("MoE Panel ID holding parallel work packages")),
+	), func(ctx context.Context, req mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
+		panelID := req.Params.Arguments["panel_id"]
+		promptText := fmt.Sprintf("Parallel Subagent Dispatch:\nCall `gossip_moe_dispatch_subagents` with panel_id='%s'.\nMonitor concurrent progress across all dispatched execution tracks in the task DAG.", panelID)
+		return mcp.NewGetPromptResult("Parallel subagent dispatch", []mcp.PromptMessage{
+			mcp.NewPromptMessage(mcp.RoleUser, mcp.NewTextContent(promptText)),
+		}), nil
+	})
 }
 
 // --- Event Synchronization & Long-Polling Tools ---
@@ -2194,4 +2227,177 @@ func (s *Server) registerEventTools() {
 			"event":  evt,
 		})
 	})
+}
+
+// --- Mixture of Experts (MoE) & Subagent Parallel Dispatch Tools ---
+
+func (s *Server) registerMoETools() {
+	// gossip_moe_convene_panel (alias gsp_moe_convene)
+	conveneTool := mcp.NewTool("gossip_moe_convene_panel",
+		mcp.WithDescription("Convene a dynamic Mixture of Experts (MoE) discussion council with automated router gating and specialist expert summoning"),
+		mcp.WithString("title", mcp.Required(), mcp.Description("Discussion council title")),
+		mcp.WithString("query", mcp.Required(), mcp.Description("Complex dilemma or architectural question")),
+		mcp.WithString("domain", mcp.Description("Domain keywords for router gating (e.g. 'concurrency, networking, crypto')")),
+		mcp.WithString("initiator", mcp.Description("Agent ID initiating the panel")),
+		mcp.WithArray("roles", mcp.Description("Optional specific roles to summon (if omitted, router gates top-K experts automatically)")),
+		mcp.WithNumber("max_parallel", mcp.Description("Maximum concurrent subagent workers for parallel tracks (default: 4)")),
+	)
+	conveneHandler := func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		args := getArgsMap(req)
+		title := getString(args, "title")
+		query := getString(args, "query")
+		domain := getString(args, "domain")
+		initiator := getString(args, "initiator")
+		if initiator == "" {
+			initiator = "orchestrator"
+		}
+		rolesList := getStringSlice(args, "roles")
+		maxParallel := getInt(args, "max_parallel", 4)
+
+		if title == "" || query == "" {
+			return mcp.NewToolResultError("'title' and 'query' are required"), nil
+		}
+
+		panel, err := s.moe.ConvenePanel(title, query, domain, initiator, rolesList, maxParallel)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("failed to convene MoE panel: %v", err)), nil
+		}
+
+		return toJSONText(panel)
+	}
+	s.mcpServer.AddTool(conveneTool, conveneHandler)
+	conveneAlias := conveneTool
+	conveneAlias.Name = "gsp_moe_convene"
+	s.mcpServer.AddTool(conveneAlias, conveneHandler)
+
+	// gossip_moe_post_argument (alias gsp_moe_argument)
+	argTool := mcp.NewTool("gossip_moe_post_argument",
+		mcp.WithDescription("Post a specialist expert domain perspective and technical argument to an active MoE panel"),
+		mcp.WithString("panel_id", mcp.Required(), mcp.Description("ID of the MoE panel")),
+		mcp.WithString("agent_id", mcp.Required(), mcp.Description("Contributing expert agent ID")),
+		mcp.WithString("role", mcp.Required(), mcp.Description("Expert role")),
+		mcp.WithString("stance", mcp.Required(), mcp.Description("Stance: 'propose', 'counter', 'caution', or 'endorse'")),
+		mcp.WithString("perspective", mcp.Required(), mcp.Description("Detailed technical domain perspective")),
+		mcp.WithArray("key_points", mcp.Description("List of actionable takeaway points")),
+	)
+	argHandler := func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		args := getArgsMap(req)
+		panelID := getString(args, "panel_id")
+		agentID := getString(args, "agent_id")
+		role := getString(args, "role")
+		stance := getString(args, "stance")
+		perspective := getString(args, "perspective")
+		keyPoints := getStringSlice(args, "key_points")
+
+		if panelID == "" || agentID == "" || role == "" || perspective == "" {
+			return mcp.NewToolResultError("'panel_id', 'agent_id', 'role', and 'perspective' are required"), nil
+		}
+
+		arg, err := s.moe.PostArgument(panelID, agentID, role, stance, perspective, keyPoints)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("failed to post argument: %v", err)), nil
+		}
+
+		return toJSONText(arg)
+	}
+	s.mcpServer.AddTool(argTool, argHandler)
+	argAlias := argTool
+	argAlias.Name = "gsp_moe_argument"
+	s.mcpServer.AddTool(argAlias, argHandler)
+
+	// gossip_moe_synthesize (alias gsp_moe_synthesize)
+	synthTool := mcp.NewTool("gossip_moe_synthesize",
+		mcp.WithDescription("Synthesize the MoE council deliberations into a unified consensus decision and parallel subagent work packages"),
+		mcp.WithString("panel_id", mcp.Required(), mcp.Description("ID of the MoE panel")),
+		mcp.WithString("agent_id", mcp.Required(), mcp.Description("Synthesizing orchestrator agent ID")),
+		mcp.WithString("consensus_decision", mcp.Required(), mcp.Description("Final technical consensus")),
+		mcp.WithArray("trade_offs", mcp.Description("Documented architectural trade-offs")),
+		mcp.WithArray("recommended_actions", mcp.Description("Concrete implementation actions")),
+	)
+	synthHandler := func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		args := getArgsMap(req)
+		panelID := getString(args, "panel_id")
+		agentID := getString(args, "agent_id")
+		decision := getString(args, "consensus_decision")
+		tradeOffs := getStringSlice(args, "trade_offs")
+		actions := getStringSlice(args, "recommended_actions")
+
+		if panelID == "" || agentID == "" || decision == "" {
+			return mcp.NewToolResultError("'panel_id', 'agent_id', and 'consensus_decision' are required"), nil
+		}
+
+		var packages []moe.WorkPackage
+		for i, act := range actions {
+			packages = append(packages, moe.WorkPackage{
+				PackageID:        fmt.Sprintf("pkg-%d", i+1),
+				Title:            act,
+				Description:      act,
+				AssignedRole:     "worker",
+				CanRunInParallel: true,
+			})
+		}
+
+		synth, err := s.moe.Synthesize(panelID, agentID, decision, tradeOffs, actions, packages)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("failed to synthesize MoE council: %v", err)), nil
+		}
+
+		return toJSONText(synth)
+	}
+	s.mcpServer.AddTool(synthTool, synthHandler)
+	synthAlias := synthTool
+	synthAlias.Name = "gsp_moe_synthesize"
+	s.mcpServer.AddTool(synthAlias, synthHandler)
+
+	// gossip_moe_dispatch_subagents (alias gsp_parallel, gsp_moe_dispatch)
+	dispatchTool := mcp.NewTool("gossip_moe_dispatch_subagents",
+		mcp.WithDescription("Dispatch parallel subagent tracks to execute decoupled DAG tasks concurrently"),
+		mcp.WithString("panel_id", mcp.Required(), mcp.Description("ID of the synthesized MoE panel")),
+		mcp.WithString("agent_id", mcp.Description("Orchestrator authorizing dispatch")),
+	)
+	dispatchHandler := func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		args := getArgsMap(req)
+		panelID := getString(args, "panel_id")
+		agentID := getString(args, "agent_id")
+		if agentID == "" {
+			agentID = "orchestrator"
+		}
+
+		if panelID == "" {
+			return mcp.NewToolResultError("'panel_id' is required"), nil
+		}
+
+		tracks, err := s.moe.DispatchSubagents(panelID, agentID)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("failed to dispatch subagents: %v", err)), nil
+		}
+
+		return toJSONText(map[string]any{
+			"status":          "dispatched",
+			"subagent_tracks": tracks,
+		})
+	}
+	s.mcpServer.AddTool(dispatchTool, dispatchHandler)
+	dispatchAlias := dispatchTool
+	dispatchAlias.Name = "gsp_parallel"
+	s.mcpServer.AddTool(dispatchAlias, dispatchHandler)
+
+	// gossip_moe_list_panels (alias gsp_moe_list)
+	listTool := mcp.NewTool("gossip_moe_list_panels",
+		mcp.WithDescription("List all active and past Mixture of Experts panels and their subagent tracks"),
+		mcp.WithString("status", mcp.Description("Filter by status: 'deliberating', 'synthesized', 'executing', 'completed'")),
+	)
+	listHandler := func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		args := getArgsMap(req)
+		status := getString(args, "status")
+		panels, err := s.moe.ListPanels(status)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("failed to list panels: %v", err)), nil
+		}
+		return toJSONText(panels)
+	}
+	s.mcpServer.AddTool(listTool, listHandler)
+	listAlias := listTool
+	listAlias.Name = "gsp_moe_list"
+	s.mcpServer.AddTool(listAlias, listHandler)
 }
