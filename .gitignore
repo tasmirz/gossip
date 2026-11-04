@@ -1,0 +1,11 @@
+# Local project state created at runtime
+.local/
+*.tmp.*
+*.tmp
+
+# OS and Editor files
+.DS_Store
+*.swp
+*~
+.idea/
+.vscode/
