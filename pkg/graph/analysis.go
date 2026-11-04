@@ -9,22 +9,22 @@ import (
 
 // Default dependency relations indicating that source depends on or uses target.
 var defaultDependentRelations = map[string]bool{
-	"calls":         true,
-	"indirect_call": true,
-	"references":    true,
-	"imports":       true,
-	"imports_from":  true,
+	"calls":          true,
+	"indirect_call":  true,
+	"references":     true,
+	"imports":        true,
+	"imports_from":   true,
 	"dynamic_import": true,
-	"re_exports":    true,
-	"inherits":      true,
-	"extends":       true,
-	"implements":    true,
-	"uses":          true,
-	"mixes_in":      true,
-	"depends_on":    true,
-	"requires":      true,
-	"verifies":      true,
-	"solves":        true,
+	"re_exports":     true,
+	"inherits":       true,
+	"extends":        true,
+	"implements":     true,
+	"uses":           true,
+	"mixes_in":       true,
+	"depends_on":     true,
+	"requires":       true,
+	"verifies":       true,
+	"solves":         true,
 }
 
 // NodeScore captures centrality metrics for a graph node.
@@ -108,8 +108,8 @@ func calculatePageRank(g *KnowledgeGraph, damping float64, maxIter int, tol floa
 	sort.Strings(nodeList)
 
 	// Adjacency and degree maps
-	inEdges := make(map[string][]string)  // target -> list of sources
-	outDegree := make(map[string]int)     // source -> out degree
+	inEdges := make(map[string][]string) // target -> list of sources
+	outDegree := make(map[string]int)    // source -> out degree
 	inDegree := make(map[string]int)
 
 	for _, e := range g.Edges {

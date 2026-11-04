@@ -19,7 +19,7 @@ type StorageConfig struct {
 
 // RolesConfig controls role loading and dynamic registration.
 type RolesConfig struct {
-	ConfigFile                string `json:"config_file"`
+	ConfigFile               string `json:"config_file"`
 	AllowDynamicRegistration bool   `json:"allow_dynamic_registration"`
 }
 
@@ -39,8 +39,8 @@ type TasksConfig struct {
 
 // GraphConfig configures knowledge graph RAG parameters.
 type GraphConfig struct {
-	DataFile                string `json:"data_file"`
-	ReportFile              string `json:"report_file"`
+	DataFile                 string `json:"data_file"`
+	ReportFile               string `json:"report_file"`
 	DefaultNeighborhoodDepth int    `json:"default_neighborhood_depth"`
 	MaxNeighborhoodDepth     int    `json:"max_neighborhood_depth"`
 }

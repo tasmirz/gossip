@@ -54,12 +54,12 @@ type SOPArtifact struct {
 
 // SOPStage represents an individual gate or phase in a Standard Operating Procedure.
 type SOPStage struct {
-	ID                    string   `json:"id"`
-	Name                  string   `json:"name"`
-	Description           string   `json:"description"`
-	RequiredRole          string   `json:"required_role"`
-	RequiredArtifactTypes []string `json:"required_artifact_types"`
-	Status                string   `json:"status"` // pending, in_progress, completed, blocked
+	ID                    string     `json:"id"`
+	Name                  string     `json:"name"`
+	Description           string     `json:"description"`
+	RequiredRole          string     `json:"required_role"`
+	RequiredArtifactTypes []string   `json:"required_artifact_types"`
+	Status                string     `json:"status"` // pending, in_progress, completed, blocked
 	CompletedAt           *time.Time `json:"completed_at,omitempty"`
 }
 
