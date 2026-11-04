@@ -1,0 +1,72 @@
+{
+  "name": "gossip_rag_add_edge",
+  "description": "Add a directed, typed relationship between two nodes in the shared knowledge graph with provenance tracking",
+  "parameters": {
+    "properties": {
+      "created_by": {
+        "description": "Author agent ID",
+        "type": "string"
+      },
+      "provenance": {
+        "description": "Provenance: 'EXTRACTED' (explicit code/file structural link) or 'INFERRED' (deduced by specialist agent)",
+        "type": "string"
+      },
+      "relation": {
+        "description": "Relation: 'depends_on', 'implements', 'verifies', 'calls', 'solves', 'conflicts_with', 'references'",
+        "type": "string"
+      },
+      "source": {
+        "description": "Source node ID",
+        "type": "string"
+      },
+      "summary": {
+        "description": "Brief reason or explanation for this connection",
+        "type": "string"
+      },
+      "target": {
+        "description": "Target node ID",
+        "type": "string"
+      }
+    },
+    "required": [
+      "source",
+      "target",
+      "relation"
+    ],
+    "type": "object"
+  },
+  "inputSchema": {
+    "properties": {
+      "created_by": {
+        "description": "Author agent ID",
+        "type": "string"
+      },
+      "provenance": {
+        "description": "Provenance: 'EXTRACTED' (explicit code/file structural link) or 'INFERRED' (deduced by specialist agent)",
+        "type": "string"
+      },
+      "relation": {
+        "description": "Relation: 'depends_on', 'implements', 'verifies', 'calls', 'solves', 'conflicts_with', 'references'",
+        "type": "string"
+      },
+      "source": {
+        "description": "Source node ID",
+        "type": "string"
+      },
+      "summary": {
+        "description": "Brief reason or explanation for this connection",
+        "type": "string"
+      },
+      "target": {
+        "description": "Target node ID",
+        "type": "string"
+      }
+    },
+    "required": [
+      "source",
+      "target",
+      "relation"
+    ],
+    "type": "object"
+  }
+}

@@ -1,0 +1,58 @@
+{
+  "name": "gossip_start_debate",
+  "description": "Open a multi-agent debate session on an architectural choice, controversial design, or proposal",
+  "parameters": {
+    "properties": {
+      "description": {
+        "description": "Detailed problem statement and proposed approach",
+        "type": "string"
+      },
+      "proposer": {
+        "description": "Agent ID proposing the motion",
+        "type": "string"
+      },
+      "role": {
+        "description": "Proposer's role",
+        "type": "string"
+      },
+      "title": {
+        "description": "Debate title or motion",
+        "type": "string"
+      }
+    },
+    "required": [
+      "title",
+      "description",
+      "proposer",
+      "role"
+    ],
+    "type": "object"
+  },
+  "inputSchema": {
+    "properties": {
+      "description": {
+        "description": "Detailed problem statement and proposed approach",
+        "type": "string"
+      },
+      "proposer": {
+        "description": "Agent ID proposing the motion",
+        "type": "string"
+      },
+      "role": {
+        "description": "Proposer's role",
+        "type": "string"
+      },
+      "title": {
+        "description": "Debate title or motion",
+        "type": "string"
+      }
+    },
+    "required": [
+      "title",
+      "description",
+      "proposer",
+      "role"
+    ],
+    "type": "object"
+  }
+}

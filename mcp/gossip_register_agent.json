@@ -1,0 +1,62 @@
+{
+  "name": "gossip_register_agent",
+  "description": "Register an agent session in the gossip mesh with its designated role and capabilities",
+  "parameters": {
+    "properties": {
+      "agent_id": {
+        "description": "Unique identifier for this agent session (e.g. 'orch-1', 'neteng-1')",
+        "type": "string"
+      },
+      "capabilities": {
+        "description": "List of capability tags or skills",
+        "type": "array"
+      },
+      "current_task_id": {
+        "description": "Task ID currently being worked on",
+        "type": "string"
+      },
+      "name": {
+        "description": "Human-readable agent display name",
+        "type": "string"
+      },
+      "role": {
+        "description": "Role ID (orchestrator, worker, network_engineer, math_expert, systems_architect, security_specialist, qa_engineer, researcher)",
+        "type": "string"
+      }
+    },
+    "required": [
+      "agent_id",
+      "role"
+    ],
+    "type": "object"
+  },
+  "inputSchema": {
+    "properties": {
+      "agent_id": {
+        "description": "Unique identifier for this agent session (e.g. 'orch-1', 'neteng-1')",
+        "type": "string"
+      },
+      "capabilities": {
+        "description": "List of capability tags or skills",
+        "type": "array"
+      },
+      "current_task_id": {
+        "description": "Task ID currently being worked on",
+        "type": "string"
+      },
+      "name": {
+        "description": "Human-readable agent display name",
+        "type": "string"
+      },
+      "role": {
+        "description": "Role ID (orchestrator, worker, network_engineer, math_expert, systems_architect, security_specialist, qa_engineer, researcher)",
+        "type": "string"
+      }
+    },
+    "required": [
+      "agent_id",
+      "role"
+    ],
+    "type": "object"
+  }
+}

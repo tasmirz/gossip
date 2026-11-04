@@ -1,0 +1,82 @@
+{
+  "name": "gossip_log_red_team_probe",
+  "description": "Log an adversarial red-team penetration, fuzzing vector, concurrency race, or boundary exploit",
+  "parameters": {
+    "properties": {
+      "attack_vector": {
+        "description": "Description of exploit or edge-case break scenario",
+        "type": "string"
+      },
+      "attacker_id": {
+        "description": "Red team agent ID",
+        "type": "string"
+      },
+      "poc_payload": {
+        "description": "Minimal reproduction payload or reproduction command",
+        "type": "string"
+      },
+      "remediation_task_id": {
+        "description": "Linked task ID to remediate this vulnerability",
+        "type": "string"
+      },
+      "status": {
+        "description": "Status: 'vulnerable', 'mitigated', 'false_positive' (default: 'vulnerable')",
+        "type": "string"
+      },
+      "target": {
+        "description": "Component, protocol, or file under test",
+        "type": "string"
+      },
+      "threat_category": {
+        "description": "Threat category: 'concurrency_race', 'dos', 'boundary_overflow', 'tampering', 'spoofing', 'logic_bypass'",
+        "type": "string"
+      }
+    },
+    "required": [
+      "target",
+      "threat_category",
+      "attacker_id",
+      "attack_vector"
+    ],
+    "type": "object"
+  },
+  "inputSchema": {
+    "properties": {
+      "attack_vector": {
+        "description": "Description of exploit or edge-case break scenario",
+        "type": "string"
+      },
+      "attacker_id": {
+        "description": "Red team agent ID",
+        "type": "string"
+      },
+      "poc_payload": {
+        "description": "Minimal reproduction payload or reproduction command",
+        "type": "string"
+      },
+      "remediation_task_id": {
+        "description": "Linked task ID to remediate this vulnerability",
+        "type": "string"
+      },
+      "status": {
+        "description": "Status: 'vulnerable', 'mitigated', 'false_positive' (default: 'vulnerable')",
+        "type": "string"
+      },
+      "target": {
+        "description": "Component, protocol, or file under test",
+        "type": "string"
+      },
+      "threat_category": {
+        "description": "Threat category: 'concurrency_race', 'dos', 'boundary_overflow', 'tampering', 'spoofing', 'logic_bypass'",
+        "type": "string"
+      }
+    },
+    "required": [
+      "target",
+      "threat_category",
+      "attacker_id",
+      "attack_vector"
+    ],
+    "type": "object"
+  }
+}

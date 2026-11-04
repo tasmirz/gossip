@@ -1,0 +1,24 @@
+{
+  "name": "gossip_orchestrator_assignments",
+  "description": "Orchestrator central assignment matrix: active tasks per agent, workload distribution, bottleneck tasks, and idle-worker delegation suggestions",
+  "parameters": {
+    "properties": {
+      "format": {
+        "description": "Output format: 'json' or 'markdown' (default: 'json')",
+        "type": "string"
+      }
+    },
+    "required": [],
+    "type": "object"
+  },
+  "inputSchema": {
+    "properties": {
+      "format": {
+        "description": "Output format: 'json' or 'markdown' (default: 'json')",
+        "type": "string"
+      }
+    },
+    "required": [],
+    "type": "object"
+  }
+}

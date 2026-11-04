@@ -1,0 +1,28 @@
+{
+  "name": "gossip_debate_tally_ranked_votes",
+  "description": "Tally ranked-choice votes using confidence-weighted Borda Count to identify the consensus winner",
+  "parameters": {
+    "properties": {
+      "debate_id": {
+        "description": "ID of the debate",
+        "type": "string"
+      }
+    },
+    "required": [
+      "debate_id"
+    ],
+    "type": "object"
+  },
+  "inputSchema": {
+    "properties": {
+      "debate_id": {
+        "description": "ID of the debate",
+        "type": "string"
+      }
+    },
+    "required": [
+      "debate_id"
+    ],
+    "type": "object"
+  }
+}

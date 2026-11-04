@@ -1,0 +1,14 @@
+{
+  "name": "gossip_list_agents",
+  "description": "List all registered agents, their current status, roles, tasks, and last heartbeats",
+  "parameters": {
+    "properties": {},
+    "required": [],
+    "type": "object"
+  },
+  "inputSchema": {
+    "properties": {},
+    "required": [],
+    "type": "object"
+  }
+}

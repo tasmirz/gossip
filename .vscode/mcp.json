@@ -1,0 +1,13 @@
+{
+  "servers": {
+    "gossip": {
+      "command": "${workspaceFolder}/bin/gossip-mcp",
+      "args": [
+        "serve"
+      ],
+      "env": {
+        "GOSSIP_DIR": "${workspaceFolder}/.local/gossip"
+      }
+    }
+  }
+}

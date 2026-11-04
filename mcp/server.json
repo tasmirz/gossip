@@ -1,0 +1,329 @@
+{
+  "name": "Gossip Agent Mesh",
+  "version": "1.0.0",
+  "description": "Multi-agent coordination fabric, task DAG delegation, MetaGPT-style Standard Operating Procedures (SOPs), inter-agent messaging, Graphify blast-radius RAG, Aider-style PageRank repo-mapping, Multi-Agent Debate (MAD) with Borda consensus, and STRIDE red-teaming.",
+  "capabilities": {
+    "prompts": {
+      "listChanged": true
+    },
+    "tools": {
+      "listChanged": true
+    }
+  },
+  "tools": [
+    {
+      "name": "gossip_advance_debate_round",
+      "description": "Close the current round of an active debate and open the next round for critique and rebuttal"
+    },
+    {
+      "name": "gossip_broadcast_message",
+      "description": "Broadcast a high-priority message or announcement to all active agents in the project"
+    },
+    {
+      "name": "gossip_cast_vote",
+      "description": "Cast a formal vote on an active debate or proposal"
+    },
+    {
+      "name": "gossip_conclude_debate",
+      "description": "Conclude a debate, tally votes, establish consensus, and record the final resolution"
+    },
+    {
+      "name": "gossip_create_task",
+      "description": "Create a new task in the shared DAG with role target, priority, dependencies, and acceptance criteria"
+    },
+    {
+      "name": "gossip_debate_check_convergence",
+      "description": "Evaluate whether a multi-round debate has converged towards consensus or if further rounds are needed"
+    },
+    {
+      "name": "gossip_debate_ranked_vote",
+      "description": "Cast a ranked-choice ballot ordering multiple alternative candidates (Borda Count tallying)"
+    },
+    {
+      "name": "gossip_debate_tally_ranked_votes",
+      "description": "Tally ranked-choice votes using confidence-weighted Borda Count to identify the consensus winner"
+    },
+    {
+      "name": "gossip_derive_project_roles",
+      "description": "Synthesize LLM-derived specialist roles, guardrails, cautions, and AGENTS.md customized for this project"
+    },
+    {
+      "name": "gossip_export_agents_md",
+      "description": "Re-render and write AGENTS.md and RULES.md in the project directory"
+    },
+    {
+      "name": "gossip_get_goals",
+      "description": "Get active project goals, milestones, and status"
+    },
+    {
+      "name": "gossip_get_guardrails",
+      "description": "Retrieve all project guardrails, active roles, forbidden actions, cautions, and invariants"
+    },
+    {
+      "name": "gossip_get_role_definition",
+      "description": "Retrieve system prompt, responsibilities, guidelines, and recommended tools for a specific role"
+    },
+    {
+      "name": "gossip_get_task",
+      "description": "Retrieve full details, notes, blockers, and artifacts for a single task"
+    },
+    {
+      "name": "gossip_guardrails_validate_action",
+      "description": "Pre-flight inspection checking whether an action or file modification violates project cautions or forbidden rules"
+    },
+    {
+      "name": "gossip_heartbeat",
+      "description": "Send a heartbeat to keep agent session active and update current task or status"
+    },
+    {
+      "name": "gossip_list_agents",
+      "description": "List all registered agents, their current status, roles, tasks, and last heartbeats"
+    },
+    {
+      "name": "gossip_list_deliberations",
+      "description": "List debates, peer reviews, and red team probes with optional filtering"
+    },
+    {
+      "name": "gossip_list_roles",
+      "description": "List all available specialist roles loaded dynamically from JSON in Markdown"
+    },
+    {
+      "name": "gossip_list_tasks",
+      "description": "List tasks in the shared DAG with optional filtering by status, role, or assignee"
+    },
+    {
+      "name": "gossip_list_threads",
+      "description": "List active discussion threads and participant summaries"
+    },
+    {
+      "name": "gossip_log_event",
+      "description": "Append an explicit custom event or checkpoint to the shared event ledger (events.jsonl)"
+    },
+    {
+      "name": "gossip_log_red_team_probe",
+      "description": "Log an adversarial red-team penetration, fuzzing vector, concurrency race, or boundary exploit"
+    },
+    {
+      "name": "gossip_mark_messages_read",
+      "description": "Mark messages as read for this agent"
+    },
+    {
+      "name": "gossip_orchestrator_assignments",
+      "description": "Orchestrator central assignment matrix: active tasks per agent, workload distribution, bottleneck tasks, and idle-worker delegation suggestions"
+    },
+    {
+      "name": "gossip_personal_todo_add",
+      "description": "Add a personal checklist item or scratchpad task for an agent to track internal sub-steps"
+    },
+    {
+      "name": "gossip_personal_todo_delete",
+      "description": "Delete an item from an agent's personal checklist"
+    },
+    {
+      "name": "gossip_personal_todo_list",
+      "description": "List an agent's personal to-do scratchpad items and working checklist"
+    },
+    {
+      "name": "gossip_personal_todo_update",
+      "description": "Update status or notes for an agent's personal checklist item"
+    },
+    {
+      "name": "gossip_poll_events",
+      "description": "Continuously poll or long-poll for updates, new messages, newly unblocked ready tasks, debate rounds, and peer activity with timeout"
+    },
+    {
+      "name": "gossip_post_argument",
+      "description": "Post an argument in an active multi-agent debate (pro, con, critique, rebuttal, or neutral)"
+    },
+    {
+      "name": "gossip_rag_add_edge",
+      "description": "Add a directed, typed relationship between two nodes in the shared knowledge graph with provenance tracking"
+    },
+    {
+      "name": "gossip_rag_add_node",
+      "description": "Add a concept, file, code symbol, architectural decision, constraint, or formal proof to the shared knowledge graph"
+    },
+    {
+      "name": "gossip_rag_clusters",
+      "description": "Detect modular architectural clusters and submodules in the knowledge graph (inspired by Graphify cluster.py)"
+    },
+    {
+      "name": "gossip_rag_export_report",
+      "description": "Generate and return the comprehensive GRAPH_REPORT.md summarizing knowledge hubs, provenance, decisions, and proofs"
+    },
+    {
+      "name": "gossip_rag_find_path",
+      "description": "Find the shortest relationship path between two concepts/nodes to trace transitive dependencies or conflicts"
+    },
+    {
+      "name": "gossip_rag_get_neighborhood",
+      "description": "Extract connected subgraphs around a node within 1 to 3 hops to understand dependencies and impact"
+    },
+    {
+      "name": "gossip_rag_impact_analysis",
+      "description": "Perform blast-radius impact analysis when modifying a node/symbol/file, discovering all direct and indirect dependents (inspired by Graphify affected.py)"
+    },
+    {
+      "name": "gossip_rag_index_codebase",
+      "description": "Automatically index the codebase (files, packages, AST symbols, decisions, invariants) into the shared RAG knowledge graph"
+    },
+    {
+      "name": "gossip_rag_pagerank",
+      "description": "Compute PageRank centrality scores across all knowledge nodes to identify architecturally critical components (inspired by Aider repo-map)"
+    },
+    {
+      "name": "gossip_rag_query",
+      "description": "Search the shared knowledge graph using keywords, type filter, and tag filter with relevance ranking"
+    },
+    {
+      "name": "gossip_rag_repo_map",
+      "description": "Generate a compact, token-budgeted architectural map ranked by PageRank centrality (inspired by Aider repo-map)"
+    },
+    {
+      "name": "gossip_read_inbox",
+      "description": "Read messages sent to this agent or this agent's role"
+    },
+    {
+      "name": "gossip_redteam_generate_audit_report",
+      "description": "Generate and save the executive AUDIT_REPORT.md summarizing all red-team security evaluations"
+    },
+    {
+      "name": "gossip_redteam_generate_stride_probes",
+      "description": "Generate structured adversarial STRIDE threat probes (Spoofing, Tampering, Repudiation, Info Disclosure, DoS, Elevation of Privilege)"
+    },
+    {
+      "name": "gossip_register_agent",
+      "description": "Register an agent session in the gossip mesh with its designated role and capabilities"
+    },
+    {
+      "name": "gossip_register_custom_role",
+      "description": "Dynamically define and register a new custom agent role at runtime (stored in JSON)"
+    },
+    {
+      "name": "gossip_render_board",
+      "description": "Render and return the live Markdown Kanban board (BOARD.md) representing current multi-agent work state"
+    },
+    {
+      "name": "gossip_request_review",
+      "description": "Request a formal peer review or critique cycle on a task, artifact, or code file"
+    },
+    {
+      "name": "gossip_send_message",
+      "description": "Send a message to a specific agent, a role channel, or broadcast to all"
+    },
+    {
+      "name": "gossip_set_caution_rule",
+      "description": "Add or update a safety caution rule, sensitive path pattern, or invariant in the project guardrail database"
+    },
+    {
+      "name": "gossip_set_goal",
+      "description": "Set or update high-level strategic goals and milestone checkpoints"
+    },
+    {
+      "name": "gossip_sop_advance",
+      "description": "Advance an SOP workflow to the next phase gate, verifying that required deliverables and roles match"
+    },
+    {
+      "name": "gossip_sop_get_status",
+      "description": "Inspect the current stage, completed gates, and deliverables for an SOP workflow"
+    },
+    {
+      "name": "gossip_sop_list_workflows",
+      "description": "List active Standard Operating Procedure (SOP) workflows and available templates (MetaGPT-inspired)"
+    },
+    {
+      "name": "gossip_sop_save_artifact",
+      "description": "Save a versioned SOP artifact deliverable (PRD, System Design, Task Plan, Review, Security Audit)"
+    },
+    {
+      "name": "gossip_sop_start",
+      "description": "Start a structured SOP workflow (templates: 'feature_delivery', 'bug_investigation', 'security_hardening')"
+    },
+    {
+      "name": "gossip_start_debate",
+      "description": "Open a multi-agent debate session on an architectural choice, controversial design, or proposal"
+    },
+    {
+      "name": "gossip_submit_review",
+      "description": "Submit structured review findings, critique, and formal verdict on a pending review"
+    },
+    {
+      "name": "gossip_sync",
+      "description": "Alias for gossip_poll_events: synchronize state, heartbeat, and fetch new events"
+    },
+    {
+      "name": "gossip_system_todo_list",
+      "description": "Retrieve unified system-wide backlog aggregating unassigned ready DAG tasks, incomplete milestones, pending SOP phase gates, and open security vulnerabilities"
+    },
+    {
+      "name": "gossip_update_task",
+      "description": "Update task status, assign an agent, append progress notes, or register result artifacts"
+    },
+    {
+      "name": "gsp_derive_roles",
+      "description": "Alias for gossip_derive_project_roles: derive roles, guardrails, cautions, and AGENTS.md"
+    },
+    {
+      "name": "gsp_guardrail_check",
+      "description": "Alias for gossip_guardrails_validate_action: pre-flight check against active cautions"
+    },
+    {
+      "name": "gsp_index",
+      "description": "Alias for gossip_rag_index_codebase: parse AST and index codebase into RAG space"
+    },
+    {
+      "name": "gsp_poll",
+      "description": "Alias for gossip_poll_events: time-based continuous event polling and long-polling sync"
+    }
+  ],
+  "prompts": [
+    {
+      "name": "gsp:assignments",
+      "description": "Inspect Orchestrator workload distribution, task assignments per agent, blockers, and delegation recommendations"
+    },
+    {
+      "name": "gsp:blast_radius",
+      "description": "Perform blast-radius impact analysis on a component using Graphify reverse dependency walk"
+    },
+    {
+      "name": "gsp:debate",
+      "description": "Initiate an adversarial multi-agent debate with convergence tracking and Borda voting"
+    },
+    {
+      "name": "gsp:derive_roles",
+      "description": "Analyze codebase tech stack and derive custom agent roles, guardrails, cautions, and AGENTS.md"
+    },
+    {
+      "name": "gsp:guardrail_check",
+      "description": "Validate an action or code edit against active caution rules and project invariants"
+    },
+    {
+      "name": "gsp:my_todos",
+      "description": "Inspect personal scratchpad checklist items and sub-tasks for an agent"
+    },
+    {
+      "name": "gsp:poll",
+      "description": "Continuously poll or long-poll for incoming messages, unblocked tasks, and state events"
+    },
+    {
+      "name": "gsp:repomap",
+      "description": "Fetch PageRank-ranked architectural repo map for context injection"
+    },
+    {
+      "name": "gsp:review",
+      "description": "Request and submit a formal peer review on a task deliverable"
+    },
+    {
+      "name": "gsp:sop_advance",
+      "description": "Advance an active SOP workflow through its next phase gate with artifact verification"
+    },
+    {
+      "name": "gsp:stride_audit",
+      "description": "Execute automated STRIDE threat modeling and compile AUDIT_REPORT.md"
+    },
+    {
+      "name": "gsp:system_todos",
+      "description": "Inspect unified project-wide action backlog across DAG, milestones, SOP gates, and vulnerabilities"
+    }
+  ]
+}

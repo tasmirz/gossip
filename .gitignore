@@ -8,4 +8,5 @@
 *.swp
 *~
 .idea/
-.vscode/
+.vscode/*
+!.vscode/mcp.json

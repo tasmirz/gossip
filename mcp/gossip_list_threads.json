@@ -1,0 +1,24 @@
+{
+  "name": "gossip_list_threads",
+  "description": "List active discussion threads and participant summaries",
+  "parameters": {
+    "properties": {
+      "limit": {
+        "description": "Max threads to return (default: 15)",
+        "type": "integer"
+      }
+    },
+    "required": [],
+    "type": "object"
+  },
+  "inputSchema": {
+    "properties": {
+      "limit": {
+        "description": "Max threads to return (default: 15)",
+        "type": "integer"
+      }
+    },
+    "required": [],
+    "type": "object"
+  }
+}

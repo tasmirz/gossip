@@ -1,0 +1,62 @@
+{
+  "name": "gossip_read_inbox",
+  "description": "Read messages sent to this agent or this agent's role",
+  "parameters": {
+    "properties": {
+      "agent_id": {
+        "description": "Your agent ID",
+        "type": "string"
+      },
+      "limit": {
+        "description": "Max messages to return (default: 20)",
+        "type": "integer"
+      },
+      "only_unread": {
+        "description": "If true, return only unread messages (default: false)",
+        "type": "boolean"
+      },
+      "role": {
+        "description": "Your agent role",
+        "type": "string"
+      },
+      "thread_id": {
+        "description": "Filter by conversation thread ID",
+        "type": "string"
+      }
+    },
+    "required": [
+      "agent_id",
+      "role"
+    ],
+    "type": "object"
+  },
+  "inputSchema": {
+    "properties": {
+      "agent_id": {
+        "description": "Your agent ID",
+        "type": "string"
+      },
+      "limit": {
+        "description": "Max messages to return (default: 20)",
+        "type": "integer"
+      },
+      "only_unread": {
+        "description": "If true, return only unread messages (default: false)",
+        "type": "boolean"
+      },
+      "role": {
+        "description": "Your agent role",
+        "type": "string"
+      },
+      "thread_id": {
+        "description": "Filter by conversation thread ID",
+        "type": "string"
+      }
+    },
+    "required": [
+      "agent_id",
+      "role"
+    ],
+    "type": "object"
+  }
+}

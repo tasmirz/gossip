@@ -1,0 +1,36 @@
+{
+  "name": "gossip_rag_impact_analysis",
+  "description": "Perform blast-radius impact analysis when modifying a node/symbol/file, discovering all direct and indirect dependents (inspired by Graphify affected.py)",
+  "parameters": {
+    "properties": {
+      "depth": {
+        "description": "Max reverse traversal depth (default: 2)",
+        "type": "integer"
+      },
+      "seed_node_id": {
+        "description": "Node, symbol, or file ID to analyze",
+        "type": "string"
+      }
+    },
+    "required": [
+      "seed_node_id"
+    ],
+    "type": "object"
+  },
+  "inputSchema": {
+    "properties": {
+      "depth": {
+        "description": "Max reverse traversal depth (default: 2)",
+        "type": "integer"
+      },
+      "seed_node_id": {
+        "description": "Node, symbol, or file ID to analyze",
+        "type": "string"
+      }
+    },
+    "required": [
+      "seed_node_id"
+    ],
+    "type": "object"
+  }
+}

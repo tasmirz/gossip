@@ -1,0 +1,74 @@
+{
+  "name": "gossip_cast_vote",
+  "description": "Cast a formal vote on an active debate or proposal",
+  "parameters": {
+    "properties": {
+      "agent_id": {
+        "description": "Agent ID voting",
+        "type": "string"
+      },
+      "choice": {
+        "description": "Vote choice: 'accept', 'reject', or 'abstain'",
+        "type": "string"
+      },
+      "confidence": {
+        "description": "Confidence level from 1 to 5 (default: 3)",
+        "type": "integer"
+      },
+      "debate_id": {
+        "description": "ID of the debate",
+        "type": "string"
+      },
+      "reasoning": {
+        "description": "Rationale for this vote",
+        "type": "string"
+      },
+      "role": {
+        "description": "Voter's role",
+        "type": "string"
+      }
+    },
+    "required": [
+      "debate_id",
+      "agent_id",
+      "role",
+      "choice"
+    ],
+    "type": "object"
+  },
+  "inputSchema": {
+    "properties": {
+      "agent_id": {
+        "description": "Agent ID voting",
+        "type": "string"
+      },
+      "choice": {
+        "description": "Vote choice: 'accept', 'reject', or 'abstain'",
+        "type": "string"
+      },
+      "confidence": {
+        "description": "Confidence level from 1 to 5 (default: 3)",
+        "type": "integer"
+      },
+      "debate_id": {
+        "description": "ID of the debate",
+        "type": "string"
+      },
+      "reasoning": {
+        "description": "Rationale for this vote",
+        "type": "string"
+      },
+      "role": {
+        "description": "Voter's role",
+        "type": "string"
+      }
+    },
+    "required": [
+      "debate_id",
+      "agent_id",
+      "role",
+      "choice"
+    ],
+    "type": "object"
+  }
+}

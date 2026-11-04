@@ -1,0 +1,14 @@
+{
+  "name": "gossip_export_agents_md",
+  "description": "Re-render and write AGENTS.md and RULES.md in the project directory",
+  "parameters": {
+    "properties": {},
+    "required": [],
+    "type": "object"
+  },
+  "inputSchema": {
+    "properties": {},
+    "required": [],
+    "type": "object"
+  }
+}

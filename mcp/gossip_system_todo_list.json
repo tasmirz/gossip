@@ -1,0 +1,24 @@
+{
+  "name": "gossip_system_todo_list",
+  "description": "Retrieve unified system-wide backlog aggregating unassigned ready DAG tasks, incomplete milestones, pending SOP phase gates, and open security vulnerabilities",
+  "parameters": {
+    "properties": {
+      "format": {
+        "description": "Output format: 'json' or 'markdown' (default: 'json')",
+        "type": "string"
+      }
+    },
+    "required": [],
+    "type": "object"
+  },
+  "inputSchema": {
+    "properties": {
+      "format": {
+        "description": "Output format: 'json' or 'markdown' (default: 'json')",
+        "type": "string"
+      }
+    },
+    "required": [],
+    "type": "object"
+  }
+}

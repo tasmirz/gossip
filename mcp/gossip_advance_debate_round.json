@@ -1,0 +1,28 @@
+{
+  "name": "gossip_advance_debate_round",
+  "description": "Close the current round of an active debate and open the next round for critique and rebuttal",
+  "parameters": {
+    "properties": {
+      "debate_id": {
+        "description": "ID of the debate to advance",
+        "type": "string"
+      }
+    },
+    "required": [
+      "debate_id"
+    ],
+    "type": "object"
+  },
+  "inputSchema": {
+    "properties": {
+      "debate_id": {
+        "description": "ID of the debate to advance",
+        "type": "string"
+      }
+    },
+    "required": [
+      "debate_id"
+    ],
+    "type": "object"
+  }
+}

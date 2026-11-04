@@ -1,0 +1,28 @@
+{
+  "name": "gossip_get_role_definition",
+  "description": "Retrieve system prompt, responsibilities, guidelines, and recommended tools for a specific role",
+  "parameters": {
+    "properties": {
+      "role_id": {
+        "description": "Role ID (loaded dynamically from JSON)",
+        "type": "string"
+      }
+    },
+    "required": [
+      "role_id"
+    ],
+    "type": "object"
+  },
+  "inputSchema": {
+    "properties": {
+      "role_id": {
+        "description": "Role ID (loaded dynamically from JSON)",
+        "type": "string"
+      }
+    },
+    "required": [
+      "role_id"
+    ],
+    "type": "object"
+  }
+}

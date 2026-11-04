@@ -1,0 +1,58 @@
+{
+  "name": "gossip_submit_review",
+  "description": "Submit structured review findings, critique, and formal verdict on a pending review",
+  "parameters": {
+    "properties": {
+      "review_id": {
+        "description": "ID of the review",
+        "type": "string"
+      },
+      "reviewer_id": {
+        "description": "Reviewer agent ID",
+        "type": "string"
+      },
+      "status": {
+        "description": "Verdict status: 'approved', 'changes_requested', 'rejected'",
+        "type": "string"
+      },
+      "verdict": {
+        "description": "Review summary evaluation",
+        "type": "string"
+      }
+    },
+    "required": [
+      "review_id",
+      "reviewer_id",
+      "status",
+      "verdict"
+    ],
+    "type": "object"
+  },
+  "inputSchema": {
+    "properties": {
+      "review_id": {
+        "description": "ID of the review",
+        "type": "string"
+      },
+      "reviewer_id": {
+        "description": "Reviewer agent ID",
+        "type": "string"
+      },
+      "status": {
+        "description": "Verdict status: 'approved', 'changes_requested', 'rejected'",
+        "type": "string"
+      },
+      "verdict": {
+        "description": "Review summary evaluation",
+        "type": "string"
+      }
+    },
+    "required": [
+      "review_id",
+      "reviewer_id",
+      "status",
+      "verdict"
+    ],
+    "type": "object"
+  }
+}

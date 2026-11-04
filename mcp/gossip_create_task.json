@@ -1,0 +1,70 @@
+{
+  "name": "gossip_create_task",
+  "description": "Create a new task in the shared DAG with role target, priority, dependencies, and acceptance criteria",
+  "parameters": {
+    "properties": {
+      "acceptance_criteria": {
+        "description": "List of acceptance criteria that must be verified",
+        "type": "array"
+      },
+      "blocked_by": {
+        "description": "List of prerequisite task IDs that must complete first",
+        "type": "array"
+      },
+      "description": {
+        "description": "Detailed task specification and requirements",
+        "type": "string"
+      },
+      "priority": {
+        "description": "Priority: 'low', 'normal', 'high', 'critical' (default: 'normal')",
+        "type": "string"
+      },
+      "role": {
+        "description": "Target specialist role (e.g. 'network_engineer', 'math_expert', 'worker')",
+        "type": "string"
+      },
+      "title": {
+        "description": "Task title",
+        "type": "string"
+      }
+    },
+    "required": [
+      "title",
+      "description"
+    ],
+    "type": "object"
+  },
+  "inputSchema": {
+    "properties": {
+      "acceptance_criteria": {
+        "description": "List of acceptance criteria that must be verified",
+        "type": "array"
+      },
+      "blocked_by": {
+        "description": "List of prerequisite task IDs that must complete first",
+        "type": "array"
+      },
+      "description": {
+        "description": "Detailed task specification and requirements",
+        "type": "string"
+      },
+      "priority": {
+        "description": "Priority: 'low', 'normal', 'high', 'critical' (default: 'normal')",
+        "type": "string"
+      },
+      "role": {
+        "description": "Target specialist role (e.g. 'network_engineer', 'math_expert', 'worker')",
+        "type": "string"
+      },
+      "title": {
+        "description": "Task title",
+        "type": "string"
+      }
+    },
+    "required": [
+      "title",
+      "description"
+    ],
+    "type": "object"
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "name": "gossip_get_goals",
+  "description": "Get active project goals, milestones, and status",
+  "parameters": {
+    "properties": {},
+    "required": [],
+    "type": "object"
+  },
+  "inputSchema": {
+    "properties": {},
+    "required": [],
+    "type": "object"
+  }
+}

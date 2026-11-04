@@ -1,0 +1,54 @@
+{
+  "name": "gsp_guardrail_check",
+  "description": "Alias for gossip_guardrails_validate_action: pre-flight check against active cautions",
+  "parameters": {
+    "properties": {
+      "action": {
+        "description": "Action name",
+        "type": "string"
+      },
+      "payload": {
+        "description": "Payload snippet to scan",
+        "type": "string"
+      },
+      "role": {
+        "description": "Executing agent role",
+        "type": "string"
+      },
+      "target_path": {
+        "description": "Target file path",
+        "type": "string"
+      }
+    },
+    "required": [
+      "role",
+      "action"
+    ],
+    "type": "object"
+  },
+  "inputSchema": {
+    "properties": {
+      "action": {
+        "description": "Action name",
+        "type": "string"
+      },
+      "payload": {
+        "description": "Payload snippet to scan",
+        "type": "string"
+      },
+      "role": {
+        "description": "Executing agent role",
+        "type": "string"
+      },
+      "target_path": {
+        "description": "Target file path",
+        "type": "string"
+      }
+    },
+    "required": [
+      "role",
+      "action"
+    ],
+    "type": "object"
+  }
+}

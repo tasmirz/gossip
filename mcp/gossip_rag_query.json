@@ -1,0 +1,48 @@
+{
+  "name": "gossip_rag_query",
+  "description": "Search the shared knowledge graph using keywords, type filter, and tag filter with relevance ranking",
+  "parameters": {
+    "properties": {
+      "limit": {
+        "description": "Max results to return (default: 10)",
+        "type": "integer"
+      },
+      "query": {
+        "description": "Search terms",
+        "type": "string"
+      },
+      "tag": {
+        "description": "Filter by tag",
+        "type": "string"
+      },
+      "type": {
+        "description": "Filter by node type ('concept', 'file', 'symbol', 'decision', 'constraint', 'proof')",
+        "type": "string"
+      }
+    },
+    "required": [],
+    "type": "object"
+  },
+  "inputSchema": {
+    "properties": {
+      "limit": {
+        "description": "Max results to return (default: 10)",
+        "type": "integer"
+      },
+      "query": {
+        "description": "Search terms",
+        "type": "string"
+      },
+      "tag": {
+        "description": "Filter by tag",
+        "type": "string"
+      },
+      "type": {
+        "description": "Filter by node type ('concept', 'file', 'symbol', 'decision', 'constraint', 'proof')",
+        "type": "string"
+      }
+    },
+    "required": [],
+    "type": "object"
+  }
+}

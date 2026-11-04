@@ -1,0 +1,28 @@
+{
+  "name": "gossip_sop_get_status",
+  "description": "Inspect the current stage, completed gates, and deliverables for an SOP workflow",
+  "parameters": {
+    "properties": {
+      "workflow_id": {
+        "description": "Active SOP workflow ID",
+        "type": "string"
+      }
+    },
+    "required": [
+      "workflow_id"
+    ],
+    "type": "object"
+  },
+  "inputSchema": {
+    "properties": {
+      "workflow_id": {
+        "description": "Active SOP workflow ID",
+        "type": "string"
+      }
+    },
+    "required": [
+      "workflow_id"
+    ],
+    "type": "object"
+  }
+}
