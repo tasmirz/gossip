@@ -1,4 +1,4 @@
-# 📜 Open-Source Attributions, Papers & References
+# Open-Source Attributions, Papers & References
 
 Gossip synthesizes state-of-the-art breakthroughs across multi-agent coordination, knowledge graph RAG, dialectic deliberation, and AI security. We gratefully acknowledge and attribute the following open-source projects, research papers, and authoring teams:
 

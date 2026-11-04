@@ -488,14 +488,14 @@ func (m *Manager) GenerateRepoMap(maxTokens int) (string, error) {
 
 	scores := calculatePageRank(g, 0.85, 50, 1e-4)
 	if len(scores) == 0 {
-		return "# 🗺️ Architectural Repo-Map\n\n_Graph is currently empty._\n", nil
+		return "# [MAP] Architectural Repo-Map\n\n_Graph is currently empty._\n", nil
 	}
 
 	// Approximate 1 token = 4 characters
 	charBudget := maxTokens * 4
 
 	var b strings.Builder
-	b.WriteString("# 🗺️ Gossip Architectural Repo-Map (PageRank-Ranked)\n\n")
+	b.WriteString("# [MAP] Gossip Architectural Repo-Map (PageRank-Ranked)\n\n")
 	b.WriteString(fmt.Sprintf("*Generated with PageRank Centrality across %d components*\n\n", len(scores)))
 
 	// Outgoing and incoming relation lookup

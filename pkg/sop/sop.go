@@ -390,7 +390,7 @@ func (m *Manager) SaveArtifact(workflowID, stageID, artifactType, title, content
 
 	// Format artifact with metadata header
 	var b strings.Builder
-	b.WriteString(fmt.Sprintf("# 📄 SOP Artifact: %s\n\n", title))
+	b.WriteString(fmt.Sprintf("# [SOP ARTIFACT] %s\n\n", title))
 	b.WriteString(fmt.Sprintf("- **Workflow:** `%s` (%s)\n", wf.ID, wf.Title))
 	b.WriteString(fmt.Sprintf("- **Stage:** `%s`\n", stageID))
 	b.WriteString(fmt.Sprintf("- **Type:** `%s`\n", artifactType))
@@ -549,7 +549,7 @@ func (m *Manager) ListWorkflows() ([]SOPWorkflow, error) {
 
 func (m *Manager) buildPipelineReport(s *SOPStore) string {
 	var b strings.Builder
-	b.WriteString("# ⚙️ Gossip Standard Operating Procedures (SOP) Pipeline\n\n")
+	b.WriteString("# [SOP] Gossip Standard Operating Procedures Pipeline\n\n")
 	b.WriteString(fmt.Sprintf("*Synchronized: %s | Active Workflows: %d*\n\n",
 		time.Now().Format(time.RFC1123), len(s.Workflows)))
 
@@ -559,7 +559,7 @@ func (m *Manager) buildPipelineReport(s *SOPStore) string {
 	}
 
 	for _, wf := range s.Workflows {
-		b.WriteString(fmt.Sprintf("## 🚀 Workflow: %s (`%s`)\n", wf.Title, wf.ID))
+		b.WriteString(fmt.Sprintf("## [WORKFLOW] %s (`%s`)\n", wf.Title, wf.ID))
 		b.WriteString(fmt.Sprintf("**Template:** `%s` | **Status:** **%s** | **Initiator:** `%s`\n\n",
 			wf.Template, strings.ToUpper(wf.Status), wf.Initiator))
 
@@ -567,14 +567,14 @@ func (m *Manager) buildPipelineReport(s *SOPStore) string {
 		b.WriteString("| :---: | :--- | :--- | :--- | :--- |\n")
 
 		for idx, st := range wf.Stages {
-			statusIcon := "⏳ Pending"
+			statusIcon := "[PENDING]"
 			switch st.Status {
 			case StageStatusInProgress:
-				statusIcon = "🔄 In Progress"
+				statusIcon = "[IN_PROGRESS]"
 			case StageStatusCompleted:
-				statusIcon = "✅ Completed"
+				statusIcon = "[COMPLETED]"
 			case StageStatusBlocked:
-				statusIcon = "🛑 Blocked"
+				statusIcon = "[BLOCKED]"
 			}
 
 			completedStr := "-"
@@ -588,7 +588,7 @@ func (m *Manager) buildPipelineReport(s *SOPStore) string {
 		b.WriteString("\n")
 
 		// Artifacts in this workflow
-		b.WriteString("### 📁 Associated Artifacts\n\n")
+		b.WriteString("### [ARTIFACTS] Associated Artifacts\n\n")
 		if len(wf.Artifacts) == 0 {
 			b.WriteString("_No artifacts filed yet for this workflow._\n\n")
 		} else {
