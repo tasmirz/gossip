@@ -11,8 +11,10 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 	"github.com/tasmirz/gossip/pkg/deliberation"
 	"github.com/tasmirz/gossip/pkg/graph"
+	"github.com/tasmirz/gossip/pkg/guardrails"
 	"github.com/tasmirz/gossip/pkg/messages"
 	"github.com/tasmirz/gossip/pkg/roles"
+	"github.com/tasmirz/gossip/pkg/security"
 	"github.com/tasmirz/gossip/pkg/sop"
 	"github.com/tasmirz/gossip/pkg/state"
 	"github.com/tasmirz/gossip/pkg/tasks"
@@ -27,6 +29,7 @@ type Server struct {
 	graph         *graph.Manager
 	deliberations *deliberation.Manager
 	sop           *sop.Manager
+	guardrails    *guardrails.Manager
 	roleProvider  roles.Provider
 }
 
@@ -47,6 +50,7 @@ func NewServer(store *state.Store, roleProv roles.Provider) *Server {
 		graph:         graph.NewManager(store),
 		deliberations: deliberation.NewManager(store),
 		sop:           sop.NewManager(store),
+		guardrails:    guardrails.NewManager(store),
 		roleProvider:  roleProv,
 	}
 
@@ -54,10 +58,12 @@ func NewServer(store *state.Store, roleProv roles.Provider) *Server {
 		"Gossip Agent Mesh",
 		"1.0.0",
 		server.WithToolCapabilities(true),
+		server.WithPromptCapabilities(true),
 	)
 
 	s.mcpServer = mcpSrv
 	s.registerTools()
+	s.registerPrompts()
 	return s
 }
 
@@ -78,6 +84,7 @@ func (s *Server) registerTools() {
 	s.registerGraphTools()
 	s.registerDeliberationTools()
 	s.registerSOPTools()
+	s.registerGuardrailTools()
 }
 
 // --- Helper Functions for Extracting Tool Arguments ---
@@ -275,6 +282,7 @@ func (s *Server) registerRoleTools() {
 		mcp.WithDescription("Dynamically define and register a new custom agent role at runtime (stored in JSON)"),
 		mcp.WithString("id", mcp.Required(), mcp.Description("Unique role identifier (e.g. 'devops_engineer', 'quantum_expert')")),
 		mcp.WithString("title", mcp.Required(), mcp.Description("Human-readable role title")),
+		mcp.WithString("caller_role", mcp.Description("Role of the agent registering the custom role (e.g. 'orchestrator')")),
 		mcp.WithString("category", mcp.Description("Category: 'management', 'engineering', 'specialist', 'assurance'")),
 		mcp.WithString("description", mcp.Required(), mcp.Description("Detailed description of role responsibilities")),
 		mcp.WithString("system_prompt", mcp.Required(), mcp.Description("System prompt and operational persona")),
@@ -285,6 +293,7 @@ func (s *Server) registerRoleTools() {
 		args := getArgsMap(req)
 		id := getString(args, "id")
 		title := getString(args, "title")
+		callerRole := getString(args, "caller_role")
 		cat := getString(args, "category")
 		desc := getString(args, "description")
 		prompt := getString(args, "system_prompt")
@@ -295,12 +304,28 @@ func (s *Server) registerRoleTools() {
 		if id == "" || title == "" || desc == "" || prompt == "" {
 			return mcp.NewToolResultError("'id', 'title', 'description', and 'system_prompt' are required"), nil
 		}
+
+		if callerRole != "" {
+			if err := security.AuthorizeAction(callerRole, "gossip_register_custom_role"); err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+		}
+
+		sanitizedID, err := security.SanitizeID(id, 64)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("invalid role id: %v", err)), nil
+		}
+
+		if err := security.ValidatePayloadSize(desc+prompt, security.MaxMessageSizeBytes); err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("role payload too large: %v", err)), nil
+		}
+
 		if cat == "" {
 			cat = "specialist"
 		}
 
 		customRole := roles.RoleDefinition{
-			ID:               id,
+			ID:               sanitizedID,
 			Title:            title,
 			Category:         cat,
 			Description:      desc,
@@ -347,6 +372,10 @@ func (s *Server) registerMessageTools() {
 			return mcp.NewToolResultError("'from', 'role', 'to', and 'content' are required"), nil
 		}
 
+		if err := security.ValidatePayloadSize(content, security.MaxMessageSizeBytes); err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("message payload error: %v", err)), nil
+		}
+
 		msg, err := s.messages.SendMessage(from, role, to, threadID, subject, content)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("failed to send message: %v", err)), nil
@@ -371,6 +400,10 @@ func (s *Server) registerMessageTools() {
 
 		if from == "" || role == "" || content == "" {
 			return mcp.NewToolResultError("'from', 'role', and 'content' are required"), nil
+		}
+
+		if err := security.ValidatePayloadSize(content, security.MaxMessageSizeBytes); err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("message payload error: %v", err)), nil
 		}
 
 		msg, err := s.messages.SendMessage(from, role, "all", "", subject, content)
@@ -452,15 +485,30 @@ func (s *Server) registerTaskTools() {
 		mcp.WithDescription("Set or update high-level strategic goals and milestone checkpoints"),
 		mcp.WithString("title", mcp.Required(), mcp.Description("Goal title")),
 		mcp.WithString("description", mcp.Required(), mcp.Description("Detailed description of the goal")),
+		mcp.WithString("caller_role", mcp.Description("Role of the agent setting the goal (e.g. 'orchestrator')")),
 		mcp.WithArray("milestone_titles", mcp.Description("List of milestone checkpoint titles")),
 	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		args := getArgsMap(req)
 		title := getString(args, "title")
 		desc := getString(args, "description")
+		callerRole := getString(args, "caller_role")
+		if callerRole == "" {
+			callerRole = getString(args, "role")
+		}
 		mTitles := getStringSlice(args, "milestone_titles")
 
 		if title == "" || desc == "" {
 			return mcp.NewToolResultError("title and description are required"), nil
+		}
+
+		if callerRole != "" {
+			if err := security.AuthorizeAction(callerRole, "gossip_set_goal"); err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+		}
+
+		if err := security.ValidatePayloadSize(desc, security.MaxMessageSizeBytes); err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("goal description too large: %v", err)), nil
 		}
 
 		var milestones []state.Milestone
@@ -513,6 +561,10 @@ func (s *Server) registerTaskTools() {
 			return mcp.NewToolResultError("title and description are required"), nil
 		}
 
+		if err := security.ValidatePayloadSize(desc, security.MaxMessageSizeBytes); err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("task description too large: %v", err)), nil
+		}
+
 		task, err := s.tasks.CreateTask(title, desc, role, priority, blockedBy, criteria)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("failed to create task: %v", err)), nil
@@ -539,6 +591,18 @@ func (s *Server) registerTaskTools() {
 
 		if taskID == "" {
 			return mcp.NewToolResultError("task_id is required"), nil
+		}
+
+		if progressNote != "" {
+			if err := security.ValidatePayloadSize(progressNote, security.MaxMessageSizeBytes); err != nil {
+				return mcp.NewToolResultError(fmt.Sprintf("progress note too large: %v", err)), nil
+			}
+		}
+
+		if artifact != "" {
+			if _, err := security.ValidateSafePath(s.store.GetBaseDir(), artifact); err != nil {
+				return mcp.NewToolResultError(fmt.Sprintf("unsafe artifact path: %v", err)), nil
+			}
 		}
 
 		task, err := s.tasks.UpdateTask(taskID, status, assignedTo, progressNote, artifact)
@@ -619,6 +683,22 @@ func (s *Server) registerGraphTools() {
 
 		if nodeType == "" || label == "" || summary == "" {
 			return mcp.NewToolResultError("'type', 'label', and 'summary' are required"), nil
+		}
+
+		if err := security.ValidatePayloadSize(summary, security.MaxMessageSizeBytes); err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("node summary too large: %v", err)), nil
+		}
+
+		if id != "" {
+			if _, err := security.SanitizeID(id, 128); err != nil {
+				return mcp.NewToolResultError(fmt.Sprintf("invalid node id: %v", err)), nil
+			}
+		}
+
+		if sourcePath != "" {
+			if _, err := security.ValidateSafePath(s.store.GetBaseDir(), sourcePath); err != nil {
+				return mcp.NewToolResultError(fmt.Sprintf("unsafe source path: %v", err)), nil
+			}
 		}
 
 		node := graph.Node{
@@ -1315,5 +1395,253 @@ func (s *Server) registerSOPTools() {
 			return mcp.NewToolResultError(fmt.Sprintf("workflow error: %v", err)), nil
 		}
 		return toJSONText(wf)
+	})
+}
+
+// --- Guardrail, Role Derivation & Project Safety Tools ---
+
+func (s *Server) registerGuardrailTools() {
+	// gossip_derive_project_roles (and alias gsp_derive_roles)
+	deriveHandler := func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		args := getArgsMap(req)
+		name := getString(args, "project_name")
+		stack := getStringSlice(args, "tech_stack")
+		goal := getString(args, "project_goal")
+
+		if name == "" {
+			name = "Current Project"
+		}
+
+		pg, err := s.guardrails.DeriveProjectRoles(name, stack, goal)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("failed to derive roles: %v", err)), nil
+		}
+
+		// Also register derived roles into role provider dynamically
+		for _, r := range pg.Roles {
+			_ = s.roleProvider.RegisterRole(roles.RoleDefinition{
+				ID:           r.RoleID,
+				Title:        r.Title,
+				Category:     "derived",
+				Description:  r.Description,
+				SystemPrompt: r.SystemPrompt,
+				Directives:   append(r.CautionDirectives, r.ForbiddenActions...),
+			})
+		}
+
+		return toJSONText(pg)
+	}
+
+	s.mcpServer.AddTool(mcp.NewTool("gossip_derive_project_roles",
+		mcp.WithDescription("Synthesize LLM-derived specialist roles, guardrails, cautions, and AGENTS.md customized for this project"),
+		mcp.WithString("project_name", mcp.Description("Name of the project")),
+		mcp.WithArray("tech_stack", mcp.Description("List of core languages and frameworks (e.g. ['Go', 'React', 'gRPC'])")),
+		mcp.WithString("project_goal", mcp.Description("High-level architectural goal or purpose")),
+	), deriveHandler)
+
+	s.mcpServer.AddTool(mcp.NewTool("gsp_derive_roles",
+		mcp.WithDescription("Alias for gossip_derive_project_roles: derive roles, guardrails, cautions, and AGENTS.md"),
+		mcp.WithString("project_name", mcp.Description("Name of the project")),
+		mcp.WithArray("tech_stack", mcp.Description("List of core languages and frameworks")),
+		mcp.WithString("project_goal", mcp.Description("High-level architectural goal or purpose")),
+	), deriveHandler)
+
+	// gossip_guardrails_validate_action (and alias gsp_guardrail_check)
+	validateHandler := func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		args := getArgsMap(req)
+		role := getString(args, "role")
+		action := getString(args, "action")
+		targetPath := getString(args, "target_path")
+		payload := getString(args, "payload")
+
+		if role == "" || action == "" {
+			return mcp.NewToolResultError("role and action are required"), nil
+		}
+
+		res, err := s.guardrails.ValidateProposedAction(role, action, targetPath, payload)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("validation error: %v", err)), nil
+		}
+		return toJSONText(res)
+	}
+
+	s.mcpServer.AddTool(mcp.NewTool("gossip_guardrails_validate_action",
+		mcp.WithDescription("Pre-flight inspection checking whether an action or file modification violates project cautions or forbidden rules"),
+		mcp.WithString("role", mcp.Required(), mcp.Description("Executing agent role")),
+		mcp.WithString("action", mcp.Required(), mcp.Description("Action name (e.g. 'write_file', 'bypass_race_detector', 'delete_table')")),
+		mcp.WithString("target_path", mcp.Description("Target file or resource path")),
+		mcp.WithString("payload", mcp.Description("Optional payload or diff snippet to scan")),
+	), validateHandler)
+
+	s.mcpServer.AddTool(mcp.NewTool("gsp_guardrail_check",
+		mcp.WithDescription("Alias for gossip_guardrails_validate_action: pre-flight check against active cautions"),
+		mcp.WithString("role", mcp.Required(), mcp.Description("Executing agent role")),
+		mcp.WithString("action", mcp.Required(), mcp.Description("Action name")),
+		mcp.WithString("target_path", mcp.Description("Target file path")),
+		mcp.WithString("payload", mcp.Description("Payload snippet to scan")),
+	), validateHandler)
+
+	// gossip_set_caution_rule
+	s.mcpServer.AddTool(mcp.NewTool("gossip_set_caution_rule",
+		mcp.WithDescription("Add or update a safety caution rule, sensitive path pattern, or invariant in the project guardrail database"),
+		mcp.WithString("id", mcp.Description("Unique rule ID (auto-generated if omitted)")),
+		mcp.WithString("category", mcp.Required(), mcp.Description("Category: 'security_leak', 'data_loss', 'regression', 'concurrency'")),
+		mcp.WithString("level", mcp.Required(), mcp.Description("Severity level: 'critical', 'warning', 'info'")),
+		mcp.WithString("trigger_pattern", mcp.Required(), mcp.Description("Filename pattern or keyword regex triggering this caution")),
+		mcp.WithString("directive", mcp.Required(), mcp.Description("Human/agent instruction to follow when triggered")),
+		mcp.WithString("enforcement", mcp.Required(), mcp.Description("Enforcement mode: 'block', 'require_peer_review', 'warn'")),
+	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		args := getArgsMap(req)
+		rule := guardrails.CautionRule{
+			ID:             getString(args, "id"),
+			Category:       getString(args, "category"),
+			Level:          getString(args, "level"),
+			TriggerPattern: getString(args, "trigger_pattern"),
+			Directive:      getString(args, "directive"),
+			Enforcement:    getString(args, "enforcement"),
+		}
+
+		if rule.Category == "" || rule.Level == "" || rule.TriggerPattern == "" || rule.Directive == "" {
+			return mcp.NewToolResultError("category, level, trigger_pattern, and directive are required"), nil
+		}
+
+		if err := s.guardrails.SetCautionRule(rule); err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("failed to set caution rule: %v", err)), nil
+		}
+
+		return mcp.NewToolResultText(fmt.Sprintf("Successfully registered caution rule %q in guardrails database", rule.ID)), nil
+	})
+
+	// gossip_get_guardrails
+	s.mcpServer.AddTool(mcp.NewTool("gossip_get_guardrails",
+		mcp.WithDescription("Retrieve all project guardrails, active roles, forbidden actions, cautions, and invariants"),
+	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		pg, err := s.guardrails.Load()
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("failed to load guardrails: %v", err)), nil
+		}
+		return toJSONText(pg)
+	})
+
+	// gossip_export_agents_md
+	s.mcpServer.AddTool(mcp.NewTool("gossip_export_agents_md",
+		mcp.WithDescription("Re-render and write AGENTS.md and RULES.md in the project directory"),
+	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		pg, err := s.guardrails.Load()
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("failed to load guardrails: %v", err)), nil
+		}
+		if err := s.guardrails.Save(pg); err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("failed to save: %v", err)), nil
+		}
+		agentsMD := s.guardrails.RenderAgentsMD(pg)
+		return mcp.NewToolResultText(agentsMD), nil
+	})
+}
+
+// --- MCP Prompts (Slash Commands like gsp:__) ---
+
+func (s *Server) registerPrompts() {
+	// gsp:derive_roles
+	s.mcpServer.AddPrompt(mcp.NewPrompt("gsp:derive_roles",
+		mcp.WithPromptDescription("Analyze codebase tech stack and derive custom agent roles, guardrails, cautions, and AGENTS.md"),
+		mcp.WithArgument("project_name", mcp.ArgumentDescription("Project name")),
+		mcp.WithArgument("tech_stack", mcp.ArgumentDescription("Comma-separated technologies (e.g. 'Go, WebSocket, React')")),
+	), func(ctx context.Context, req mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
+		projectName := req.Params.Arguments["project_name"]
+		techStack := req.Params.Arguments["tech_stack"]
+		promptText := fmt.Sprintf("Act as the Lead Orchestrator for %s.\n1. Inspect project requirements and tech stack: %s.\n2. Call `gossip_derive_project_roles` with the detected technologies.\n3. Verify generated roles and safety cautions in AGENTS.md.\n4. Register specialist agents in the mesh.", projectName, techStack)
+		return mcp.NewGetPromptResult("Derive project roles and guardrails", []mcp.PromptMessage{
+			mcp.NewPromptMessage(mcp.RoleUser, mcp.NewTextContent(promptText)),
+		}), nil
+	})
+
+	// gsp:blast_radius
+	s.mcpServer.AddPrompt(mcp.NewPrompt("gsp:blast_radius",
+		mcp.WithPromptDescription("Perform blast-radius impact analysis on a component using Graphify reverse dependency walk"),
+		mcp.WithArgument("component_id", mcp.ArgumentDescription("Node, symbol, or file ID to analyze")),
+	), func(ctx context.Context, req mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
+		compID := req.Params.Arguments["component_id"]
+		promptText := fmt.Sprintf("Before refactoring or modifying component `%s`:\n1. Call `gossip_rag_impact_analysis` with seed_node_id='%s' and depth=2.\n2. Identify direct and transitive dependents.\n3. Check blast radius score and critical bottlenecks.\n4. Run recommended regression suites.", compID, compID)
+		return mcp.NewGetPromptResult("Blast radius analysis", []mcp.PromptMessage{
+			mcp.NewPromptMessage(mcp.RoleUser, mcp.NewTextContent(promptText)),
+		}), nil
+	})
+
+	// gsp:sop_advance
+	s.mcpServer.AddPrompt(mcp.NewPrompt("gsp:sop_advance",
+		mcp.WithPromptDescription("Advance an active SOP workflow through its next phase gate with artifact verification"),
+		mcp.WithArgument("workflow_id", mcp.ArgumentDescription("Active SOP workflow ID")),
+	), func(ctx context.Context, req mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
+		wfID := req.Params.Arguments["workflow_id"]
+		promptText := fmt.Sprintf("For SOP Workflow `%s`:\n1. Call `gossip_sop_get_status` to inspect current stage deliverables.\n2. Ensure required artifact (PRD, System Design, Code Manifest, Peer Review, or Security Audit) is saved via `gossip_sop_save_artifact`.\n3. Call `gossip_sop_advance` to pass the phase gate.", wfID)
+		return mcp.NewGetPromptResult("Advance SOP phase gate", []mcp.PromptMessage{
+			mcp.NewPromptMessage(mcp.RoleUser, mcp.NewTextContent(promptText)),
+		}), nil
+	})
+
+	// gsp:debate
+	s.mcpServer.AddPrompt(mcp.NewPrompt("gsp:debate",
+		mcp.WithPromptDescription("Initiate an adversarial multi-agent debate with convergence tracking and Borda voting"),
+		mcp.WithArgument("title", mcp.ArgumentDescription("Motion or trade-off to debate")),
+	), func(ctx context.Context, req mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
+		title := req.Params.Arguments["title"]
+		promptText := fmt.Sprintf("Open a Multi-Agent Debate for `%s`:\n1. Call `gossip_start_debate`.\n2. Have specialists (network_engineer, math_expert, systems_architect, security_specialist) post arguments via `gossip_post_argument`.\n3. Check convergence via `gossip_debate_check_convergence`.\n4. Cast ranked votes via `gossip_debate_ranked_vote` and tally Borda consensus.", title)
+		return mcp.NewGetPromptResult("Multi-agent debate", []mcp.PromptMessage{
+			mcp.NewPromptMessage(mcp.RoleUser, mcp.NewTextContent(promptText)),
+		}), nil
+	})
+
+	// gsp:stride_audit
+	s.mcpServer.AddPrompt(mcp.NewPrompt("gsp:stride_audit",
+		mcp.WithPromptDescription("Execute automated STRIDE threat modeling and compile AUDIT_REPORT.md"),
+		mcp.WithArgument("target", mcp.ArgumentDescription("Target component or interface to audit")),
+	), func(ctx context.Context, req mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
+		target := req.Params.Arguments["target"]
+		promptText := fmt.Sprintf("Run security red-team audit for `%s`:\n1. Call `gossip_redteam_generate_stride_probes` for `%s`.\n2. Inspect each probe for Spoofing, Tampering, Repudiation, Info Disclosure, DoS, and Elevation of Privilege.\n3. Implement mitigations and call `gossip_redteam_generate_audit_report`.", target, target)
+		return mcp.NewGetPromptResult("STRIDE security audit", []mcp.PromptMessage{
+			mcp.NewPromptMessage(mcp.RoleUser, mcp.NewTextContent(promptText)),
+		}), nil
+	})
+
+	// gsp:review
+	s.mcpServer.AddPrompt(mcp.NewPrompt("gsp:review",
+		mcp.WithPromptDescription("Request and submit a formal peer review on a task deliverable"),
+		mcp.WithArgument("task_id", mcp.ArgumentDescription("Task or artifact ID")),
+	), func(ctx context.Context, req mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
+		taskID := req.Params.Arguments["task_id"]
+		promptText := fmt.Sprintf("Conduct Peer Review for `%s`:\n1. Call `gossip_request_review` targeting `%s`.\n2. Inspect implementation code, test coverage, and invariants.\n3. Submit verdict via `gossip_submit_review` with structured findings.", taskID, taskID)
+		return mcp.NewGetPromptResult("Peer review", []mcp.PromptMessage{
+			mcp.NewPromptMessage(mcp.RoleUser, mcp.NewTextContent(promptText)),
+		}), nil
+	})
+
+	// gsp:guardrail_check
+	s.mcpServer.AddPrompt(mcp.NewPrompt("gsp:guardrail_check",
+		mcp.WithPromptDescription("Validate an action or code edit against active caution rules and project invariants"),
+		mcp.WithArgument("action", mcp.ArgumentDescription("Action to check (e.g. write_file, edit_config)")),
+		mcp.WithArgument("path", mcp.ArgumentDescription("Target file path")),
+	), func(ctx context.Context, req mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
+		action := req.Params.Arguments["action"]
+		path := req.Params.Arguments["path"]
+		promptText := fmt.Sprintf("Pre-flight safety inspection:\n1. Call `gossip_guardrails_validate_action` with action='%s' and target_path='%s'.\n2. If blocked or caution flagged, follow the directive or seek peer review before executing.", action, path)
+		return mcp.NewGetPromptResult("Guardrail inspection", []mcp.PromptMessage{
+			mcp.NewPromptMessage(mcp.RoleUser, mcp.NewTextContent(promptText)),
+		}), nil
+	})
+
+	// gsp:repomap
+	s.mcpServer.AddPrompt(mcp.NewPrompt("gsp:repomap",
+		mcp.WithPromptDescription("Fetch PageRank-ranked architectural repo map for context injection"),
+		mcp.WithArgument("max_tokens", mcp.ArgumentDescription("Token budget (default: 1000)")),
+	), func(ctx context.Context, req mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
+		tokens := req.Params.Arguments["max_tokens"]
+		if tokens == "" {
+			tokens = "1000"
+		}
+		promptText := fmt.Sprintf("Fetch compact repo map:\nCall `gossip_rag_repo_map` with max_tokens=%s and review architectural hubs before writing code.", tokens)
+		return mcp.NewGetPromptResult("Architectural repo-map", []mcp.PromptMessage{
+			mcp.NewPromptMessage(mcp.RoleUser, mcp.NewTextContent(promptText)),
+		}), nil
 	})
 }

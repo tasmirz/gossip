@@ -47,4 +47,17 @@ func TestCLICommands(t *testing.T) {
 
 	// Test SOP workflows
 	runSOP(tmpDir)
+
+	// Test Derive
+	runDerive([]string{"--dir", tmpDir, "--name", "TestApp", "--stack", "Go,gRPC", "--goal", "Build fast API"})
+
+	// Test Guardrails
+	runGuardrails(tmpDir)
+
+	// Test Check
+	runCheck([]string{"--dir", tmpDir, "--role", "worker", "--action", "write_file", "--path", "pkg/api.go"})
+	runCheck([]string{"--dir", tmpDir, "--role", "worker", "--action", "write_file", "--path", ".env"})
+
+	// Test Agents MD
+	runAgents(tmpDir)
 }

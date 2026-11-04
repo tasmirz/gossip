@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tasmirz/gossip/pkg/security"
 	"github.com/tasmirz/gossip/pkg/state"
 )
 
@@ -339,6 +340,24 @@ func (m *Manager) StartWorkflow(templateName, title, description, initiator stri
 
 // SaveArtifact saves a formal SOP deliverable document, ensuring directory structure exists.
 func (m *Manager) SaveArtifact(workflowID, stageID, artifactType, title, content, createdBy string, metadata map[string]string) (*SOPArtifact, error) {
+	// Security bounds check
+	if err := security.ValidatePayloadSize(content, security.MaxArtifactSizeBytes); err != nil {
+		return nil, fmt.Errorf("artifact size violation: %w", err)
+	}
+
+	sanitizedWfID, err := security.SanitizeID(workflowID, 64)
+	if err != nil {
+		return nil, fmt.Errorf("invalid workflow_id: %w", err)
+	}
+	sanitizedStageID, err := security.SanitizeID(stageID, 64)
+	if err != nil {
+		return nil, fmt.Errorf("invalid stage_id: %w", err)
+	}
+	sanitizedArtType, err := security.SanitizeID(artifactType, 64)
+	if err != nil {
+		return nil, fmt.Errorf("invalid artifact_type: %w", err)
+	}
+
 	unlock, err := m.store.Lock()
 	if err != nil {
 		return nil, err
@@ -350,9 +369,9 @@ func (m *Manager) SaveArtifact(workflowID, stageID, artifactType, title, content
 		return nil, err
 	}
 
-	wf, exists := s.Workflows[workflowID]
+	wf, exists := s.Workflows[sanitizedWfID]
 	if !exists {
-		return nil, fmt.Errorf("workflow %q not found", workflowID)
+		return nil, fmt.Errorf("workflow %q not found", sanitizedWfID)
 	}
 
 	// Ensure artifacts dir exists
@@ -362,9 +381,12 @@ func (m *Manager) SaveArtifact(workflowID, stageID, artifactType, title, content
 	}
 
 	now := time.Now()
-	artID := fmt.Sprintf("%s_%s_%s", workflowID, stageID, artifactType)
+	artID := fmt.Sprintf("%s_%s_%s", sanitizedWfID, sanitizedStageID, sanitizedArtType)
 	fileName := fmt.Sprintf("%s.md", artID)
-	fullPath := filepath.Join(artDir, fileName)
+	fullPath, err := security.ValidateSafePath(artDir, fileName)
+	if err != nil {
+		return nil, fmt.Errorf("artifact path traversal rejected: %w", err)
+	}
 
 	// Format artifact with metadata header
 	var b strings.Builder
