@@ -4,12 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
+	"github.com/tasmirz/gossip/pkg/cron"
 	"github.com/tasmirz/gossip/pkg/deliberation"
 	"github.com/tasmirz/gossip/pkg/events"
 	"github.com/tasmirz/gossip/pkg/graph"
@@ -21,6 +23,8 @@ import (
 	"github.com/tasmirz/gossip/pkg/sop"
 	"github.com/tasmirz/gossip/pkg/state"
 	"github.com/tasmirz/gossip/pkg/tasks"
+	"github.com/tasmirz/gossip/pkg/tunnel"
+	"github.com/tasmirz/gossip/pkg/vault"
 )
 
 // Server encapsulates the Gossip MCP server and underlying subsystems.
@@ -36,6 +40,7 @@ type Server struct {
 	events        *events.Manager
 	moe           *moe.Manager
 	roleProvider  roles.Provider
+	vault         *vault.Manager
 }
 
 // NewServer instantiates the MCP server and registers all tools (SOLID Dependency Inversion).
@@ -54,6 +59,7 @@ func NewServer(store *state.Store, roleProv roles.Provider) *Server {
 	sopMgr := sop.NewManager(store)
 	evtMgr := events.NewManager(store, msgMgr, taskMgr, delibMgr, sopMgr)
 	moeMgr := moe.NewManager(store, roleProv)
+	vaultMgr, _ := vault.NewManager(store.Dir())
 
 	s := &Server{
 		store:         store,
@@ -66,6 +72,7 @@ func NewServer(store *state.Store, roleProv roles.Provider) *Server {
 		events:        evtMgr,
 		moe:           moeMgr,
 		roleProvider:  roleProv,
+		vault:         vaultMgr,
 	}
 
 	mcpSrv := server.NewMCPServer(
@@ -267,13 +274,18 @@ func (s *Server) registerRoleTools() {
 
 	// gossip_list_agents
 	s.mcpServer.AddTool(mcp.NewTool("gossip_list_agents",
-		mcp.WithDescription("List all registered agents, their current status, roles, tasks, and last heartbeats"),
+		mcp.WithDescription("List all registered agents, their current status, roles, tasks, last heartbeats, and mandatory remote tunnel/agent disclosure"),
 	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		agents, err := s.store.ListAgents()
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("failed to list agents: %v", err)), nil
 		}
-		return toJSONText(agents)
+		disc := tunnel.ComputeDisclosure(s.store)
+		resp := map[string]interface{}{
+			"agents":            agents,
+			"remote_disclosure": disc,
+		}
+		return toJSONText(resp)
 	})
 
 	// gossip_heartbeat
@@ -447,6 +459,494 @@ func (s *Server) registerRoleTools() {
 	reidentifyToolAlias2 := reidentifyTool
 	reidentifyToolAlias2.Name = "gossip_resume_session"
 	s.mcpServer.AddTool(reidentifyToolAlias2, reidentifyHandler)
+
+	// gossip_introduce_agent (aliases: gossip_introduce, gsp_introduce)
+	introduceTool := mcp.NewTool("gossip_introduce_agent",
+		mcp.WithDescription("Introduce an agent to the Gossip mesh: registers session, broadcasts an announcement to all peers, and returns an instant onboarding briefing (goals, pending tasks, active SOP gates, caution rules, and disclosed peers)"),
+		mcp.WithString("agent_id", mcp.Required(), mcp.Description("Unique identifier for this agent (e.g. 'lead-orch', 'worker-net-1')")),
+		mcp.WithString("role", mcp.Required(), mcp.Description("Agent role (orchestrator, worker, network_engineer, math_expert, systems_architect, security_specialist, qa_engineer, researcher, red_team, critic)")),
+		mcp.WithString("name", mcp.Description("Human-readable agent display name")),
+		mcp.WithArray("capabilities", mcp.Description("List of capability tags or skills")),
+		mcp.WithString("greeting", mcp.Description("Optional custom greeting or introduction message broadcast to all peers")),
+		mcp.WithString("current_task_id", mcp.Description("Task ID currently being worked on")),
+		mcp.WithString("remote_endpoint", mcp.Description("Optional remote tunnel or LAN endpoint if agent is running remotely")),
+	)
+	introduceHandler := func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		args := getArgsMap(req)
+		agentID := getString(args, "agent_id")
+		role := getString(args, "role")
+		name := getString(args, "name")
+		if name == "" {
+			name = agentID
+		}
+		caps := getStringSlice(args, "capabilities")
+		greeting := getString(args, "greeting")
+		currentTaskID := getString(args, "current_task_id")
+		remoteEndpoint := getString(args, "remote_endpoint")
+
+		if agentID == "" || role == "" {
+			return mcp.NewToolResultError("agent_id and role are required"), nil
+		}
+
+		session := state.AgentSession{
+			ID:             agentID,
+			Name:           name,
+			Role:           role,
+			Capabilities:   caps,
+			CurrentTaskID:  currentTaskID,
+			Status:         "active",
+			IsRemote:       remoteEndpoint != "",
+			RemoteEndpoint: remoteEndpoint,
+		}
+		if remoteEndpoint != "" {
+			session.EndpointType = "frp"
+		}
+
+		if err := s.store.RegisterAgent(session); err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("failed to register agent session: %v", err)), nil
+		}
+
+		// Broadcast introduction announcement
+		if greeting == "" {
+			greeting = fmt.Sprintf("Hello mesh! Agent '%s' (%s) has joined with role '%s'. Ready for tasks.", name, agentID, role)
+		}
+		_, _ = s.messages.SendMessage(agentID, role, "broadcast", "", "Agent Introduction", greeting)
+
+		// Compile onboarding briefing
+		goals, _ := s.store.GetGoals()
+		readyTasks, _ := s.tasks.ListTasks(tasks.StatusTodo, "", "")
+		assignedTasks, _ := s.tasks.ListTasks("", "", agentID)
+		disc := tunnel.ComputeDisclosure(s.store)
+		gr, _ := s.guardrails.Load()
+		peers, _ := s.store.ListAgents()
+
+		var b strings.Builder
+		b.WriteString(fmt.Sprintf("# [WELCOME] Agent Introduction & Mesh Onboarding: %s\n\n", name))
+		b.WriteString(fmt.Sprintf("Successfully introduced `%s` as role **`%s`** to project mesh `%s`.\n\n",
+			agentID, role, filepath.Base(s.store.Dir())))
+
+		// Remote Disclosure Banner
+		b.WriteString(disc.MarkdownBanner())
+
+		b.WriteString("## [GOALS] Active Strategic Objectives\n")
+		if len(goals) == 0 {
+			b.WriteString("- _No goals specified yet. Orchestrator can define goals via `gossip_set_goal`._\n\n")
+		} else {
+			for _, g := range goals {
+				b.WriteString(fmt.Sprintf("- **%s** [%s]: %s\n", g.Title, strings.ToUpper(g.Status), g.Description))
+			}
+			b.WriteString("\n")
+		}
+
+		b.WriteString(fmt.Sprintf("## [TASKS] Work Allocation (%d Assigned / %d Ready to Claim)\n", len(assignedTasks), len(readyTasks)))
+		if len(assignedTasks) > 0 {
+			b.WriteString("**Assigned to You:**\n")
+			for _, t := range assignedTasks {
+				b.WriteString(fmt.Sprintf("- `[%s]` (%s) **%s** [%s]\n", t.ID, t.Priority, t.Title, t.Status))
+			}
+		}
+		if len(readyTasks) > 0 {
+			b.WriteString("**Ready to Claim:**\n")
+			for _, t := range readyTasks {
+				b.WriteString(fmt.Sprintf("- `[%s]` (%s) **%s** (Role: %s)\n", t.ID, t.Priority, t.Title, t.Role))
+			}
+		}
+		if len(assignedTasks) == 0 && len(readyTasks) == 0 {
+			b.WriteString("- _No tasks currently available. Create or claim via `gossip_create_task`._\n")
+		}
+		b.WriteString("\n")
+
+		b.WriteString(fmt.Sprintf("## [PEERS] Online Mesh Peers (%d Total)\n", len(peers)))
+		for _, p := range peers {
+			if p.ID != agentID {
+				scope := "LOCAL"
+				if p.IsRemote {
+					scope = fmt.Sprintf("REMOTE (%s)", p.RemoteEndpoint)
+				}
+				b.WriteString(fmt.Sprintf("- `%s` (`%s`): Status: %s | Scope: %s\n", p.ID, p.Role, p.Status, scope))
+			}
+		}
+		b.WriteString("\n")
+
+		if gr != nil && len(gr.Cautions) > 0 {
+			b.WriteString(fmt.Sprintf("## [GUARDRAILS] Active Caution Invariants (%d Rules)\n", len(gr.Cautions)))
+			for _, cr := range gr.Cautions {
+				b.WriteString(fmt.Sprintf("- `[%s]`: %s\n", cr.ID, cr.Directive))
+			}
+			b.WriteString("\n")
+		}
+
+		b.WriteString("---\n*Introduction broadcast dispatched to all mesh peers on channel `#broadcast`.*\n")
+		return mcp.NewToolResultText(b.String()), nil
+	}
+	s.mcpServer.AddTool(introduceTool, introduceHandler)
+	introAlias := introduceTool
+	introAlias.Name = "gossip_introduce"
+	s.mcpServer.AddTool(introAlias, introduceHandler)
+	introAlias2 := introduceTool
+	introAlias2.Name = "gsp_introduce"
+	s.mcpServer.AddTool(introAlias2, introduceHandler)
+
+	// gossip_setup (aliases: gossip_setup_mesh, gsp_setup)
+	setupTool := mcp.NewTool("gossip_setup",
+		mcp.WithDescription("Bootstrap and setup the Gossip collaboration mesh in the current workspace: initializes state, goals, task DAG, knowledge graph, guardrails, and optional FRP tunnel and cron checking"),
+		mcp.WithString("project_name", mcp.Description("Name of the project or workspace")),
+		mcp.WithArray("goals", mcp.Description("Initial high-level strategic goals or milestones")),
+		mcp.WithArray("tech_stack", mcp.Description("Primary languages and frameworks (e.g. ['Go', 'TypeScript', 'PostgreSQL'])")),
+		mcp.WithBoolean("configure_tunnel", mcp.Description("Whether to initialize a protected FRP reverse-proxy tunnel")),
+		mcp.WithString("tunnel_server", mcp.Description("FRP server address (e.g. 'tunnel.domain.com')")),
+		mcp.WithString("auth_user", mcp.Description("HTTP Basic Auth username for protected access")),
+		mcp.WithString("auth_pass", mcp.Description("HTTP Basic Auth password for protected access (min 6 chars)")),
+		mcp.WithBoolean("setup_cron", mcp.Description("Whether to initialize cron periodic checking")),
+	)
+	setupHandler := func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		args := getArgsMap(req)
+		projName := getString(args, "project_name")
+		if projName == "" {
+			wd, _ := os.Getwd()
+			projName = filepath.Base(wd)
+		}
+		rawGoals := getStringSlice(args, "goals")
+		techStack := getStringSlice(args, "tech_stack")
+		cfgTunnel := getBool(args, "configure_tunnel")
+		tunServer := getString(args, "tunnel_server")
+		authUser := getString(args, "auth_user")
+		authPass := getString(args, "auth_pass")
+		setupCron := getBool(args, "setup_cron")
+
+		// 1. Project state & goals
+		st, _ := s.store.LoadProjectState()
+		st.ProjectName = projName
+		for _, gTitle := range rawGoals {
+			st.Goals = append(st.Goals, state.Goal{
+				ID:        fmt.Sprintf("goal-%d", time.Now().UnixNano()%100000),
+				Title:     gTitle,
+				Status:    "active",
+				CreatedAt: time.Now(),
+			})
+		}
+		_ = s.store.SaveProjectState(st)
+
+		// 2. Roles
+		roleSrv, _ := roles.NewService(s.store.Dir(), "")
+		_ = roleSrv.SaveToFile(filepath.Join(s.store.Dir(), "roles.json"))
+
+		// 3. Tasks Container
+		tc, _ := s.tasks.LoadContainer()
+		_ = s.tasks.SaveContainer(tc)
+
+		// 4. Knowledge Graph with Seed
+		g, _ := s.graph.LoadGraph()
+		_, _ = s.graph.AddNode(graph.Node{
+			ID:        fmt.Sprintf("project:%s", projName),
+			Type:      graph.TypeArchitecture,
+			Label:     projName,
+			Summary:   fmt.Sprintf("Root project entity for %s", projName),
+			CreatedBy: "mcp-setup",
+		})
+		_ = s.graph.SaveGraph(g)
+
+		// 5. Guardrails
+		if len(techStack) > 0 {
+			gr, _ := s.guardrails.Load()
+			gr.TechStack = techStack
+			_ = s.guardrails.Save(gr)
+		}
+
+		// 6. Optional Tunnel
+		var tunNotice string
+		if cfgTunnel && tunServer != "" {
+			if authUser != "" && authPass != "" {
+				_ = tunnel.ValidateCredentials(authUser, authPass)
+			}
+			tState := tunnel.TunnelState{
+				Active:         true,
+				Type:           "frp",
+				ServerAddr:     tunServer,
+				RemoteEndpoint: fmt.Sprintf("frp://%s:7000", tunServer),
+				LocalIP:        "127.0.0.1",
+				LocalPort:      8080,
+				AuthEnabled:    authUser != "" && authPass != "",
+				AuthUser:       authUser,
+				AuthPassMasked: tunnel.MaskSecret(authPass),
+				StartedAt:      time.Now(),
+			}
+			_ = tunnel.SaveTunnelState(s.store.Dir(), tState)
+			cfg := tunnel.DefaultClientConfig(8080, authUser, authPass)
+			cfg.ServerAddr = tunServer
+			_ = os.WriteFile(filepath.Join(s.store.Dir(), "frpc.toml"), []byte(tunnel.GenerateFRPCTOML(cfg)), 0600)
+			tunNotice = fmt.Sprintf("FRP tunnel configured for %s (Auth: %s)", tunServer, tState.AuthPassMasked)
+		}
+
+		// 7. Optional Cron
+		if setupCron {
+			res, _ := cron.RunCheck(s.store, "setup-check")
+			_ = cron.RecordCronLog(s.store.Dir(), res)
+		}
+
+		// 8. Re-render BOARD.md
+		_, _ = s.tasks.RenderBoard()
+
+		var b strings.Builder
+		b.WriteString(fmt.Sprintf("# [SUCCESS] Gossip Mesh Initialized for '%s'\n\n", projName))
+		b.WriteString(fmt.Sprintf("- **Storage Directory**: `%s`\n", s.store.Dir()))
+		b.WriteString(fmt.Sprintf("- **Strategic Goals**: %d initial goals configured\n", len(st.Goals)))
+		b.WriteString("- **Subsystems Initialized**: Tasks DAG, Knowledge Graph, JSON Roles, Guardrails, Vault\n")
+		b.WriteString("- **Kanban Board**: Rendered to `BOARD.md`\n")
+		if tunNotice != "" {
+			b.WriteString(fmt.Sprintf("- **Tunnel**: %s\n", tunNotice))
+		}
+		b.WriteString("\nMesh is ready for multi-agent collaboration! Agents can now call `gossip_introduce_agent` to join.")
+		return mcp.NewToolResultText(b.String()), nil
+	}
+	s.mcpServer.AddTool(setupTool, setupHandler)
+	setupAlias := setupTool
+	setupAlias.Name = "gossip_setup_mesh"
+	s.mcpServer.AddTool(setupAlias, setupHandler)
+	setupAlias2 := setupTool
+	setupAlias2.Name = "gsp_setup"
+	s.mcpServer.AddTool(setupAlias2, setupHandler)
+
+	// gossip_introduce_remote_peer (alias: gossip_handshake, gsp_introduce_peer)
+	remotePeerTool := mcp.NewTool("gossip_introduce_remote_peer",
+		mcp.WithDescription("Introduce and register a remote peer agent across the FRP tunnel or LAN into the local mesh, enabling multi-worktree collaboration and remote queries"),
+		mcp.WithString("peer_agent_id", mcp.Required(), mcp.Description("Remote peer agent ID")),
+		mcp.WithString("peer_role", mcp.Required(), mcp.Description("Remote peer role")),
+		mcp.WithString("peer_endpoint", mcp.Required(), mcp.Description("Remote endpoint URL (e.g. 'http://peer.remote:8080' or 'frp://tunnel:7000')")),
+		mcp.WithString("peer_worktree", mcp.Description("Remote peer's worktree path or repository name")),
+		mcp.WithArray("peer_capabilities", mcp.Description("Capabilities offered by remote peer")),
+	)
+	remotePeerHandler := func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		args := getArgsMap(req)
+		peerID := getString(args, "peer_agent_id")
+		peerRole := getString(args, "peer_role")
+		peerEp := getString(args, "peer_endpoint")
+		peerWorktree := getString(args, "peer_worktree")
+		peerCaps := getStringSlice(args, "peer_capabilities")
+
+		if peerID == "" || peerRole == "" || peerEp == "" {
+			return mcp.NewToolResultError("peer_agent_id, peer_role, and peer_endpoint are required"), nil
+		}
+
+		session := state.AgentSession{
+			ID:             peerID,
+			Name:           peerID,
+			Role:           peerRole,
+			Capabilities:   peerCaps,
+			Status:         "active",
+			IsRemote:       true,
+			EndpointType:   "frp",
+			RemoteEndpoint: peerEp,
+		}
+		if err := s.store.RegisterAgent(session); err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("failed to register remote peer: %v", err)), nil
+		}
+
+		// Announcement
+		_, _ = s.messages.SendMessage(peerID, peerRole, "broadcast", "", "Remote Peer Connected",
+			fmt.Sprintf("Remote peer '%s' (%s) connected from %s (Worktree: %s)", peerID, peerRole, peerEp, peerWorktree))
+
+		disc := tunnel.ComputeDisclosure(s.store)
+		return toJSONText(map[string]interface{}{
+			"status":            "connected",
+			"peer_id":           peerID,
+			"peer_role":         peerRole,
+			"endpoint":          peerEp,
+			"remote_disclosure": disc,
+		})
+	}
+	s.mcpServer.AddTool(remotePeerTool, remotePeerHandler)
+	handshakeAlias := remotePeerTool
+	handshakeAlias.Name = "gossip_handshake"
+	s.mcpServer.AddTool(handshakeAlias, remotePeerHandler)
+	handshakeAlias2 := remotePeerTool
+	handshakeAlias2.Name = "gsp_introduce_peer"
+	s.mcpServer.AddTool(handshakeAlias2, remotePeerHandler)
+
+	// gossip_status (alias: gsp_status, gossip_get_status)
+	statusTool := mcp.NewTool("gossip_status",
+		mcp.WithDescription("Get complete real-time status of the Gossip collaboration mesh: active agents, DAG tasks, strategic goals, knowledge graph metrics, and mandatory remote tunnel/peer disclosure"),
+		mcp.WithString("format", mcp.Description("Output format: 'markdown' (default) or 'json'")),
+	)
+	statusHandler := func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		format := getString(getArgsMap(req), "format")
+		agents, _ := s.store.ListAgents()
+		goals, _ := s.store.GetGoals()
+		taskList, _ := s.tasks.ListTasks("", "", "")
+		g, _ := s.graph.LoadGraph()
+		disc := tunnel.ComputeDisclosure(s.store)
+
+		if format == "json" {
+			return toJSONText(map[string]interface{}{
+				"agents_count":      len(agents),
+				"goals_count":       len(goals),
+				"tasks_count":       len(taskList),
+				"graph_nodes":       len(g.Nodes),
+				"graph_edges":       len(g.Edges),
+				"remote_disclosure": disc,
+			})
+		}
+
+		var b strings.Builder
+		b.WriteString("# [STATUS] Gossip Multi-Agent Mesh Status\n\n")
+		b.WriteString(fmt.Sprintf("**Location**: `%s`\n", s.store.Dir()))
+		b.WriteString(fmt.Sprintf("**Active Goals**: %d | **Total Tasks**: %d | **Knowledge Nodes**: %d | **Edges**: %d\n\n",
+			len(goals), len(taskList), len(g.Nodes), len(g.Edges)))
+		b.WriteString(disc.MarkdownBanner())
+
+		b.WriteString(fmt.Sprintf("## Registered Agents (%d)\n", len(agents)))
+		if len(agents) == 0 {
+			b.WriteString("- _No active agents registered._\n")
+		} else {
+			for _, a := range agents {
+				scope := "LOCAL"
+				if a.IsRemote {
+					scope = fmt.Sprintf("REMOTE (%s)", a.RemoteEndpoint)
+				}
+				b.WriteString(fmt.Sprintf("- `[%s]` **%s** (%s) - %s | Task: `%s` | Scope: %s\n",
+					a.ID, a.Name, a.Role, a.Status, a.CurrentTaskID, scope))
+			}
+		}
+		b.WriteString("\n")
+
+		return mcp.NewToolResultText(b.String()), nil
+	}
+	s.mcpServer.AddTool(statusTool, statusHandler)
+	statusAlias := statusTool
+	statusAlias.Name = "gsp_status"
+	s.mcpServer.AddTool(statusAlias, statusHandler)
+	statusAlias2 := statusTool
+	statusAlias2.Name = "gossip_get_status"
+	s.mcpServer.AddTool(statusAlias2, statusHandler)
+
+	// gossip_setup_tunnel (alias: gsp_setup_tunnel)
+	setupTunnelTool := mcp.NewTool("gossip_setup_tunnel",
+		mcp.WithDescription("Configure, generate, or manage FRP reverse-proxy tunnels for WAN/LAN remote access with mandatory HTTP Basic Auth protection"),
+		mcp.WithString("server_addr", mcp.Required(), mcp.Description("FRP server hostname or IP")),
+		mcp.WithNumber("server_port", mcp.Description("FRP server bind port (default: 7000)")),
+		mcp.WithString("auth_token", mcp.Description("FRP server authentication token")),
+		mcp.WithString("custom_domain", mcp.Description("Custom domain or subdomain for HTTP proxying")),
+		mcp.WithString("http_user", mcp.Description("Mandatory HTTP Basic Auth username")),
+		mcp.WithString("http_pass", mcp.Description("Mandatory HTTP Basic Auth password (min 6 characters)")),
+		mcp.WithString("action", mcp.Description("Action: 'activate' (default), 'generate', or 'deactivate'")),
+		mcp.WithString("format", mcp.Description("Format for 'generate': 'toml' (default), 'ini', 'server_toml', 'server_ini'")),
+	)
+	setupTunnelHandler := func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		args := getArgsMap(req)
+		serverAddr := getString(args, "server_addr")
+		serverPort := getInt(args, "server_port", 7000)
+		token := getString(args, "auth_token")
+		domain := getString(args, "custom_domain")
+		user := getString(args, "http_user")
+		pass := getString(args, "http_pass")
+		action := getString(args, "action")
+		if action == "" {
+			action = "activate"
+		}
+		fmtType := getString(args, "format")
+		if fmtType == "" {
+			fmtType = "toml"
+		}
+
+		if action == "generate" {
+			cfg := tunnel.DefaultClientConfig(8080, user, pass)
+			cfg.ServerAddr = serverAddr
+			cfg.ServerPort = serverPort
+			cfg.AuthToken = token
+			if domain != "" {
+				cfg.CustomDomains = []string{domain}
+			}
+			var out string
+			switch fmtType {
+			case "ini":
+				out = tunnel.GenerateFRPCINI(cfg)
+			case "server_toml":
+				out = tunnel.GenerateFRPSTOML(tunnel.FRPServerConfig{BindPort: serverPort, AuthToken: token, VhostHTTPPort: 80})
+			default:
+				out = tunnel.GenerateFRPCTOML(cfg)
+			}
+			return mcp.NewToolResultText(out), nil
+		}
+
+		if action == "deactivate" {
+			_ = tunnel.ClearTunnelState(s.store.Dir())
+			return mcp.NewToolResultText("Tunnel deactivated. Reverted to local isolation."), nil
+		}
+
+		// Activate
+		if user != "" && pass != "" {
+			if err := tunnel.ValidateCredentials(user, pass); err != nil {
+				return mcp.NewToolResultError(fmt.Sprintf("invalid credentials: %v", err)), nil
+			}
+		}
+		ep := domain
+		if ep == "" {
+			ep = fmt.Sprintf("frp://%s:%d", serverAddr, serverPort)
+		}
+		tState := tunnel.TunnelState{
+			Active:         true,
+			Type:           "frp",
+			ServerAddr:     serverAddr,
+			RemoteEndpoint: ep,
+			LocalIP:        "127.0.0.1",
+			LocalPort:      8080,
+			AuthEnabled:    user != "" && pass != "",
+			AuthUser:       user,
+			AuthPassMasked: tunnel.MaskSecret(pass),
+			StartedAt:      time.Now(),
+		}
+		if err := tunnel.SaveTunnelState(s.store.Dir(), tState); err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("failed to save tunnel: %v", err)), nil
+		}
+
+		cfg := tunnel.DefaultClientConfig(8080, user, pass)
+		cfg.ServerAddr = serverAddr
+		cfg.ServerPort = serverPort
+		cfg.AuthToken = token
+		if domain != "" {
+			cfg.CustomDomains = []string{domain}
+		}
+		_ = os.WriteFile(filepath.Join(s.store.Dir(), "frpc.toml"), []byte(tunnel.GenerateFRPCTOML(cfg)), 0600)
+
+		return toJSONText(map[string]interface{}{
+			"status": "activated",
+			"tunnel": tState,
+		})
+	}
+	s.mcpServer.AddTool(setupTunnelTool, setupTunnelHandler)
+	tunAlias := setupTunnelTool
+	tunAlias.Name = "gsp_setup_tunnel"
+	s.mcpServer.AddTool(tunAlias, setupTunnelHandler)
+
+	// gossip_setup_cron (alias: gsp_setup_cron)
+	setupCronTool := mcp.NewTool("gossip_setup_cron",
+		mcp.WithDescription("Configure periodic health check schedule and execute initial check cycle"),
+		mcp.WithString("interval", mcp.Description("Interval duration or cron expression (default: '30s', e.g. '@every 1m', '*/5 * * * *')")),
+		mcp.WithString("agent_id", mcp.Description("Agent ID to monitor unread inbox messages for")),
+	)
+	setupCronHandler := func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		args := getArgsMap(req)
+		interval := getString(args, "interval")
+		agentID := getString(args, "agent_id")
+		dur, err := cron.ParseInterval(interval)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("invalid interval: %v", err)), nil
+		}
+		res, err := cron.RunCheck(s.store, agentID)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("initial check failed: %v", err)), nil
+		}
+		_ = cron.RecordCronLog(s.store.Dir(), res)
+		return toJSONText(map[string]interface{}{
+			"configured_interval": dur.String(),
+			"initial_check":       res,
+			"note":                "To run continuous background cron daemon, execute 'gossip cron --interval <duration>' in terminal or use Antigravity /schedule",
+		})
+	}
+	s.mcpServer.AddTool(setupCronTool, setupCronHandler)
+	cronSetupAlias := setupCronTool
+	cronSetupAlias.Name = "gsp_setup_cron"
+	s.mcpServer.AddTool(cronSetupAlias, setupCronHandler)
 
 	// gossip_get_role_definition
 	s.mcpServer.AddTool(mcp.NewTool("gossip_get_role_definition",
@@ -2400,4 +2900,109 @@ func (s *Server) registerMoETools() {
 	listAlias := listTool
 	listAlias.Name = "gsp_moe_list"
 	s.mcpServer.AddTool(listAlias, listHandler)
+
+	// gossip_cron_check (alias: gsp_cron_check)
+	cronCheckTool := mcp.NewTool("gossip_cron_check",
+		mcp.WithDescription("Execute periodic health check (unread messages, ready DAG tasks, stale heartbeats, tunnel disclosure) for agents supporting cron/scheduled monitoring"),
+		mcp.WithString("agent_id", mcp.Description("Optional agent ID to check unread inbox messages for")),
+	)
+	cronCheckHandler := func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		args := getArgsMap(req)
+		agentID := getString(args, "agent_id")
+		res, err := cron.RunCheck(s.store, agentID)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("periodic check failed: %v", err)), nil
+		}
+		_ = cron.RecordCronLog(s.store.Dir(), res)
+		return toJSONText(res)
+	}
+	s.mcpServer.AddTool(cronCheckTool, cronCheckHandler)
+	cronAlias := cronCheckTool
+	cronAlias.Name = "gsp_cron_check"
+	s.mcpServer.AddTool(cronAlias, cronCheckHandler)
+
+	// gossip_secret_transfer (alias: gsp_vault_transfer)
+	secretTransferTool := mcp.NewTool("gossip_secret_transfer",
+		mcp.WithDescription("Securely stage or transfer sensitive secret files (e.g. .env, tokens, keys) across mesh nodes without exposing raw secret contents to agent context or LLM prompt history"),
+		mcp.WithString("source_path", mcp.Required(), mcp.Description("Local path to the secret file")),
+		mcp.WithString("destination_endpoint", mcp.Description("Remote node HTTP/FRP endpoint (e.g. 'http://remote.mesh:8080') or 'local://vault' (default)")),
+		mcp.WithString("auth_token", mcp.Description("Encryption passphrase or tunnel auth token for AES-256-GCM transfer")),
+		mcp.WithString("destination_path", mcp.Description("Target relative file path on destination node (e.g. '.env')")),
+		mcp.WithString("description", mcp.Description("Optional human-readable metadata description")),
+	)
+	secretTransferHandler := func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		args := getArgsMap(req)
+		srcPath := getString(args, "source_path")
+		destEp := getString(args, "destination_endpoint")
+		authToken := getString(args, "auth_token")
+		destPath := getString(args, "destination_path")
+		desc := getString(args, "description")
+
+		if srcPath == "" {
+			return mcp.NewToolResultError("source_path is required"), nil
+		}
+
+		if destEp == "" || destEp == "local://vault" {
+			receipt, err := s.vault.StageSecretFile(srcPath, desc)
+			if err != nil {
+				return mcp.NewToolResultError(fmt.Sprintf("vault staging failed: %v", err)), nil
+			}
+			return toJSONText(receipt)
+		}
+
+		if authToken == "" {
+			return mcp.NewToolResultError("auth_token or passphrase required for remote encrypted transfer"), nil
+		}
+
+		receipt, err := s.vault.TransferSecretToRemote(srcPath, destEp, authToken, destPath)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("secure secret transfer failed: %v", err)), nil
+		}
+		return toJSONText(receipt)
+	}
+	s.mcpServer.AddTool(secretTransferTool, secretTransferHandler)
+	vaultAlias := secretTransferTool
+	vaultAlias.Name = "gsp_vault_transfer"
+	s.mcpServer.AddTool(vaultAlias, secretTransferHandler)
+
+	// gossip_remote_query (alias: gsp_remote_query)
+	remoteQueryTool := mcp.NewTool("gossip_remote_query",
+		mcp.WithDescription("Query a remote Gossip mesh node across the FRP tunnel or LAN when worktrees differ (e.g. separate repos or branches), querying remote graph, tasks, repomap, or status"),
+		mcp.WithString("remote_endpoint", mcp.Required(), mcp.Description("Remote node URL (e.g. 'http://mesh.remote:8080')")),
+		mcp.WithString("query_type", mcp.Required(), mcp.Description("Type of query: 'graph', 'tasks', 'status', 'repomap'")),
+		mcp.WithString("query_text", mcp.Description("Query text or symbol label (for 'graph')")),
+		mcp.WithString("auth_user", mcp.Description("HTTP Basic Auth username for remote node")),
+		mcp.WithString("auth_pass", mcp.Description("HTTP Basic Auth password for remote node")),
+	)
+	remoteQueryHandler := func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		args := getArgsMap(req)
+		remoteEp := getString(args, "remote_endpoint")
+		qType := getString(args, "query_type")
+		qText := getString(args, "query_text")
+		authUser := getString(args, "auth_user")
+		authPass := getString(args, "auth_pass")
+
+		if remoteEp == "" || qType == "" {
+			return mcp.NewToolResultError("remote_endpoint and query_type are required"), nil
+		}
+
+		qReq := tunnel.FederatedQueryRequest{
+			QueryID:    fmt.Sprintf("q-%x", time.Now().UnixNano()%1000000),
+			SourceNode: "local-agent",
+			QueryType:  qType,
+			QueryText:  qText,
+			AuthUser:   authUser,
+			AuthPass:   authPass,
+		}
+
+		qRes, err := tunnel.QueryRemoteNode(remoteEp, authUser, authPass, qReq)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("remote federated query failed: %v", err)), nil
+		}
+		return toJSONText(qRes)
+	}
+	s.mcpServer.AddTool(remoteQueryTool, remoteQueryHandler)
+	remoteQueryAlias := remoteQueryTool
+	remoteQueryAlias.Name = "gsp_remote_query"
+	s.mcpServer.AddTool(remoteQueryAlias, remoteQueryHandler)
 }

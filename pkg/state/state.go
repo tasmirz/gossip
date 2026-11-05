@@ -43,16 +43,19 @@ type Goal struct {
 
 // AgentSession tracks an active agent participating in the gossip mesh.
 type AgentSession struct {
-	ID            string    `json:"id"`
-	Name          string    `json:"name"`
-	Role          string    `json:"role"`
-	Capabilities  []string  `json:"capabilities"`
-	CurrentTaskID string    `json:"current_task_id,omitempty"`
-	Status        string    `json:"status"` // active, idle, offline
-	RegisteredAt  time.Time `json:"registered_at"`
-	LastHeartbeat time.Time `json:"last_heartbeat"`
-	SessionCount  int       `json:"session_count,omitempty"`
-	SessionID     string    `json:"session_id,omitempty"`
+	ID             string    `json:"id"`
+	Name           string    `json:"name"`
+	Role           string    `json:"role"`
+	Capabilities   []string  `json:"capabilities"`
+	CurrentTaskID  string    `json:"current_task_id,omitempty"`
+	Status         string    `json:"status"` // active, idle, offline
+	RegisteredAt   time.Time `json:"registered_at"`
+	LastHeartbeat  time.Time `json:"last_heartbeat"`
+	SessionCount   int       `json:"session_count,omitempty"`
+	SessionID      string    `json:"session_id,omitempty"`
+	IsRemote       bool      `json:"is_remote,omitempty"`
+	EndpointType   string    `json:"endpoint_type,omitempty"` // "local", "lan", "frp"
+	RemoteEndpoint string    `json:"remote_endpoint,omitempty"`
 }
 
 // ProjectState holds the top-level goals and agent registry.
@@ -254,6 +257,15 @@ func (s *Store) RegisterAgent(session AgentSession) error {
 		}
 		if session.CurrentTaskID == "" {
 			session.CurrentTaskID = existing.CurrentTaskID
+		}
+		if !session.IsRemote && existing.IsRemote {
+			session.IsRemote = existing.IsRemote
+		}
+		if session.EndpointType == "" && existing.EndpointType != "" {
+			session.EndpointType = existing.EndpointType
+		}
+		if session.RemoteEndpoint == "" && existing.RemoteEndpoint != "" {
+			session.RemoteEndpoint = existing.RemoteEndpoint
 		}
 	} else {
 		if session.RegisteredAt.IsZero() {

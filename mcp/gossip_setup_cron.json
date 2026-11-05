@@ -1,0 +1,32 @@
+{
+  "name": "gossip_setup_cron",
+  "description": "Configure periodic health check schedule and execute initial check cycle",
+  "parameters": {
+    "properties": {
+      "agent_id": {
+        "description": "Agent ID to monitor unread inbox messages for",
+        "type": "string"
+      },
+      "interval": {
+        "description": "Interval duration or cron expression (default: '30s', e.g. '@every 1m', '*/5 * * * *')",
+        "type": "string"
+      }
+    },
+    "required": [],
+    "type": "object"
+  },
+  "inputSchema": {
+    "properties": {
+      "agent_id": {
+        "description": "Agent ID to monitor unread inbox messages for",
+        "type": "string"
+      },
+      "interval": {
+        "description": "Interval duration or cron expression (default: '30s', e.g. '@every 1m', '*/5 * * * *')",
+        "type": "string"
+      }
+    },
+    "required": [],
+    "type": "object"
+  }
+}
