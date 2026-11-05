@@ -1,0 +1,78 @@
+{
+  "name": "gossip_introduce",
+  "description": "Introduce an agent to the Gossip mesh: registers session, broadcasts an announcement to all peers, and returns an instant onboarding briefing (goals, pending tasks, active SOP gates, caution rules, and disclosed peers)",
+  "parameters": {
+    "properties": {
+      "agent_id": {
+        "description": "Unique identifier for this agent (e.g. 'lead-orch', 'worker-net-1')",
+        "type": "string"
+      },
+      "capabilities": {
+        "description": "List of capability tags or skills",
+        "type": "array"
+      },
+      "current_task_id": {
+        "description": "Task ID currently being worked on",
+        "type": "string"
+      },
+      "greeting": {
+        "description": "Optional custom greeting or introduction message broadcast to all peers",
+        "type": "string"
+      },
+      "name": {
+        "description": "Human-readable agent display name",
+        "type": "string"
+      },
+      "remote_endpoint": {
+        "description": "Optional remote tunnel or LAN endpoint if agent is running remotely",
+        "type": "string"
+      },
+      "role": {
+        "description": "Agent role (orchestrator, worker, network_engineer, math_expert, systems_architect, security_specialist, qa_engineer, researcher, red_team, critic)",
+        "type": "string"
+      }
+    },
+    "required": [
+      "agent_id",
+      "role"
+    ],
+    "type": "object"
+  },
+  "inputSchema": {
+    "properties": {
+      "agent_id": {
+        "description": "Unique identifier for this agent (e.g. 'lead-orch', 'worker-net-1')",
+        "type": "string"
+      },
+      "capabilities": {
+        "description": "List of capability tags or skills",
+        "type": "array"
+      },
+      "current_task_id": {
+        "description": "Task ID currently being worked on",
+        "type": "string"
+      },
+      "greeting": {
+        "description": "Optional custom greeting or introduction message broadcast to all peers",
+        "type": "string"
+      },
+      "name": {
+        "description": "Human-readable agent display name",
+        "type": "string"
+      },
+      "remote_endpoint": {
+        "description": "Optional remote tunnel or LAN endpoint if agent is running remotely",
+        "type": "string"
+      },
+      "role": {
+        "description": "Agent role (orchestrator, worker, network_engineer, math_expert, systems_architect, security_specialist, qa_engineer, researcher, red_team, critic)",
+        "type": "string"
+      }
+    },
+    "required": [
+      "agent_id",
+      "role"
+    ],
+    "type": "object"
+  }
+}

@@ -32,6 +32,10 @@
       "description": "Create a new task in the shared DAG with role target, priority, dependencies, and acceptance criteria"
     },
     {
+      "name": "gossip_cron_check",
+      "description": "Execute periodic health check (unread messages, ready DAG tasks, stale heartbeats, tunnel disclosure) for agents supporting cron/scheduled monitoring"
+    },
+    {
       "name": "gossip_debate_check_convergence",
       "description": "Evaluate whether a multi-round debate has converged towards consensus or if further rounds are needed"
     },
@@ -64,6 +68,10 @@
       "description": "Retrieve system prompt, responsibilities, guidelines, and recommended tools for a specific role"
     },
     {
+      "name": "gossip_get_status",
+      "description": "Get complete real-time status of the Gossip collaboration mesh: active agents, DAG tasks, strategic goals, knowledge graph metrics, and mandatory remote tunnel/peer disclosure"
+    },
+    {
       "name": "gossip_get_task",
       "description": "Retrieve full details, notes, blockers, and artifacts for a single task"
     },
@@ -72,12 +80,28 @@
       "description": "Pre-flight inspection checking whether an action or file modification violates project cautions or forbidden rules"
     },
     {
+      "name": "gossip_handshake",
+      "description": "Introduce and register a remote peer agent across the FRP tunnel or LAN into the local mesh, enabling multi-worktree collaboration and remote queries"
+    },
+    {
       "name": "gossip_heartbeat",
       "description": "Send a heartbeat to keep agent session active and update current task or status"
     },
     {
+      "name": "gossip_introduce",
+      "description": "Introduce an agent to the Gossip mesh: registers session, broadcasts an announcement to all peers, and returns an instant onboarding briefing (goals, pending tasks, active SOP gates, caution rules, and disclosed peers)"
+    },
+    {
+      "name": "gossip_introduce_agent",
+      "description": "Introduce an agent to the Gossip mesh: registers session, broadcasts an announcement to all peers, and returns an instant onboarding briefing (goals, pending tasks, active SOP gates, caution rules, and disclosed peers)"
+    },
+    {
+      "name": "gossip_introduce_remote_peer",
+      "description": "Introduce and register a remote peer agent across the FRP tunnel or LAN into the local mesh, enabling multi-worktree collaboration and remote queries"
+    },
+    {
       "name": "gossip_list_agents",
-      "description": "List all registered agents, their current status, roles, tasks, and last heartbeats"
+      "description": "List all registered agents, their current status, roles, tasks, last heartbeats, and mandatory remote tunnel/agent disclosure"
     },
     {
       "name": "gossip_list_deliberations",
@@ -224,6 +248,10 @@
       "description": "Re-identify or resume an agent session across restarts or new context sessions, returning an instant catch-up briefing of assigned tasks, unread inbox messages, active SOP stages, and personal to-dos"
     },
     {
+      "name": "gossip_remote_query",
+      "description": "Query a remote Gossip mesh node across the FRP tunnel or LAN when worktrees differ (e.g. separate repos or branches), querying remote graph, tasks, repomap, or status"
+    },
+    {
       "name": "gossip_render_board",
       "description": "Render and return the live Markdown Kanban board (BOARD.md) representing current multi-agent work state"
     },
@@ -236,6 +264,10 @@
       "description": "Re-identify or resume an agent session across restarts or new context sessions, returning an instant catch-up briefing of assigned tasks, unread inbox messages, active SOP stages, and personal to-dos"
     },
     {
+      "name": "gossip_secret_transfer",
+      "description": "Securely stage or transfer sensitive secret files (e.g. .env, tokens, keys) across mesh nodes without exposing raw secret contents to agent context or LLM prompt history"
+    },
+    {
       "name": "gossip_send_message",
       "description": "Send a message to a specific agent, a role channel, or broadcast to all"
     },
@@ -246,6 +278,22 @@
     {
       "name": "gossip_set_goal",
       "description": "Set or update high-level strategic goals and milestone checkpoints"
+    },
+    {
+      "name": "gossip_setup",
+      "description": "Bootstrap and setup the Gossip collaboration mesh in the current workspace: initializes state, goals, task DAG, knowledge graph, guardrails, and optional FRP tunnel and cron checking"
+    },
+    {
+      "name": "gossip_setup_cron",
+      "description": "Configure periodic health check schedule and execute initial check cycle"
+    },
+    {
+      "name": "gossip_setup_mesh",
+      "description": "Bootstrap and setup the Gossip collaboration mesh in the current workspace: initializes state, goals, task DAG, knowledge graph, guardrails, and optional FRP tunnel and cron checking"
+    },
+    {
+      "name": "gossip_setup_tunnel",
+      "description": "Configure, generate, or manage FRP reverse-proxy tunnels for WAN/LAN remote access with mandatory HTTP Basic Auth protection"
     },
     {
       "name": "gossip_sop_advance",
@@ -272,6 +320,10 @@
       "description": "Open a multi-agent debate session on an architectural choice, controversial design, or proposal"
     },
     {
+      "name": "gossip_status",
+      "description": "Get complete real-time status of the Gossip collaboration mesh: active agents, DAG tasks, strategic goals, knowledge graph metrics, and mandatory remote tunnel/peer disclosure"
+    },
+    {
       "name": "gossip_submit_review",
       "description": "Submit structured review findings, critique, and formal verdict on a pending review"
     },
@@ -288,6 +340,10 @@
       "description": "Update task status, assign an agent, append progress notes, or register result artifacts"
     },
     {
+      "name": "gsp_cron_check",
+      "description": "Execute periodic health check (unread messages, ready DAG tasks, stale heartbeats, tunnel disclosure) for agents supporting cron/scheduled monitoring"
+    },
+    {
       "name": "gsp_derive_roles",
       "description": "Alias for gossip_derive_project_roles: derive roles, guardrails, cautions, and AGENTS.md"
     },
@@ -298,6 +354,14 @@
     {
       "name": "gsp_index",
       "description": "Alias for gossip_rag_index_codebase: parse AST and index codebase into RAG space"
+    },
+    {
+      "name": "gsp_introduce",
+      "description": "Introduce an agent to the Gossip mesh: registers session, broadcasts an announcement to all peers, and returns an instant onboarding briefing (goals, pending tasks, active SOP gates, caution rules, and disclosed peers)"
+    },
+    {
+      "name": "gsp_introduce_peer",
+      "description": "Introduce and register a remote peer agent across the FRP tunnel or LAN into the local mesh, enabling multi-worktree collaboration and remote queries"
     },
     {
       "name": "gsp_moe_argument",
@@ -326,6 +390,30 @@
     {
       "name": "gsp_reidentify",
       "description": "Re-identify or resume an agent session across restarts or new context sessions, returning an instant catch-up briefing of assigned tasks, unread inbox messages, active SOP stages, and personal to-dos"
+    },
+    {
+      "name": "gsp_remote_query",
+      "description": "Query a remote Gossip mesh node across the FRP tunnel or LAN when worktrees differ (e.g. separate repos or branches), querying remote graph, tasks, repomap, or status"
+    },
+    {
+      "name": "gsp_setup",
+      "description": "Bootstrap and setup the Gossip collaboration mesh in the current workspace: initializes state, goals, task DAG, knowledge graph, guardrails, and optional FRP tunnel and cron checking"
+    },
+    {
+      "name": "gsp_setup_cron",
+      "description": "Configure periodic health check schedule and execute initial check cycle"
+    },
+    {
+      "name": "gsp_setup_tunnel",
+      "description": "Configure, generate, or manage FRP reverse-proxy tunnels for WAN/LAN remote access with mandatory HTTP Basic Auth protection"
+    },
+    {
+      "name": "gsp_status",
+      "description": "Get complete real-time status of the Gossip collaboration mesh: active agents, DAG tasks, strategic goals, knowledge graph metrics, and mandatory remote tunnel/peer disclosure"
+    },
+    {
+      "name": "gsp_vault_transfer",
+      "description": "Securely stage or transfer sensitive secret files (e.g. .env, tokens, keys) across mesh nodes without exposing raw secret contents to agent context or LLM prompt history"
     }
   ],
   "prompts": [

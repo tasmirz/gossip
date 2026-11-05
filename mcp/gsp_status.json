@@ -1,0 +1,24 @@
+{
+  "name": "gsp_status",
+  "description": "Get complete real-time status of the Gossip collaboration mesh: active agents, DAG tasks, strategic goals, knowledge graph metrics, and mandatory remote tunnel/peer disclosure",
+  "parameters": {
+    "properties": {
+      "format": {
+        "description": "Output format: 'markdown' (default) or 'json'",
+        "type": "string"
+      }
+    },
+    "required": [],
+    "type": "object"
+  },
+  "inputSchema": {
+    "properties": {
+      "format": {
+        "description": "Output format: 'markdown' (default) or 'json'",
+        "type": "string"
+      }
+    },
+    "required": [],
+    "type": "object"
+  }
+}

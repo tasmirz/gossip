@@ -1,6 +1,8 @@
 package web
 
 import (
+	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -17,6 +19,8 @@ import (
 	"github.com/tasmirz/gossip/pkg/security"
 	"github.com/tasmirz/gossip/pkg/state"
 	"github.com/tasmirz/gossip/pkg/tasks"
+	"github.com/tasmirz/gossip/pkg/tunnel"
+	"github.com/tasmirz/gossip/pkg/vault"
 )
 
 // ProjectInfo describes a discovered or registered project workspace.
@@ -38,6 +42,9 @@ type Server struct {
 	knownProjects map[string]bool
 	mu            sync.RWMutex
 	roleProv      roles.Provider
+	authEnabled   bool
+	authUser      string
+	authPass      string
 }
 
 // NewServer initializes the Multi-Project Web Dashboard server.
@@ -125,7 +132,52 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/moe/dispatch", s.handleAPIMoEDispatch)
 	mux.HandleFunc("/api/settings", s.handleAPISettings)
 
-	return mux
+	// Mesh, Tunnel & Vault APIs
+	mux.HandleFunc("/api/tunnel", s.handleAPITunnel)
+	mux.HandleFunc("/api/tunnel/disclosure", s.handleAPITunnelDisclosure)
+	mux.HandleFunc("/api/mesh/query", s.handleAPIMeshQuery)
+	mux.HandleFunc("/api/vault/stage", s.handleAPIVaultStage)
+	mux.HandleFunc("/api/vault/list", s.handleAPIVaultList)
+	mux.HandleFunc("/api/vault/transfer", s.handleAPIVaultTransfer)
+	mux.HandleFunc("/api/vault/receive", s.handleAPIVaultReceive)
+
+	return s.authMiddleware(mux)
+}
+
+// SetAuth configures mandatory HTTP Basic Auth for dashboard and remote mesh access.
+func (s *Server) SetAuth(username, password string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if username != "" && password != "" {
+		s.authEnabled = true
+		s.authUser = username
+		s.authPass = password
+	} else {
+		s.authEnabled = false
+		s.authUser = ""
+		s.authPass = ""
+	}
+}
+
+func (s *Server) authMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s.mu.RLock()
+		enabled := s.authEnabled
+		user := s.authUser
+		pass := s.authPass
+		s.mu.RUnlock()
+
+		if enabled {
+			reqUser, reqPass, ok := r.BasicAuth()
+			if !ok || subtle.ConstantTimeCompare([]byte(reqUser), []byte(user)) != 1 ||
+				subtle.ConstantTimeCompare([]byte(reqPass), []byte(pass)) != 1 {
+				w.Header().Set("WWW-Authenticate", `Basic realm="Gossip Protected Mesh Dashboard"`)
+				http.Error(w, "Unauthorized: Protected Mesh Access Required", http.StatusUnauthorized)
+				return
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // Start runs the HTTP web server.
@@ -360,14 +412,23 @@ func (s *Server) handleAPIStatus(w http.ResponseWriter, r *http.Request) {
 	moeMgr := moe.NewManager(store, s.roleProv)
 	panels, _ := moeMgr.ListPanels("")
 
+	disc := tunnel.ComputeDisclosure(store)
+	tState, _ := tunnel.LoadTunnelState(store.Dir())
+
 	resp := map[string]interface{}{
-		"version":      "1.0.0",
-		"project_name": st.ProjectName,
-		"project_path": projPath,
-		"agent_count":  len(agents),
-		"task_count":   len(allTasks),
-		"moe_panels":   len(panels),
-		"timestamp":    time.Now().Format(time.RFC3339),
+		"version":           "1.0.0",
+		"project_name":      st.ProjectName,
+		"project_path":      projPath,
+		"agent_count":       len(agents),
+		"task_count":        len(allTasks),
+		"moe_panels":        len(panels),
+		"timestamp":         time.Now().Format(time.RFC3339),
+		"tunnel_active":     disc.TunnelActive,
+		"endpoint_type":     disc.EndpointType,
+		"remote_endpoint":   disc.RemoteEndpoint,
+		"auth_protected":    disc.AuthProtected,
+		"remote_disclosure": disc,
+		"tunnel_state":      tState,
 	}
 	jsonResponse(w, resp)
 }
@@ -1066,6 +1127,314 @@ func jsonResponse(w http.ResponseWriter, data interface{}) {
 	_ = json.NewEncoder(w).Encode(data)
 }
 
+func (s *Server) handleAPITunnel(w http.ResponseWriter, r *http.Request) {
+	store, _, err := s.resolveProjectStore(r.URL.Query().Get("project"))
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+
+	if r.Method == http.MethodGet {
+		tState, err := tunnel.LoadTunnelState(store.Dir())
+		if err != nil {
+			http.Error(w, err.Error(), 500)
+			return
+		}
+		disc := tunnel.ComputeDisclosure(store)
+		jsonResponse(w, map[string]interface{}{
+			"tunnel":     tState,
+			"disclosure": disc,
+			"lan_ips":    tunnel.DetectLocalLANIPs(),
+		})
+		return
+	}
+
+	if r.Method == http.MethodPost {
+		var req struct {
+			Action       string `json:"action"` // "generate", "activate", "deactivate"
+			Format       string `json:"format"` // "toml", "ini", "server_toml", "server_ini"
+			ServerAddr   string `json:"server_addr"`
+			ServerPort   int    `json:"server_port"`
+			AuthToken    string `json:"auth_token"`
+			ProxyType    string `json:"proxy_type"`
+			CustomDomain string `json:"custom_domain"`
+			RemotePort   int    `json:"remote_port"`
+			HTTPUser     string `json:"http_user"`
+			HTTPPassword string `json:"http_password"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, err.Error(), 400)
+			return
+		}
+
+		if req.Action == "generate" {
+			cfg := tunnel.DefaultClientConfig(s.port, req.HTTPUser, req.HTTPPassword)
+			if req.ServerAddr != "" {
+				cfg.ServerAddr = req.ServerAddr
+			}
+			if req.ServerPort > 0 {
+				cfg.ServerPort = req.ServerPort
+			}
+			if req.AuthToken != "" {
+				cfg.AuthToken = req.AuthToken
+			}
+			if req.ProxyType != "" {
+				cfg.ProxyType = req.ProxyType
+			}
+			if req.CustomDomain != "" {
+				cfg.CustomDomains = []string{req.CustomDomain}
+			}
+			if req.RemotePort > 0 {
+				cfg.RemotePort = req.RemotePort
+			}
+
+			var out string
+			switch req.Format {
+			case "ini":
+				out = tunnel.GenerateFRPCINI(cfg)
+			case "server_toml":
+				srvCfg := tunnel.FRPServerConfig{
+					BindPort:      cfg.ServerPort,
+					AuthToken:     cfg.AuthToken,
+					VhostHTTPPort: 80,
+				}
+				out = tunnel.GenerateFRPSTOML(srvCfg)
+			case "server_ini":
+				srvCfg := tunnel.FRPServerConfig{
+					BindPort:      cfg.ServerPort,
+					AuthToken:     cfg.AuthToken,
+					VhostHTTPPort: 80,
+				}
+				out = tunnel.GenerateFRPSINI(srvCfg)
+			default:
+				out = tunnel.GenerateFRPCTOML(cfg)
+			}
+			jsonResponse(w, map[string]string{
+				"config": out,
+				"format": req.Format,
+			})
+			return
+		}
+
+		if req.Action == "activate" {
+			if req.HTTPUser != "" && req.HTTPPassword != "" {
+				if err := tunnel.ValidateCredentials(req.HTTPUser, req.HTTPPassword); err != nil {
+					http.Error(w, fmt.Sprintf("invalid credentials: %v", err), 400)
+					return
+				}
+				// Set basic auth on web dashboard
+				s.SetAuth(req.HTTPUser, req.HTTPPassword)
+			}
+
+			ep := req.CustomDomain
+			if ep == "" {
+				ep = fmt.Sprintf("frp://%s:%d", req.ServerAddr, req.ServerPort)
+			}
+			tState := tunnel.TunnelState{
+				Active:         true,
+				Type:           "frp",
+				ServerAddr:     req.ServerAddr,
+				RemoteEndpoint: ep,
+				LocalIP:        "127.0.0.1",
+				LocalPort:      s.port,
+				RemotePort:     req.RemotePort,
+				AuthEnabled:    req.HTTPUser != "" && req.HTTPPassword != "",
+				AuthUser:       req.HTTPUser,
+				AuthPassMasked: tunnel.MaskSecret(req.HTTPPassword),
+				StartedAt:      time.Now(),
+			}
+			if err := tunnel.SaveTunnelState(store.Dir(), tState); err != nil {
+				http.Error(w, err.Error(), 500)
+				return
+			}
+			jsonResponse(w, map[string]interface{}{
+				"status": "activated",
+				"tunnel": tState,
+			})
+			return
+		}
+
+		if req.Action == "deactivate" {
+			s.SetAuth("", "")
+			_ = tunnel.ClearTunnelState(store.Dir())
+			jsonResponse(w, map[string]string{"status": "deactivated"})
+			return
+		}
+
+		http.Error(w, "invalid action", 400)
+		return
+	}
+	http.Error(w, "Method not allowed", 405)
+}
+
+func (s *Server) handleAPITunnelDisclosure(w http.ResponseWriter, r *http.Request) {
+	store, _, err := s.resolveProjectStore(r.URL.Query().Get("project"))
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	disc := tunnel.ComputeDisclosure(store)
+	jsonResponse(w, disc)
+}
+
+func (s *Server) handleAPIMeshQuery(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", 405)
+		return
+	}
+	store, _, err := s.resolveProjectStore(r.URL.Query().Get("project"))
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+
+	var req tunnel.FederatedQueryRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+
+	res, err := tunnel.ExecuteLocalFederatedQuery(store, req)
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	jsonResponse(w, res)
+}
+
+func (s *Server) handleAPIVaultStage(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", 405)
+		return
+	}
+	store, _, err := s.resolveProjectStore(r.URL.Query().Get("project"))
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+
+	vm, err := vault.NewManager(store.Dir())
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+
+	var req struct {
+		SourcePath  string `json:"source_path"`
+		Description string `json:"description"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+	if req.SourcePath == "" {
+		http.Error(w, "source_path is required", 400)
+		return
+	}
+
+	receipt, err := vm.StageSecretFile(req.SourcePath, req.Description)
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	jsonResponse(w, receipt)
+}
+
+func (s *Server) handleAPIVaultList(w http.ResponseWriter, r *http.Request) {
+	store, _, err := s.resolveProjectStore(r.URL.Query().Get("project"))
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	vm, err := vault.NewManager(store.Dir())
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	files, err := vm.ListStagedFiles()
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	jsonResponse(w, files)
+}
+
+func (s *Server) handleAPIVaultTransfer(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", 405)
+		return
+	}
+	store, _, err := s.resolveProjectStore(r.URL.Query().Get("project"))
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	vm, err := vault.NewManager(store.Dir())
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+
+	var req struct {
+		SourcePath     string `json:"source_path"`
+		RemoteEndpoint string `json:"remote_endpoint"`
+		AuthToken      string `json:"auth_token"`
+		DestRelPath    string `json:"dest_rel_path"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+	receipt, err := vm.TransferSecretToRemote(req.SourcePath, req.RemoteEndpoint, req.AuthToken, req.DestRelPath)
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	jsonResponse(w, receipt)
+}
+
+func (s *Server) handleAPIVaultReceive(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", 405)
+		return
+	}
+	store, _, err := s.resolveProjectStore(r.URL.Query().Get("project"))
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	vm, err := vault.NewManager(store.Dir())
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+
+	var req struct {
+		TransferID string `json:"transfer_id"`
+		Filename   string `json:"filename"`
+		PayloadB64 string `json:"payload_b64"`
+		SHA256     string `json:"sha256"`
+		AuthToken  string `json:"auth_token"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+
+	encBytes, err := hex.DecodeString(req.PayloadB64)
+	if err != nil {
+		http.Error(w, "invalid hex payload", 400)
+		return
+	}
+
+	receipt, err := vm.ReceiveSecretPayload(req.Filename, encBytes, req.AuthToken, req.SHA256)
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	jsonResponse(w, receipt)
+}
+
 const dashboardHTML = `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1432,6 +1801,7 @@ body.light-theme #social-feed {
     </div>
     
     <button onclick="toggleTheme()" id="theme-btn">[THEME: LIGHT]</button>
+    <div class="status-badge" id="tunnel-indicator">[TUNNEL: LOCAL ONLY]</div>
     <div class="status-badge" id="live-indicator">[SYNC: OK]</div>
   </div>
 </header>
@@ -1585,11 +1955,15 @@ body.light-theme #social-feed {
 
   <div class="box">
     <div class="box-title">[AGENTS] ACTIVE AGENT REGISTRY & PRESENCE</div>
+    <div id="agents-disclosure-box" style="margin-bottom: 12px; font-size: 11px; padding: 6px; border: 1px dashed currentColor;">
+      Loading remote disclosure status...
+    </div>
     <table>
       <thead>
         <tr>
           <th>AGENT ID</th>
           <th>ROLE</th>
+          <th>SCOPE</th>
           <th>STATUS</th>
           <th>ACTIVE TASK</th>
           <th>SESSIONS</th>
@@ -1598,7 +1972,7 @@ body.light-theme #social-feed {
         </tr>
       </thead>
       <tbody id="agents-table-body">
-        <tr><td colspan="7">Loading agents...</td></tr>
+        <tr><td colspan="8">Loading agents...</td></tr>
       </tbody>
     </table>
   </div>
@@ -1805,6 +2179,78 @@ body.light-theme #social-feed {
       <div id="settings-guardrails-content">Loading guardrails...</div>
     </div>
   </div>
+
+  <!-- FRP TUNNEL & REMOTE ACCESS -->
+  <div class="box">
+    <div class="box-title">[FRP TUNNEL & REMOTE ACCESS // MANDATORY DISCLOSURE]</div>
+    <div id="tunnel-status-banner" style="font-size: 11px; margin-bottom: 12px; border-bottom: 1px dashed currentColor; padding-bottom: 8px;">
+      Loading tunnel status...
+    </div>
+    <div class="grid-2">
+      <div>
+        <div style="font-size: 11px; font-weight: bold; margin-bottom: 4px;">FRP INGRESS & BASIC AUTH PROTECTION</div>
+        <div class="flex-row" style="margin-bottom: 6px;">
+          <input type="text" id="tun-server-addr" placeholder="FRP Server Addr (e.g. tunnel.domain.com)" class="flex-1">
+          <input type="number" id="tun-server-port" placeholder="Port (7000)" style="width: 100px;">
+        </div>
+        <div class="flex-row" style="margin-bottom: 6px;">
+          <input type="text" id="tun-auth-token" placeholder="FRP Server Auth Token (token)" class="flex-1">
+          <input type="text" id="tun-domain" placeholder="Custom Domain (e.g. gossip.domain.com)" class="flex-1">
+        </div>
+        <div class="flex-row" style="margin-bottom: 8px;">
+          <input type="text" id="tun-http-user" placeholder="HTTP BasicAuth User (required)" class="flex-1">
+          <input type="password" id="tun-http-pass" placeholder="HTTP BasicAuth Password (required)" class="flex-1">
+        </div>
+        <div class="flex-row" style="gap: 6px; flex-wrap: wrap;">
+          <button onclick="generateFRPConfig('toml')">[GENERATE FRPC.TOML]</button>
+          <button onclick="generateFRPConfig('ini')">[GENERATE FRPC.INI]</button>
+          <button onclick="generateFRPConfig('server_toml')">[GENERATE FRPS.TOML]</button>
+          <button onclick="activateTunnel()">[ACTIVATE TUNNEL]</button>
+          <button onclick="deactivateTunnel()">[DEACTIVATE TUNNEL]</button>
+        </div>
+      </div>
+      <div>
+        <div style="font-size: 11px; font-weight: bold; margin-bottom: 4px;">GENERATED CONFIGURATION / LOG</div>
+        <textarea id="tun-config-preview" style="width: 100%; height: 140px; font-size: 11px;" readonly placeholder="# Generated FRP configuration will appear here..."></textarea>
+      </div>
+    </div>
+  </div>
+
+  <!-- ZERO-EXPOSURE SECRET VAULT -->
+  <div class="box">
+    <div class="box-title">[ZERO-EXPOSURE SECRET VAULT // SECURE FILE TRANSFER]</div>
+    <div style="font-size: 11px; margin-bottom: 10px;">
+      Transmit .env files, certificates, and credentials without revealing raw secrets to agent context or LLM history.
+    </div>
+    <div class="grid-2">
+      <div>
+        <div style="font-size: 11px; font-weight: bold; margin-bottom: 4px;">STAGE LOCAL SECRET FILE</div>
+        <div class="flex-row" style="margin-bottom: 6px;">
+          <input type="text" id="vault-src-path" placeholder="/path/to/.env or private.key" class="flex-1">
+          <button onclick="stageVaultFile()">[STAGE FILE]</button>
+        </div>
+        <input type="text" id="vault-src-desc" placeholder="File description (e.g. Production DB secrets)" style="width: 100%; margin-bottom: 8px;">
+
+        <div style="font-size: 11px; font-weight: bold; margin-top: 10px; margin-bottom: 4px;">TRANSFER ENCRYPTED TO REMOTE NODE</div>
+        <div class="flex-row" style="margin-bottom: 6px;">
+          <input type="text" id="vault-xfr-src" placeholder="Source File Path" class="flex-1">
+          <input type="text" id="vault-xfr-ep" placeholder="Remote Endpoint (http://...)" class="flex-1">
+        </div>
+        <div class="flex-row" style="margin-bottom: 6px;">
+          <input type="password" id="vault-xfr-tok" placeholder="Encryption Token / Passphrase" class="flex-1">
+          <input type="text" id="vault-xfr-dest" placeholder="Remote Dest Path (.env)" style="width: 180px;">
+          <button onclick="transferVaultFile()">[SEND ENCRYPTED]</button>
+        </div>
+      </div>
+      <div>
+        <div style="font-size: 11px; font-weight: bold; margin-bottom: 4px;">STAGED FILES IN PROTECTED VAULT (0600)</div>
+        <div id="vault-files-list" style="max-height: 140px; overflow-y: auto; font-size: 11px;">
+          Loading staged vault files...
+        </div>
+        <div id="vault-transfer-receipt" style="margin-top: 8px; font-size: 10px; border: 1px dashed currentColor; padding: 6px; display: none;"></div>
+      </div>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -1958,6 +2404,13 @@ async function syncData() {
     document.getElementById('hdr-tasks').innerText = st.task_count;
     document.getElementById('hdr-proj-path').innerText = st.project_path || activeProjectPath;
 
+    if (st.remote_disclosure && st.remote_disclosure.tunnel_active) {
+      const authTag = st.remote_disclosure.auth_protected ? 'PROTECTED: ' : 'OPEN: ';
+      document.getElementById('tunnel-indicator').innerText = '[TUNNEL: ' + authTag + (st.remote_disclosure.remote_endpoint || 'active') + ']';
+    } else {
+      document.getElementById('tunnel-indicator').innerText = '[TUNNEL: LOCAL ONLY]';
+    }
+
     if (currentTab === 'tasks') await syncTasks();
     if (currentTab === 'agents') await syncAgents();
     if (currentTab === 'chats') await syncChats();
@@ -2065,15 +2518,31 @@ async function saveTaskEdit() {
 async function syncAgents() {
   const res = await fetch('/api/agents');
   const agents = await res.json();
+  const discRes = await fetch('/api/tunnel/disclosure');
+  const disc = await discRes.json();
+
+  const discBox = document.getElementById('agents-disclosure-box');
+  if (discBox && disc) {
+    let discHtml = '<b>MANDATORY TRANSPARENCY DISCLOSURE:</b> ' + escapeHTML(disc.disclosure_notice);
+    if (disc.tunnel_active) {
+      discHtml += '<br><b>TUNNEL ENDPOINT:</b> ' + escapeHTML(disc.remote_endpoint) + ' (Protected: ' + (disc.auth_protected ? 'YES - BasicAuth' : 'NO') + ')';
+    }
+    if (disc.local_lan_ips && disc.local_lan_ips.length > 0) {
+      discHtml += ' // <b>LAN IPS:</b> ' + disc.local_lan_ips.join(', ');
+    }
+    discBox.innerHTML = discHtml;
+  }
+
   const tbody = document.getElementById('agents-table-body');
   if (!agents || agents.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="7">No registered agents in this project.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="8">No registered agents in this project.</td></tr>';
     return;
   }
   tbody.innerHTML = agents.map(a => ` + "`" + `
     <tr>
       <td><b>${a.id}</b></td>
       <td><span class="badge">${a.role}</span></td>
+      <td><span class="badge">${a.is_remote ? '[REMOTE: ' + (a.remote_endpoint || 'tunnel') + ']' : '[LOCAL]'}</span></td>
       <td>${a.status === 'active' ? '[ACTIVE]' : '[' + a.status.toUpperCase() + ']'}</td>
       <td>${a.current_task_id || '-'}</td>
       <td>#${a.session_count || 1}</td>
@@ -2448,6 +2917,201 @@ async function syncSettings() {
       <div style="margin-bottom: 8px;"><b>PROJECT INVARIANTS:</b> ${(g.invariants || []).join('; ') || 'None set'}</div>
       <div><b>CAUTION RULES:</b> ${(g.caution_rules || []).length} active security rules</div>
     ` + "`" + `;
+  }
+
+  // Load tunnel status & disclosure
+  try {
+    const tunRes = await fetch('/api/tunnel');
+    const tunData = await tunRes.json();
+    const tBanner = document.getElementById('tunnel-status-banner');
+    if (tBanner && tunData.disclosure) {
+      const d = tunData.disclosure;
+      let html = '<b>STATUS:</b> ' + (d.tunnel_active ? '<span class="badge">[ACTIVE TUNNEL]</span>' : '<span class="badge">[LOCAL ONLY]</span>');
+      html += ' // <b>NOTICE:</b> ' + escapeHTML(d.disclosure_notice);
+      if (d.tunnel_active) {
+        html += '<br><b>ENDPOINT:</b> ' + escapeHTML(d.remote_endpoint) + ' (Protected: ' + (d.auth_protected ? 'YES' : 'NO') + ')';
+        if (d.auth_user) html += ' // <b>AUTH USER:</b> ' + escapeHTML(d.auth_user);
+      }
+      if (tunData.lan_ips && tunData.lan_ips.length > 0) {
+        html += ' // <b>LAN IPS:</b> ' + tunData.lan_ips.join(', ');
+      }
+      tBanner.innerHTML = html;
+    }
+  } catch(e) {
+    console.error('syncSettings tunnel err', e);
+  }
+
+  // Load vault staged files
+  await loadVaultFiles();
+}
+
+async function generateFRPConfig(fmt) {
+  const server_addr = document.getElementById('tun-server-addr').value.trim();
+  const server_port = parseInt(document.getElementById('tun-server-port').value.trim()) || 7000;
+  const auth_token = document.getElementById('tun-auth-token').value.trim();
+  const custom_domain = document.getElementById('tun-domain').value.trim();
+  const http_user = document.getElementById('tun-http-user').value.trim();
+  const http_password = document.getElementById('tun-http-pass').value.trim();
+
+  try {
+    const res = await fetch('/api/tunnel', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        action: 'generate',
+        format: fmt,
+        server_addr,
+        server_port,
+        auth_token,
+        custom_domain,
+        http_user,
+        http_password
+      })
+    });
+    const data = await res.json();
+    document.getElementById('tun-config-preview').value = data.config || '';
+  } catch(e) {
+    alert('Config generation error: ' + e);
+  }
+}
+
+async function activateTunnel() {
+  const server_addr = document.getElementById('tun-server-addr').value.trim();
+  const server_port = parseInt(document.getElementById('tun-server-port').value.trim()) || 7000;
+  const auth_token = document.getElementById('tun-auth-token').value.trim();
+  const custom_domain = document.getElementById('tun-domain').value.trim();
+  const http_user = document.getElementById('tun-http-user').value.trim();
+  const http_password = document.getElementById('tun-http-pass').value.trim();
+
+  if (!server_addr) return alert('Server address is required');
+  if (http_user && http_password && http_password.length < 6) {
+    return alert('Password must be at least 6 characters for protected access');
+  }
+
+  try {
+    const res = await fetch('/api/tunnel', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        action: 'activate',
+        server_addr,
+        server_port,
+        auth_token,
+        custom_domain,
+        http_user,
+        http_password
+      })
+    });
+    if (!res.ok) {
+      const err = await res.text();
+      return alert('Activation error: ' + err);
+    }
+    alert('Tunnel activated with protected HTTP Basic Auth credentials.');
+    await syncSettings();
+    await syncData();
+  } catch(e) {
+    alert('Activation error: ' + e);
+  }
+}
+
+async function deactivateTunnel() {
+  try {
+    const res = await fetch('/api/tunnel', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({action: 'deactivate'})
+    });
+    if (!res.ok) return alert('Deactivation failed');
+    alert('Tunnel deactivated. Reverted to local isolation.');
+    await syncSettings();
+    await syncData();
+  } catch(e) {
+    alert('Deactivation error: ' + e);
+  }
+}
+
+async function stageVaultFile() {
+  const source_path = document.getElementById('vault-src-path').value.trim();
+  const description = document.getElementById('vault-src-desc').value.trim();
+  if (!source_path) return alert('Source path required');
+
+  try {
+    const res = await fetch('/api/vault/stage', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({source_path, description})
+    });
+    if (!res.ok) {
+      const err = await res.text();
+      return alert('Staging error: ' + err);
+    }
+    const receipt = await res.json();
+    document.getElementById('vault-src-path').value = '';
+    document.getElementById('vault-src-desc').value = '';
+    showVaultReceipt(receipt);
+    await loadVaultFiles();
+  } catch(e) {
+    alert('Vault error: ' + e);
+  }
+}
+
+async function transferVaultFile() {
+  const source_path = document.getElementById('vault-xfr-src').value.trim();
+  const remote_endpoint = document.getElementById('vault-xfr-ep').value.trim();
+  const auth_token = document.getElementById('vault-xfr-tok').value.trim();
+  const dest_rel_path = document.getElementById('vault-xfr-dest').value.trim();
+
+  if (!source_path || !remote_endpoint || !auth_token) {
+    return alert('Source path, remote endpoint, and encryption token required');
+  }
+
+  try {
+    const res = await fetch('/api/vault/transfer', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({source_path, remote_endpoint, auth_token, dest_rel_path})
+    });
+    if (!res.ok) {
+      const err = await res.text();
+      return alert('Transfer error: ' + err);
+    }
+    const receipt = await res.json();
+    showVaultReceipt(receipt);
+  } catch(e) {
+    alert('Transfer error: ' + e);
+  }
+}
+
+function showVaultReceipt(rcpt) {
+  const rDiv = document.getElementById('vault-transfer-receipt');
+  if (!rDiv) return;
+  rDiv.style.display = 'block';
+  rDiv.innerHTML = ` + "`" + `
+    <b>TRANSFER RECEIPT:</b> ${rcpt.transfer_id} [${rcpt.status}]<br>
+    <b>SOURCE:</b> ${escapeHTML(rcpt.source_path)} // <b>DEST:</b> ${escapeHTML(rcpt.destination_path)}<br>
+    <b>SHA-256:</b> ${rcpt.sha256} (${rcpt.size_bytes} bytes)<br>
+    <i>${escapeHTML(rcpt.note)}</i>
+  ` + "`" + `;
+}
+
+async function loadVaultFiles() {
+  try {
+    const res = await fetch('/api/vault/list');
+    const files = await res.json();
+    const box = document.getElementById('vault-files-list');
+    if (!box) return;
+    if (!files || files.length === 0) {
+      box.innerHTML = '<i>No staged secret files in vault.</i>';
+      return;
+    }
+    box.innerHTML = files.map(f => ` + "`" + `
+      <div style="border-bottom: 1px dashed currentColor; padding: 4px 0;">
+        <b>${escapeHTML(f.filename)}</b> (${f.size_bytes} bytes) [0600]<br>
+        <span style="font-size: 10px;">SHA: ${f.sha256.substring(0, 16)}... // ${escapeHTML(f.description || 'no desc')}</span>
+      </div>
+    ` + "`" + `).join('');
+  } catch(e) {
+    console.error('loadVaultFiles err', e);
   }
 }
 

@@ -1,0 +1,24 @@
+{
+  "name": "gossip_cron_check",
+  "description": "Execute periodic health check (unread messages, ready DAG tasks, stale heartbeats, tunnel disclosure) for agents supporting cron/scheduled monitoring",
+  "parameters": {
+    "properties": {
+      "agent_id": {
+        "description": "Optional agent ID to check unread inbox messages for",
+        "type": "string"
+      }
+    },
+    "required": [],
+    "type": "object"
+  },
+  "inputSchema": {
+    "properties": {
+      "agent_id": {
+        "description": "Optional agent ID to check unread inbox messages for",
+        "type": "string"
+      }
+    },
+    "required": [],
+    "type": "object"
+  }
+}

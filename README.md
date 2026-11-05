@@ -132,12 +132,18 @@ Gossip implements three built-in SOP templates with strict phase gates and artif
 
 ---
 
-## Complete MCP Tool Directory (79 Tools & Prompts)
+## Complete MCP Tool Directory (101 Exported Tool Schemas & Prompts)
+
+### 0. Mesh Bootstrap, Introduction & Disclosure Tools
+- `gossip_setup` (aliases: `gsp_setup`, `gossip_setup_mesh`): Zero-friction project bootstrap initializing `.local/gossip`, roles, graph, guardrails, and setting up initial goal.
+- `gossip_introduce_agent` (aliases: `gossip_introduce`, `gsp_introduce`): First-class agent introduction and registration into the mesh. Sends a welcome briefing with current tasks, peers, and broadcasts an introduction announcement across the mesh.
+- `gossip_introduce_remote_peer` (aliases: `gossip_handshake`, `gsp_introduce_peer`): Register or handshake with a remote agent peer operating through an FRP/LAN tunnel or federated mesh node.
+- `gossip_status` (aliases: `gsp_status`, `gossip_get_status`): Full multi-agent system status, active tasks, and mandatory Remote Agent & Tunnel Disclosure status.
 
 ### 1. Identity & Role Management
 - `gossip_register_agent`: Join the active gossip mesh with agent ID, role, capabilities, and active task. Supports multi-instance per role.
 - `gossip_reidentify_agent` (aliases: `gsp_reidentify`, `gossip_resume_session`): Re-identify or resume an agent session across restarts or new context sessions, returning an instant catch-up briefing of in-progress tasks, unread inbox messages, active SOP stages, and personal to-dos.
-- `gossip_list_agents`: List all active agents, their statuses, tasks, and last heartbeats.
+- `gossip_list_agents`: List all active agents, their statuses, tasks, scopes (`local` vs `remote:tunnel` / `remote:lan`), and last heartbeats.
 - `gossip_heartbeat`: Refresh session timestamp and update current task or status.
 - `gossip_get_role_definition`: Fetch complete system prompt, directives, and tool recommendations for any role.
 - `gossip_list_roles`: View markdown directory of all roles loaded dynamically from JSON.
@@ -233,7 +239,18 @@ Gossip supports three distinct, coordinated task management scopes:
 - `gossip_moe_dispatch_subagents` (alias `gsp_parallel`, `gsp_moe_dispatch`): Dispatch decoupled tasks across concurrent parallel subagent execution tracks.
 - `gossip_moe_list_panels` (alias `gsp_moe_list`): Inspect all active and historical MoE councils, syntheses, and subagent tracks.
 
-### 12. MCP Prompts as Native Slash Commands (`/gsp:...`)
+### 12. Periodic Automation & Cron Checking
+- `gossip_setup_cron` (alias `gsp_setup_cron`): Configure periodic cron check interval (e.g. `*/5 * * * *`, `@hourly`, `@every 30s`).
+- `gossip_cron_check` (alias `gsp_cron_check`): Run a single periodic cron pulse checking for unread inbox messages, ready tasks, stale heartbeats, and remote peer disclosures.
+
+### 13. Protected FRP Tunneling & Federated Mesh Across Decoupled Worktrees
+- `gossip_setup_tunnel` (alias `gsp_setup_tunnel`): Configure FRP reverse-proxy tunnel for secure remote or local LAN access with mandatory HTTP basic auth protection and secret masking.
+- `gossip_remote_query` (alias `gsp_remote_query`): Query remote agent nodes across FRP/LAN tunnel without sharing filesystem paths across decoupled worktrees (`agent <-> mcp <-> frp/local <mcp> -> agent`).
+
+### 14. Zero-Exposure Secret Vault
+- `gossip_secret_transfer` (alias `gsp_vault_transfer`): Securely stage and transfer secret files (e.g. `.env`, tokens, certs) between mesh nodes using AES-256-GCM encryption without exposing secret contents to the agent context or logs.
+
+### 15. MCP Prompts as Native Slash Commands (`/gsp:...`)
 Gossip exports 15 standardized Model Context Protocol Prompts that modern MCP clients (Claude, Antigravity) surface as `/gsp:...` slash commands:
 - `/gsp:moe`: Convene a Mixture of Experts discussion council to resolve a complex dilemma.
 - `/gsp:parallel`: Dispatch parallel subagent execution tracks for decoupled tasks.
@@ -275,6 +292,190 @@ Gossip features an embedded, zero-dependency, local web control panel with an un
 3. **[3] Live Chats & Broadcasts**: Monospace terminal transcript streaming direct messages (`agent:<id>`), role messages (`role:<role>`), and broadcast announcements (`all`). Send messages or broadcast directives directly from your browser.
 4. **[4] MoE Council Panel**: Convene Mixture of Experts councils, view gating rationale, inspect expert arguments, trigger consensus syntheses, and dispatch parallel subagents.
 5. **[5] Project Settings & Customization**: Configure project titles, declare strategic goals/milestones, and inspect active guardrails, invariants, and caution rules.
+
+---
+
+## Universal Auto-Installers for All Platforms
+
+Gossip provides one-click universal auto-installers for Linux, macOS, and Windows that automatically install the binary, register the MCP server, and configure skills across all supported environments:
+
+```
+┌────────────────────────────────────────────────────────────────────────┐
+│ UNIVERSAL AUTO-INSTALL SCRIPTS                                         │
+│                                                                        │
+│ 1. Linux & macOS (Bash):                                               │
+│    curl -fsSL https://raw.githubusercontent.com/tasmirz/gossip/main/install.sh | bash │
+│    or locally: ./scripts/install.sh --all                              │
+│                                                                        │
+│ 2. Windows (PowerShell):                                               │
+│    powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1 -Target All │
+│                                                                        │
+│ 3. Gossip Native CLI Installer:                                        │
+│    gossip install --all                                                │
+└────────────────────────────────────────────────────────────────────────┘
+```
+
+The auto-installers detect and configure all detected AI environments in parallel:
+- **Google Antigravity**: Registers MCP server in `~/.gemini/antigravity/mcp/gossip/` and links `SKILL.md` to `~/.gemini/config/plugins/gossip/skills/gossip/`.
+- **OpenCode**: Links skill to `~/.config/opencode/skills/gossip` and registers MCP in `~/.config/opencode/opencode.json`.
+- **Claude Desktop**: Injects stdio config into `~/.config/Claude/claude_desktop_config.json` (or macOS `~/Library/Application Support/Claude/` / Windows `%APPDATA%\Claude`).
+- **Cursor IDE**: Configures `.cursor/mcp.json` or `~/.cursor/mcp.json`.
+- **VS Code (Cline / Roo / Copilot)**: Configures `.vscode/mcp.json`.
+- **System Binary PATH**: Copies precompiled binary to `/usr/local/bin/gossip` (or `~/.local/bin/gossip` / Windows `Program Files`).
+
+```bash
+# Run auto-installer specifically for an environment:
+./scripts/install.sh --antigravity
+./scripts/install.sh --opencode
+./scripts/install.sh --claude
+./scripts/install.sh --cursor
+./scripts/install.sh --vscode
+./scripts/install.sh --all
+```
+
+---
+
+## Protected FRP Tunneling, LAN Access & Mandatory Remote Disclosure
+
+Gossip enables multi-agent collaboration across networks (remote servers, cloud instances, or local LANs) using **Fast Reverse Proxy (FRP)** tunneling while enforcing strict defense-in-depth:
+
+```
+┌──────────────────────────────────────────────────────────────────────────────────────┐
+│ TOPOLOGY: DECOUPLED WORKTREE FEDERATED MESH                                          │
+│                                                                                      │
+│ [Host A: Worktree /path/backend]             [Host B: Worktree /path/frontend]       │
+│                                                                                      │
+│ Agent Alpha                                  Agent Beta                              │
+│     │                                            │                                   │
+│     ▼ (stdio)                                    ▼ (stdio)                           │
+│ Gossip MCP Server                            Gossip MCP Server                       │
+│     │                                            │                                   │
+│ Local Mesh & Graph                           Local Mesh & Graph                      │
+│     │                                            │                                   │
+│     ▼                                            ▼                                   │
+│ Web UI / Mesh API (8080)                     Web UI / Mesh API (8080)                │
+│ [Protected: Basic Auth]                      [Protected: Basic Auth]                 │
+│     │                                            │                                   │
+│     ▼                                            ▲                                   │
+│ FRP Client (frpc) ──────── WAN / FRP Server ─────┘                                   │
+│ (AES-256-GCM Vault & HTTP Basic Auth with Constant-Time String Compare)              │
+└──────────────────────────────────────────────────────────────────────────────────────┘
+```
+
+### 1. Mandatory HTTP Basic Auth Protection
+Any exposure beyond localhost (whether via FRP reverse proxy or 0.0.0.0 local LAN) **must be protected** by credentials:
+- Constant-time string comparison (`crypto/subtle.ConstantTimeCompare`) prevents timing attacks.
+- Credentials (`--user`, `--pass`) are never written to logs or chat histories.
+- Tunnel configuration files (`.local/gossip/tunnel.json`, `frpc.toml`) are restricted to `0600` permissions (owner read/write only).
+
+```bash
+# Launch Web UI with mandatory credential protection:
+gossip ui --port 8080 --user admin --pass "StrongSecretPassphrase"
+
+# Setup FRP tunnel via CLI:
+gossip tunnel setup --server frp.example.com --port 7000 --token "ClusterToken" \
+                    --subdomain "project-alpha" --user admin --pass "StrongPass"
+
+# Or configure tunnel via MCP:
+gossip_setup_tunnel({
+  "frp_server": "frp.example.com",
+  "frp_port": 7000,
+  "token": "ClusterToken",
+  "subdomain": "project-alpha",
+  "auth_user": "admin",
+  "auth_pass": "StrongPass"
+})
+```
+
+### 2. Mandatory Remote Agent & Tunnel Disclosure Rule
+> [!IMPORTANT]
+> **DISCLOSURE REQUIREMENT**: If an agent starts, resumes, or inspects status in a repository where an FRP tunnel or remote LAN endpoint is active, **the agent MUST explicitly disclose this to human operators and peer agents**.
+
+Gossip enforces this automatically at every interface:
+- **CLI `gossip status`**: Emits a prominent `=== Remote Agent & Tunnel Disclosure ===` section listing active WAN tunnel URLs, local LAN IP addresses, credential protection status, and disclosed remote peers.
+- **MCP `gossip_status` & `gossip_list_agents`**: Returns `remote_disclosure` block and identifies every remote peer with their scope (`remote:tunnel` or `remote:lan`).
+- **Markdown Kanban (`BOARD.md`)**: Automatically prefixes a live banner:
+  `> [!] REMOTE AGENT & TUNNEL DISCLOSURE: FRP Tunnel ACTIVE at ... (PROTECTED: HTTP Basic Auth enabled)`
+- **Monochrome Web UI**: Prominently flashes the header indicator `[TUNNEL: PROTECTED: https://...]` and details all connected remote peers under `[2] LIVE AGENTS`.
+
+---
+
+## Decoupled Worktrees & Federated Mesh Queries
+
+In an `agent <-> mcp <-> frp/local <mcp> -> agent` communication flow, different agents often work on **completely distinct worktrees** (e.g. Host A on `/home/user/backend` vs Host B on `/home/peer/frontend` or Windows `C:\Project`).
+
+Gossip preserves complete isolation and independence:
+- **Independent Local Graph & DAG**: Each machine runs its own local `.local/gossip/` database, tracking local AST symbols and file paths without path collisions.
+- **Federated Remote Queries (`gossip_remote_query`)**: Agents query remote nodes on-demand across the tunnel without mounting remote filesystems:
+  ```json
+  // Query status of remote peer node across tunnel
+  gossip_remote_query({
+    "target_url": "https://remote.example.com:8080",
+    "query_type": "status",
+    "auth_user": "admin",
+    "auth_pass": "StrongPass"
+  })
+  ```
+  Supported remote query types: `status`, `tasks`, `graph`, `repomap`.
+
+---
+
+## Zero-Exposure Secret Vault (`gossip vault`)
+
+Sharing secret files (such as `.env`, certificates, tokens, or private keys) between agents or across tunnel boundaries traditionally risks leaking plaintext secrets into LLM context windows, system prompts, or conversation logs.
+
+Gossip solves this with the **Zero-Exposure Secret Vault** (`pkg/vault`):
+- **AES-256-GCM Encryption**: Secrets are encrypted in-memory using PBKDF2-HMAC-SHA256 key derivation (10,000 iterations) with a randomly generated 96-bit nonce.
+- **Zero Agent Context Exposure**: The LLM / agent never receives or prints the raw secret bytes. The tool returns a `TransferReceipt` containing only the filename, encrypted payload size, SHA-256 checksum, and staging ID.
+- **Safe Remote Staging & Transfer**:
+  ```bash
+  # CLI: Stage a secret file securely
+  gossip vault stage --path .env --key "MeshTransferKey"
+
+  # CLI: Transfer to a remote peer node
+  gossip vault transfer --path .env --target https://remote.example.com:8080 \
+                        --key "MeshTransferKey" --user admin --pass "StrongPass"
+  ```
+- **Via MCP**:
+  ```json
+  gossip_secret_transfer({
+    "action": "transfer",
+    "file_path": ".env",
+    "target_url": "https://remote.example.com:8080",
+    "encryption_key": "MeshTransferKey",
+    "auth_user": "admin",
+    "auth_pass": "StrongPass"
+  })
+  ```
+
+---
+
+## Periodic Automation & Cron Checking (`gossip cron`)
+
+Gossip features an integrated background cron engine (`pkg/cron`) to periodically poll the mesh, sweep for stale agent heartbeats, detect newly unblocked DAG tasks, and alert agents to urgent inbox directives:
+
+- **Standard Cron & Shorthand Intervals**: Supports `@every 30s`, `@every 5m`, `@hourly`, `@daily`, and standard 5-part cron syntax (`*/5 * * * *`).
+- **Audit Logging**: Every pulse writes an entry to `.local/gossip/cron.log` tracking unread messages, ready tasks, active tunnels, and alerts.
+- **Antigravity `/schedule` Compatibility**: If the agent's IDE supports slash command scheduling, trigger `/schedule` to run `gossip_cron_check` periodically.
+
+```bash
+# Run a single cron check pulse:
+gossip cron check
+
+# Launch standing cron daemon with a 1-minute interval:
+gossip cron start --interval "@every 1m"
+```
+
+```json
+// Via MCP:
+gossip_setup_cron({
+  "interval": "*/5 * * * *",
+  "enable_daemon": true
+})
+
+// Run on-demand pulse check:
+gossip_cron_check({})
+```
 
 ---
 
@@ -422,8 +623,28 @@ gossip send --from dev_terminal --role orchestrator --to role:math_expert --msg 
 # Print all defined roles and system prompts
 gossip roles
 
-# Launch the black & white monospace web control panel
-gossip ui --port 8080
+# Launch the black & white monospace web control panel (with optional basic auth)
+gossip ui --port 8080 --user admin --pass "StrongPass"
+
+# Universal auto-install to all detected AI environments
+gossip install --all
+
+# Configure and inspect protected FRP reverse tunnel
+gossip tunnel status
+gossip tunnel setup --server frp.example.com --port 7000 --token "ClusterToken" --user admin --pass "StrongPass"
+gossip tunnel start
+
+# Periodic automation and cron checking
+gossip cron check
+gossip cron start --interval "@every 1m"
+
+# Zero-exposure secret vault operations
+gossip vault stage --path .env --key "TransferKey"
+gossip vault transfer --path .env --target https://remote.example.com:8080 --key "TransferKey"
+
+# Federated remote queries across decoupled worktrees
+gossip remote query https://remote.example.com:8080 status --user admin --pass "StrongPass"
+gossip remote add peer-worker-1 https://remote.example.com:8080
 
 # Convene a Mixture of Experts discussion council
 gossip moe convene --title "WAL vs Memory" --query "Trade-offs under high write contention" --domain "concurrency"
