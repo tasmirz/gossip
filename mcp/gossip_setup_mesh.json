@@ -1,0 +1,80 @@
+{
+  "name": "gossip_setup_mesh",
+  "description": "Bootstrap and setup the Gossip collaboration mesh in the current workspace: initializes state, goals, task DAG, knowledge graph, guardrails, and optional FRP tunnel and cron checking",
+  "parameters": {
+    "properties": {
+      "auth_pass": {
+        "description": "HTTP Basic Auth password for protected access (min 6 chars)",
+        "type": "string"
+      },
+      "auth_user": {
+        "description": "HTTP Basic Auth username for protected access",
+        "type": "string"
+      },
+      "configure_tunnel": {
+        "description": "Whether to initialize a protected FRP reverse-proxy tunnel",
+        "type": "boolean"
+      },
+      "goals": {
+        "description": "Initial high-level strategic goals or milestones",
+        "type": "array"
+      },
+      "project_name": {
+        "description": "Name of the project or workspace",
+        "type": "string"
+      },
+      "setup_cron": {
+        "description": "Whether to initialize cron periodic checking",
+        "type": "boolean"
+      },
+      "tech_stack": {
+        "description": "Primary languages and frameworks (e.g. ['Go', 'TypeScript', 'PostgreSQL'])",
+        "type": "array"
+      },
+      "tunnel_server": {
+        "description": "FRP server address (e.g. 'tunnel.domain.com')",
+        "type": "string"
+      }
+    },
+    "required": [],
+    "type": "object"
+  },
+  "inputSchema": {
+    "properties": {
+      "auth_pass": {
+        "description": "HTTP Basic Auth password for protected access (min 6 chars)",
+        "type": "string"
+      },
+      "auth_user": {
+        "description": "HTTP Basic Auth username for protected access",
+        "type": "string"
+      },
+      "configure_tunnel": {
+        "description": "Whether to initialize a protected FRP reverse-proxy tunnel",
+        "type": "boolean"
+      },
+      "goals": {
+        "description": "Initial high-level strategic goals or milestones",
+        "type": "array"
+      },
+      "project_name": {
+        "description": "Name of the project or workspace",
+        "type": "string"
+      },
+      "setup_cron": {
+        "description": "Whether to initialize cron periodic checking",
+        "type": "boolean"
+      },
+      "tech_stack": {
+        "description": "Primary languages and frameworks (e.g. ['Go', 'TypeScript', 'PostgreSQL'])",
+        "type": "array"
+      },
+      "tunnel_server": {
+        "description": "FRP server address (e.g. 'tunnel.domain.com')",
+        "type": "string"
+      }
+    },
+    "required": [],
+    "type": "object"
+  }
+}

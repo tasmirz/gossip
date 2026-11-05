@@ -21,6 +21,7 @@ import (
 	"github.com/tasmirz/gossip/pkg/sop"
 	"github.com/tasmirz/gossip/pkg/state"
 	"github.com/tasmirz/gossip/pkg/tasks"
+	"github.com/tasmirz/gossip/pkg/tunnel"
 	"github.com/tasmirz/gossip/pkg/web"
 )
 
@@ -137,6 +138,21 @@ func main() {
 
 	case "resume", "reidentify", "gsp:resume":
 		runResume(os.Args[2:])
+
+	case "install":
+		runInstall(os.Args[2:])
+
+	case "tunnel":
+		runTunnel(os.Args[2:])
+
+	case "cron":
+		runCron(os.Args[2:])
+
+	case "vault":
+		runVault(os.Args[2:])
+
+	case "remote":
+		runRemote(os.Args[2:])
 
 	case "ui", "web":
 		runWebUI(os.Args[2:])
@@ -302,6 +318,33 @@ func runStatus(customDir string) {
 	fmt.Println("=== Task DAG Breakdown ===")
 	for _, st := range []string{"todo", "in_progress", "blocked", "in_review", "completed", "failed"} {
 		fmt.Printf("  %-12s: %d\n", st, statusCounts[st])
+	}
+	fmt.Println()
+
+	// Mandatory Remote Agent & Tunnel Disclosure
+	disc := tunnel.ComputeDisclosure(store)
+	fmt.Println("=== Remote Agent & Tunnel Disclosure ===")
+	fmt.Printf("Notice: %s\n", disc.DisclosureNotice)
+	if disc.TunnelActive {
+		authStr := "PROTECTED (HTTP BasicAuth)"
+		if !disc.AuthProtected {
+			authStr = "UNPROTECTED (WARNING: No Auth Configured)"
+		}
+		fmt.Printf("Tunnel Endpoint: %s (%s) [%s]\n", disc.RemoteEndpoint, disc.EndpointType, authStr)
+		if disc.AuthUser != "" {
+			fmt.Printf("Authorized User: %s\n", disc.AuthUser)
+		}
+	}
+	if len(disc.RemotePeers) > 0 {
+		fmt.Printf("Disclosed Remote Peers (%d):\n", len(disc.RemotePeers))
+		for _, p := range disc.RemotePeers {
+			fmt.Printf("  • [%s] %s at %s (Status: %s)\n", p.AgentID, p.Role, p.Endpoint, p.Status)
+		}
+	} else {
+		fmt.Printf("Disclosed Remote Peers: 0 (local isolation)\n")
+	}
+	if len(disc.LocalLANIPs) > 0 {
+		fmt.Printf("Detected LAN IPs: %s\n", strings.Join(disc.LocalLANIPs, ", "))
 	}
 	fmt.Println()
 }
@@ -1143,6 +1186,11 @@ func runWebUI(args []string) {
 	fs := flag.NewFlagSet("ui", flag.ExitOnError)
 	port := fs.Int("port", 8080, "Web dashboard port (default 8080)")
 	dir := fs.String("dir", "", "Custom gossip directory")
+	user := fs.String("user", "", "Optional HTTP Basic Auth username for web dashboard")
+	pass := fs.String("pass", "", "Optional HTTP Basic Auth password (minimum 6 characters)")
+	frpServer := fs.String("frp-server", "", "Optional FRP server address for automatic tunnel activation")
+	frpToken := fs.String("frp-token", "", "Optional FRP server token")
+	domain := fs.String("domain", "", "Optional custom domain for FRP tunnel")
 	_ = fs.Parse(args)
 
 	store, err := state.NewStore(*dir)
@@ -1153,6 +1201,41 @@ func runWebUI(args []string) {
 
 	roleProv, _ := roles.NewService(store.Dir(), "")
 	srv := web.NewServer(*port, store, roleProv)
+
+	if *user != "" && *pass != "" {
+		if err := tunnel.ValidateCredentials(*user, *pass); err != nil {
+			fmt.Fprintf(os.Stderr, "Credential error: %v\n", err)
+			os.Exit(1)
+		}
+		srv.SetAuth(*user, *pass)
+	}
+
+	if *frpServer != "" {
+		ep := *domain
+		if ep == "" {
+			ep = fmt.Sprintf("frp://%s:7000", *frpServer)
+		}
+		_ = tunnel.SaveTunnelState(store.Dir(), tunnel.TunnelState{
+			Active:         true,
+			Type:           "frp",
+			ServerAddr:     *frpServer,
+			RemoteEndpoint: ep,
+			LocalIP:        "127.0.0.1",
+			LocalPort:      *port,
+			AuthEnabled:    *user != "" && *pass != "",
+			AuthUser:       *user,
+			AuthPassMasked: tunnel.MaskSecret(*pass),
+			StartedAt:      time.Now(),
+		})
+		cfg := tunnel.DefaultClientConfig(*port, *user, *pass)
+		cfg.ServerAddr = *frpServer
+		cfg.AuthToken = *frpToken
+		if *domain != "" {
+			cfg.CustomDomains = []string{*domain}
+		}
+		_ = os.WriteFile(filepath.Join(store.Dir(), "frpc.toml"), []byte(tunnel.GenerateFRPCTOML(cfg)), 0600)
+	}
+
 	if err := srv.Start(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error running web server: %v\n", err)
 		os.Exit(1)
@@ -1270,6 +1353,11 @@ Commands:
   system-todos    View unified cross-system backlog (alias: gsp:system_todos)
   assignments     View Orchestrator task allocation & workload matrix (alias: gsp:assignments)
   resume          Re-identify and resume agent session with instant catch-up briefing (alias: gsp:resume)
+  install         Auto-install and configure all AI agents & editors (Antigravity, OpenCode, Claude, Cursor, VS Code)
+  tunnel          Manage protected FRP reverse-proxy tunnels with username/password authentication
+  cron            Execute periodic health checks (unread messages, ready DAG tasks, stale heartbeats)
+  vault           Stage and transfer sensitive secret files (.env, keys) with zero agent exposure
+  remote          Query remote mesh nodes across tunnel when worktrees differ
   moe             Convene and inspect Mixture of Experts discussion panels (alias: gsp:moe)
   ui              Launch local monochrome black & white web control panel (alias: web)
   export-mcp      Export MCP tool schemas (JSON) and instructions.md (alias: mcp-export)

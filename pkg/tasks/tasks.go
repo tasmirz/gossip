@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/tasmirz/gossip/pkg/state"
+	"github.com/tasmirz/gossip/pkg/tunnel"
 )
 
 // TaskStatus constants
@@ -482,6 +483,10 @@ func (m *Manager) renderBoardContent(c *TasksContainer) (string, error) {
 	b.WriteString("# [GOSSIP] Gossip Multi-Agent Task Board\n\n")
 	b.WriteString(fmt.Sprintf("*Last Synchronized: %s*\n\n", time.Now().Format(time.RFC1123)))
 
+	// Mandatory Remote Agent & Tunnel Disclosure
+	disc := tunnel.ComputeDisclosure(m.store)
+	b.WriteString(disc.MarkdownBanner())
+
 	// Goals Section
 	b.WriteString("## [GOALS] Project Goals & Milestones\n\n")
 	if len(goals) == 0 {
@@ -560,15 +565,23 @@ func (m *Manager) renderBoardContent(c *TasksContainer) (string, error) {
 	if len(agents) == 0 {
 		b.WriteString("_No active agents currently registered._\n\n")
 	} else {
-		b.WriteString("| Agent ID | Role | Status | Current Task | Last Heartbeat |\n")
-		b.WriteString("| :--- | :--- | :--- | :--- | :--- |\n")
+		b.WriteString("| Agent ID | Role | Status | Scope | Current Task | Last Heartbeat |\n")
+		b.WriteString("| :--- | :--- | :--- | :--- | :--- | :--- |\n")
 		for _, a := range agents {
 			curTask := a.CurrentTaskID
 			if curTask == "" {
 				curTask = "-"
 			}
-			b.WriteString(fmt.Sprintf("| `%s` | `%s` | **%s** | `%s` | %s |\n",
-				a.ID, a.Role, a.Status, curTask, a.LastHeartbeat.Format("15:04:05")))
+			scope := "LOCAL"
+			if a.IsRemote || a.RemoteEndpoint != "" {
+				if a.RemoteEndpoint != "" {
+					scope = fmt.Sprintf("REMOTE (%s)", a.RemoteEndpoint)
+				} else {
+					scope = "REMOTE"
+				}
+			}
+			b.WriteString(fmt.Sprintf("| `%s` | `%s` | **%s** | `%s` | `%s` | %s |\n",
+				a.ID, a.Role, a.Status, scope, curTask, a.LastHeartbeat.Format("15:04:05")))
 		}
 		b.WriteString("\n")
 	}

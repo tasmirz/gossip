@@ -1,6 +1,6 @@
 {
   "name": "gossip_list_agents",
-  "description": "List all registered agents, their current status, roles, tasks, and last heartbeats",
+  "description": "List all registered agents, their current status, roles, tasks, last heartbeats, and mandatory remote tunnel/agent disclosure",
   "parameters": {
     "properties": {},
     "required": [],

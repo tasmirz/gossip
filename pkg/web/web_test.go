@@ -256,4 +256,80 @@ func TestWebDashboardEndpoints(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("Expected 200 for POST /api/messages, got %d: %s", rec.Code, rec.Body.String())
 	}
+
+	// 14. Test POST /api/tunnel (Generate FRP TOML)
+	genPayload := map[string]interface{}{
+		"action":        "generate",
+		"format":        "toml",
+		"server_addr":   "tunnel.mesh.io",
+		"server_port":   7000,
+		"auth_token":    "secret-frp-token",
+		"custom_domain": "gossip.mesh.io",
+		"http_user":     "meshadmin",
+		"http_password": "ProtectedPassword123",
+	}
+	data, _ = json.Marshal(genPayload)
+	req = httptest.NewRequest(http.MethodPost, "/api/tunnel", bytes.NewBuffer(data))
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Expected 200 for POST /api/tunnel, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var genRes struct {
+		Config string `json:"config"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &genRes)
+	if !bytes.Contains([]byte(genRes.Config), []byte(`httpUser = "meshadmin"`)) {
+		t.Fatalf("Generated FRP TOML missing httpUser: %s", genRes.Config)
+	}
+
+	// 15. Test GET /api/tunnel/disclosure
+	req = httptest.NewRequest(http.MethodGet, "/api/tunnel/disclosure", nil)
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Expected 200 for GET /api/tunnel/disclosure, got %d", rec.Code)
+	}
+
+	// 16. Test POST /api/vault/stage (Stage secret file)
+	dummySecretPath := tmpDir + "/.env.secret"
+	_ = os.WriteFile(dummySecretPath, []byte("API_KEY=sk_test_12345"), 0600)
+	vaultPayload := map[string]interface{}{
+		"source_path": dummySecretPath,
+		"description": "Test environment key",
+	}
+	data, _ = json.Marshal(vaultPayload)
+	req = httptest.NewRequest(http.MethodPost, "/api/vault/stage", bytes.NewBuffer(data))
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Expected 200 for POST /api/vault/stage, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// 17. Test GET /api/vault/list
+	req = httptest.NewRequest(http.MethodGet, "/api/vault/list", nil)
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Expected 200 for GET /api/vault/list, got %d", rec.Code)
+	}
+
+	// 18. Test BasicAuth Protection
+	server.SetAuth("admin", "correctpassword")
+	// Without auth: expect 401
+	req = httptest.NewRequest(http.MethodGet, "/api/status", nil)
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("Expected 401 Unauthorized when BasicAuth enabled, got %d", rec.Code)
+	}
+
+	// With correct auth: expect 200
+	req = httptest.NewRequest(http.MethodGet, "/api/status", nil)
+	req.SetBasicAuth("admin", "correctpassword")
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Expected 200 with correct BasicAuth, got %d", rec.Code)
+	}
 }

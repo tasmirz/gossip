@@ -191,12 +191,18 @@ All state is persisted under `.local/gossip/` inside the current project root:
 
 ---
 
-## 6. Complete MCP Tools Reference (47 Tools)
+## 6. Complete MCP Tools Reference (56 Tools)
+
+### Bootstrap, Self-Introduction & Mesh Status
+- `gossip_setup` (aliases: `gsp_setup`, `gossip_setup_mesh`): Zero-friction project bootstrap initializing `.local/gossip`, roles, graph, guardrails, and setting up initial goal.
+- `gossip_introduce_agent` (aliases: `gossip_introduce`, `gsp_introduce`): First-class agent introduction and registration into the mesh. Sends a welcome briefing with current tasks, peers, and broadcasts an introduction announcement across the mesh.
+- `gossip_introduce_remote_peer` (aliases: `gossip_handshake`, `gsp_introduce_peer`): Register or handshake with a remote agent peer operating through an FRP/LAN tunnel or federated mesh node.
+- `gossip_status` (aliases: `gsp_status`, `gossip_get_status`): Full multi-agent system status, active tasks, and mandatory Remote Agent & Tunnel Disclosure status.
 
 ### Agent & Role Management
 - `gossip_register_agent`: Join the active agent mesh (`agent_id`, `role`, `name`, `capabilities`).
 - `gossip_reidentify_agent` (aliases: `gsp_reidentify`, `gossip_resume_session`): Re-identify or resume an agent session across restarts or new context sessions, returning an instant catch-up briefing of in-progress tasks, unread inbox messages, active SOP stages, and personal to-dos.
-- `gossip_list_agents`: View online/idle agents and their current tasks.
+- `gossip_list_agents`: View online/idle agents, their scopes (`local` vs `remote:tunnel` / `remote:lan`), and current tasks.
 - `gossip_heartbeat`: Send heartbeat and update active status (`agent_id`, `current_task_id`, `status`).
 - `gossip_get_role_definition`: Read system prompt and directives for a role (`role_id`).
 - `gossip_list_roles`: List all specialist roles loaded from JSON.
@@ -263,10 +269,19 @@ All state is persisted under `.local/gossip/` inside the current project root:
 - `gossip_redteam_generate_audit_report`: Generate executive security audit report (`AUDIT_REPORT.md`).
 - `gossip_list_deliberations`: Query active debates, reviews, or probes (`type`, `status`).
 
-### Continuous Event Polling & State Synchronization
+### Continuous Event Polling, State Sync & Cron Checking
 - `gossip_poll_events` (alias `gsp_poll`, `gossip_sync`): Continuously poll or long-poll for incoming messages, unblocked ready tasks, debate rounds, SOP phase gates, and peer heartbeats with configurable timeout (`since_time`, `timeout_seconds`, `event_types`, `auto_heartbeat`).
   - Returns `server_time`, `has_updates`, `events`, `unread_messages_count`, `ready_tasks_count`, and `active_agents_count`.
 - `gossip_log_event`: Append an explicit custom milestone or event to the shared event ledger (`events.jsonl`).
+- `gossip_setup_cron` (alias `gsp_setup_cron`): Configure periodic cron check interval (e.g. `*/5 * * * *`, `@hourly`, `@every 30s`).
+- `gossip_cron_check` (alias `gsp_cron_check`): Run a single periodic cron pulse checking for unread inbox messages, ready tasks, stale heartbeats, and remote peer disclosures.
+
+### Protected FRP Tunneling & Federated Mesh Across Decoupled Worktrees
+- `gossip_setup_tunnel` (alias `gsp_setup_tunnel`): Configure FRP reverse-proxy tunnel for secure remote or local LAN access with mandatory HTTP basic auth protection and secret masking.
+- `gossip_remote_query` (alias `gsp_remote_query`): Query remote agent nodes across FRP/LAN tunnel without sharing filesystem paths across decoupled worktrees (`agent <-> mcp <-> frp/local <mcp> -> agent`).
+
+### Zero-Exposure Secret Vault
+- `gossip_secret_transfer` (alias `gsp_vault_transfer`): Securely stage and transfer secret files (e.g. `.env`, tokens, certs) between mesh nodes using AES-256-GCM encryption without exposing secret contents to the agent context or logs.
 
 ### Mixture of Experts (MoE) Councils & Subagent Parallelism
 - `gossip_moe_convene_panel` (alias `gsp_moe_convene`): Convene an MoE council with automated router gating and specialist expert summoning (`title`, `query`, `domain`, `roles`, `max_parallel`).
