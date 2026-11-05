@@ -23,12 +23,15 @@
   ],
   "mcpServers": {
     "gossip": {
-      "command": "./bin/gossip-mcp",
+      "command": "/home/user/Projects/gossip/bin/gossip-mcp",
       "args": [
-        "serve"
+        "serve",
+        "--dir",
+        "/home/user/Projects/gossip/.local/gossip"
       ],
+      "cwd": "/home/user/Projects/gossip",
       "env": {
-        "GOSSIP_DIR": ".local/gossip"
+        "GOSSIP_DIR": "/home/user/Projects/gossip/.local/gossip"
       }
     }
   },
