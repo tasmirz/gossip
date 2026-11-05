@@ -1,12 +1,15 @@
 {
   "mcpServers": {
     "gossip": {
-      "command": "./bin/gossip-mcp",
+      "command": "/absolute/path/to/gossip",
       "args": [
-        "serve"
+        "serve",
+        "--dir",
+        "/private/path/gossip"
       ],
+      "cwd": "/path/to/gossip",
       "env": {
-        "GOSSIP_DIR": ".local/gossip"
+        "GOSSIP_DIR": "/private/path/gossip"
       }
     }
   }

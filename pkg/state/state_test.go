@@ -126,3 +126,23 @@ func TestStateStoreLifecycle(t *testing.T) {
 		t.Fatalf("Expected .lock file to exist: %v", err)
 	}
 }
+
+func TestNewStoreResolution(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "gossip-store-res-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Test GOSSIP_DIR env variable
+	os.Setenv("GOSSIP_DIR", tmpDir)
+	defer os.Unsetenv("GOSSIP_DIR")
+
+	s, err := state.NewStore("")
+	if err != nil {
+		t.Fatalf("NewStore with GOSSIP_DIR failed: %v", err)
+	}
+	if s.Dir() != tmpDir {
+		t.Fatalf("Expected dir %s, got %s", tmpDir, s.Dir())
+	}
+}

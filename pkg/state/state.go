@@ -65,14 +65,43 @@ type ProjectState struct {
 }
 
 // NewStore initializes a store at the specified directory (or default .local/gossip).
+// It checks customDir, then GOSSIP_DIR env, then walks up from CWD for .local/gossip.
 func NewStore(customDir string) (*Store, error) {
 	dir := customDir
 	if dir == "" {
-		wd, err := os.Getwd()
-		if err != nil {
-			dir = DefaultDirName
+		if envDir := os.Getenv("GOSSIP_DIR"); envDir != "" {
+			dir = envDir
+		}
+	}
+
+	if dir == "" {
+		// Walk up from current working directory to find an existing .local/gossip or repo root
+		if wd, err := os.Getwd(); err == nil {
+			curr := wd
+			for {
+				candidate := filepath.Join(curr, DefaultDirName)
+				if fi, err := os.Stat(candidate); err == nil && fi.IsDir() {
+					dir = candidate
+					break
+				}
+				parent := filepath.Dir(curr)
+				if parent == curr {
+					break
+				}
+				curr = parent
+			}
+			if dir == "" {
+				dir = filepath.Join(wd, DefaultDirName)
+			}
 		} else {
-			dir = filepath.Join(wd, DefaultDirName)
+			dir = DefaultDirName
+		}
+	}
+
+	// Always resolve relative paths to absolute paths
+	if !filepath.IsAbs(dir) {
+		if absDir, err := filepath.Abs(dir); err == nil {
+			dir = absDir
 		}
 	}
 
