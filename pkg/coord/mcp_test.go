@@ -120,6 +120,41 @@ func TestMCPBoundResearchHandoff(t *testing.T) {
 	}
 }
 
+func TestMCPTaskPlanningRequiresReviewTypeBeforeCreation(t *testing.T) {
+	store, _, project, owner, _ := setup(t)
+	tool := coord.MCPServer(store, project.ID, owner.Token).GetTool("gossip_task")
+	if tool == nil {
+		t.Fatal("task planning tool missing")
+	}
+	result, err := tool.Handler(context.Background(), mcp.CallToolRequest{Params: mcp.CallToolParams{Name: "gossip_task", Arguments: map[string]any{
+		"operation": "create", "request_id": "planning-without-review-type", "plan_revision": 1,
+		"title": "Review project access", "description": "Review project-scoped access", "kind": "review",
+	}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.IsError || !strings.Contains(result.Content[0].(mcp.TextContent).Text, "ask the user to choose full_code (full source review) or diagram_report (Markdown with UML class and sequence diagrams)") {
+		t.Fatalf("missing review type did not prompt for the two planning choices: %+v", result)
+	}
+	tasks, err := store.ListTasks(context.Background(), project.ID, owner.Token, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tasks) != 0 {
+		t.Fatalf("task was created before the review type was selected: %+v", tasks)
+	}
+	result, err = tool.Handler(context.Background(), mcp.CallToolRequest{Params: mcp.CallToolParams{Name: "gossip_task", Arguments: map[string]any{
+		"operation": "create", "request_id": "diagram-review-missing-formats", "plan_revision": 1,
+		"title": "Review project access", "description": "Return UML class and sequence diagrams", "kind": "review", "review_type": "diagram_report",
+	}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.IsError || !strings.Contains(result.Content[0].(mcp.TextContent).Text, "diagram_report requires markdown, mermaid_sequence, and mermaid_class formats") {
+		t.Fatalf("diagram review was accepted without both required UML diagrams: %+v", result)
+	}
+}
+
 func TestProjectBootstrapMCPCreatesInferredWorkspaceAndPrivateCredential(t *testing.T) {
 	store, _, _, _, _ := setup(t)
 	root := filepath.Join(t.TempDir(), "local-checkout")
