@@ -1,6 +1,7 @@
 package vault
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -95,6 +96,17 @@ func TestStageSecretFile(t *testing.T) {
 	}
 	if len(list) != 1 || list[0].Filename != ".env.production" {
 		t.Errorf("unexpected staged file list: %+v", list)
+	}
+}
+
+func TestRemoteSecretTransferFailsClosedWithoutReadingSource(t *testing.T) {
+	manager, err := NewManager(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = manager.TransferSecretToRemote(filepath.Join(t.TempDir(), "missing-secret"), "http://127.0.0.1:1", "test-passphrase", "secret.txt")
+	if !errors.Is(err, ErrRemoteSecretTransferDisabled) {
+		t.Fatalf("legacy transfer should be disabled before reading or sending a secret; got %v", err)
 	}
 }
 

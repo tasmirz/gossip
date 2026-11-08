@@ -24,7 +24,6 @@ import (
 	"github.com/tasmirz/gossip/pkg/state"
 	"github.com/tasmirz/gossip/pkg/tasks"
 	"github.com/tasmirz/gossip/pkg/tunnel"
-	"github.com/tasmirz/gossip/pkg/vault"
 )
 
 // Server encapsulates the Gossip MCP server and underlying subsystems.
@@ -40,11 +39,30 @@ type Server struct {
 	events        *events.Manager
 	moe           *moe.Manager
 	roleProvider  roles.Provider
-	vault         *vault.Manager
+	identity      AgentIdentity
+}
+
+// AgentIdentity is trusted configuration for one legacy stdio adapter. Tools
+// may accept identity fields for backwards compatibility, but cannot override
+// this identity when the adapter is constructed with NewServerForAgent.
+type AgentIdentity struct {
+	ID   string
+	Role string
+	Name string
 }
 
 // NewServer instantiates the MCP server and registers all tools (SOLID Dependency Inversion).
 func NewServer(store *state.Store, roleProv roles.Provider) *Server {
+	return newServer(store, roleProv, AgentIdentity{})
+}
+
+// NewServerForAgent binds legacy stdio tool actors to their MCP process
+// configuration instead of model-supplied IDs and roles.
+func NewServerForAgent(store *state.Store, roleProv roles.Provider, identity AgentIdentity) *Server {
+	return newServer(store, roleProv, identity)
+}
+
+func newServer(store *state.Store, roleProv roles.Provider, identity AgentIdentity) *Server {
 	if roleProv == nil {
 		var err error
 		roleProv, err = roles.NewService(store.Dir(), "")
@@ -59,7 +77,6 @@ func NewServer(store *state.Store, roleProv roles.Provider) *Server {
 	sopMgr := sop.NewManager(store)
 	evtMgr := events.NewManager(store, msgMgr, taskMgr, delibMgr, sopMgr)
 	moeMgr := moe.NewManager(store, roleProv)
-	vaultMgr, _ := vault.NewManager(store.Dir())
 
 	s := &Server{
 		store:         store,
@@ -72,7 +89,7 @@ func NewServer(store *state.Store, roleProv roles.Provider) *Server {
 		events:        evtMgr,
 		moe:           moeMgr,
 		roleProvider:  roleProv,
-		vault:         vaultMgr,
+		identity:      identity,
 	}
 
 	mcpSrv := server.NewMCPServer(
@@ -86,6 +103,57 @@ func NewServer(store *state.Store, roleProv roles.Provider) *Server {
 	s.registerTools()
 	s.registerPrompts()
 	return s
+}
+
+func (s *Server) actorID(args map[string]any) string {
+	if s.identity.ID != "" {
+		return s.identity.ID
+	}
+	return getString(args, "agent_id")
+}
+
+func (s *Server) actorField(args map[string]any, field string) string {
+	if s.identity.ID != "" {
+		return s.identity.ID
+	}
+	return getString(args, field)
+}
+
+func (s *Server) actorRole(args map[string]any) string {
+	if s.identity.ID != "" {
+		return s.identity.Role
+	}
+	return getString(args, "role")
+}
+
+func (s *Server) actorRoleField(args map[string]any, field string) string {
+	if s.identity.ID != "" {
+		return s.identity.Role
+	}
+	return getString(args, field)
+}
+
+func (s *Server) actorName(args map[string]any) string {
+	if s.identity.ID != "" {
+		if s.identity.Name != "" {
+			return s.identity.Name
+		}
+		return s.identity.ID
+	}
+	return getString(args, "name")
+}
+
+func (s *Server) requireActorRole(allowed ...string) error {
+	if s.identity.ID == "" {
+		return nil // Legacy embedded callers retain the historical trusted-local contract.
+	}
+	role := strings.ToLower(strings.TrimSpace(s.identity.Role))
+	for _, candidate := range allowed {
+		if role == candidate {
+			return nil
+		}
+	}
+	return fmt.Errorf("configured MCP role %q is not allowed to perform this action", role)
 }
 
 // ServeStdio starts listening for JSON-RPC 2.0 messages over standard I/O.
@@ -236,16 +304,16 @@ func (s *Server) registerRoleTools() {
 	// gossip_register_agent
 	s.mcpServer.AddTool(mcp.NewTool("gossip_register_agent",
 		mcp.WithDescription("Register an agent session in the gossip mesh with its designated role and capabilities"),
-		mcp.WithString("agent_id", mcp.Required(), mcp.Description("Unique identifier for this agent session (e.g. 'orch-1', 'neteng-1')")),
-		mcp.WithString("role", mcp.Required(), mcp.Description("Role ID (orchestrator, worker, network_engineer, math_expert, systems_architect, security_specialist, qa_engineer, researcher)")),
+		mcp.WithString("agent_id", mcp.Description("Unique identifier for this agent session (e.g. 'orch-1', 'neteng-1')")),
+		mcp.WithString("role", mcp.Description("Role ID (orchestrator, worker, network_engineer, math_expert, systems_architect, security_specialist, qa_engineer, researcher)")),
 		mcp.WithString("name", mcp.Description("Human-readable agent display name")),
 		mcp.WithArray("capabilities", mcp.Description("List of capability tags or skills")),
 		mcp.WithString("current_task_id", mcp.Description("Task ID currently being worked on")),
 	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		args := getArgsMap(req)
-		agentID := getString(args, "agent_id")
-		role := getString(args, "role")
-		name := getString(args, "name")
+		agentID := s.actorID(args)
+		role := s.actorRole(args)
+		name := s.actorName(args)
 		if name == "" {
 			name = agentID
 		}
@@ -291,12 +359,12 @@ func (s *Server) registerRoleTools() {
 	// gossip_heartbeat
 	s.mcpServer.AddTool(mcp.NewTool("gossip_heartbeat",
 		mcp.WithDescription("Send a heartbeat to keep agent session active and update current task or status"),
-		mcp.WithString("agent_id", mcp.Required(), mcp.Description("Unique identifier for this agent")),
+		mcp.WithString("agent_id", mcp.Description("Unique identifier for this agent")),
 		mcp.WithString("current_task_id", mcp.Description("Current task ID being worked on")),
 		mcp.WithString("status", mcp.Description("Session status: 'active', 'idle', or 'offline'")),
 	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		args := getArgsMap(req)
-		agentID := getString(args, "agent_id")
+		agentID := s.actorID(args)
 		currentTaskID := getString(args, "current_task_id")
 		status := getString(args, "status")
 
@@ -314,7 +382,7 @@ func (s *Server) registerRoleTools() {
 	// gossip_reidentify_agent (alias: gossip_resume_session, gsp_reidentify)
 	reidentifyTool := mcp.NewTool("gossip_reidentify_agent",
 		mcp.WithDescription("Re-identify or resume an agent session across restarts or new context sessions, returning an instant catch-up briefing of assigned tasks, unread inbox messages, active SOP stages, and personal to-dos"),
-		mcp.WithString("agent_id", mcp.Required(), mcp.Description("Unique identifier of the agent re-identifying")),
+		mcp.WithString("agent_id", mcp.Description("Unique identifier of the agent re-identifying")),
 		mcp.WithString("role", mcp.Description("Optional role override (if omitted, existing role is retained)")),
 		mcp.WithString("session_id", mcp.Description("Optional external session or conversation ID")),
 		mcp.WithString("status", mcp.Description("Optional status (default: 'active')")),
@@ -322,11 +390,11 @@ func (s *Server) registerRoleTools() {
 	)
 	reidentifyHandler := func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		args := getArgsMap(req)
-		agentID := getString(args, "agent_id")
+		agentID := s.actorID(args)
 		if agentID == "" {
 			return mcp.NewToolResultError("agent_id is required"), nil
 		}
-		role := getString(args, "role")
+		role := s.actorRole(args)
 		sessionID := getString(args, "session_id")
 		status := getString(args, "status")
 		if status == "" {
@@ -463,43 +531,36 @@ func (s *Server) registerRoleTools() {
 	// gossip_introduce_agent (aliases: gossip_introduce, gsp_introduce)
 	introduceTool := mcp.NewTool("gossip_introduce_agent",
 		mcp.WithDescription("Introduce an agent to the Gossip mesh: registers session, broadcasts an announcement to all peers, and returns an instant onboarding briefing (goals, pending tasks, active SOP gates, caution rules, and disclosed peers)"),
-		mcp.WithString("agent_id", mcp.Required(), mcp.Description("Unique identifier for this agent (e.g. 'lead-orch', 'worker-net-1')")),
-		mcp.WithString("role", mcp.Required(), mcp.Description("Agent role (orchestrator, worker, network_engineer, math_expert, systems_architect, security_specialist, qa_engineer, researcher, red_team, critic)")),
+		mcp.WithString("agent_id", mcp.Description("Unique identifier for this agent (e.g. 'lead-orch', 'worker-net-1')")),
+		mcp.WithString("role", mcp.Description("Agent role (orchestrator, worker, network_engineer, math_expert, systems_architect, security_specialist, qa_engineer, researcher, red_team, critic)")),
 		mcp.WithString("name", mcp.Description("Human-readable agent display name")),
 		mcp.WithArray("capabilities", mcp.Description("List of capability tags or skills")),
 		mcp.WithString("greeting", mcp.Description("Optional custom greeting or introduction message broadcast to all peers")),
 		mcp.WithString("current_task_id", mcp.Description("Task ID currently being worked on")),
-		mcp.WithString("remote_endpoint", mcp.Description("Optional remote tunnel or LAN endpoint if agent is running remotely")),
 	)
 	introduceHandler := func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		args := getArgsMap(req)
-		agentID := getString(args, "agent_id")
-		role := getString(args, "role")
-		name := getString(args, "name")
+		agentID := s.actorID(args)
+		role := s.actorRole(args)
+		name := s.actorName(args)
 		if name == "" {
 			name = agentID
 		}
 		caps := getStringSlice(args, "capabilities")
 		greeting := getString(args, "greeting")
 		currentTaskID := getString(args, "current_task_id")
-		remoteEndpoint := getString(args, "remote_endpoint")
 
 		if agentID == "" || role == "" {
 			return mcp.NewToolResultError("agent_id and role are required"), nil
 		}
 
 		session := state.AgentSession{
-			ID:             agentID,
-			Name:           name,
-			Role:           role,
-			Capabilities:   caps,
-			CurrentTaskID:  currentTaskID,
-			Status:         "active",
-			IsRemote:       remoteEndpoint != "",
-			RemoteEndpoint: remoteEndpoint,
-		}
-		if remoteEndpoint != "" {
-			session.EndpointType = "frp"
+			ID:            agentID,
+			Name:          name,
+			Role:          role,
+			Capabilities:  caps,
+			CurrentTaskID: currentTaskID,
+			Status:        "active",
 		}
 
 		if err := s.store.RegisterAgent(session); err != nil {
@@ -589,14 +650,11 @@ func (s *Server) registerRoleTools() {
 
 	// gossip_setup (aliases: gossip_setup_mesh, gsp_setup)
 	setupTool := mcp.NewTool("gossip_setup",
-		mcp.WithDescription("Bootstrap and setup the Gossip collaboration mesh in the current workspace: initializes state, goals, task DAG, knowledge graph, guardrails, and optional FRP tunnel and cron checking"),
+		mcp.WithDescription("Bootstrap local legacy Gossip state, goals, task DAG, knowledge graph, guardrails, and optional cron checking. Remote project collaboration uses the project-scoped coordination service."),
 		mcp.WithString("project_name", mcp.Description("Name of the project or workspace")),
 		mcp.WithArray("goals", mcp.Description("Initial high-level strategic goals or milestones")),
 		mcp.WithArray("tech_stack", mcp.Description("Primary languages and frameworks (e.g. ['Go', 'TypeScript', 'PostgreSQL'])")),
-		mcp.WithBoolean("configure_tunnel", mcp.Description("Whether to initialize a protected FRP reverse-proxy tunnel")),
-		mcp.WithString("tunnel_server", mcp.Description("FRP server address (e.g. 'tunnel.domain.com')")),
-		mcp.WithString("auth_user", mcp.Description("HTTP Basic Auth username for protected access")),
-		mcp.WithString("auth_pass", mcp.Description("HTTP Basic Auth password for protected access (min 6 chars)")),
+		mcp.WithBoolean("configure_tunnel", mcp.Description("Deprecated: legacy HTTP dashboard tunneling is disabled; use the mutual-TLS coordination service over an FRP TCP proxy")),
 		mcp.WithBoolean("setup_cron", mcp.Description("Whether to initialize cron periodic checking")),
 	)
 	setupHandler := func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -609,10 +667,10 @@ func (s *Server) registerRoleTools() {
 		rawGoals := getStringSlice(args, "goals")
 		techStack := getStringSlice(args, "tech_stack")
 		cfgTunnel := getBool(args, "configure_tunnel")
-		tunServer := getString(args, "tunnel_server")
-		authUser := getString(args, "auth_user")
-		authPass := getString(args, "auth_pass")
 		setupCron := getBool(args, "setup_cron")
+		if cfgTunnel {
+			return mcp.NewToolResultError("legacy HTTP dashboard tunneling is disabled; use coord-serve with mutual TLS and an FRP TCP proxy"), nil
+		}
 
 		// 1. Project state & goals
 		st, _ := s.store.LoadProjectState()
@@ -653,31 +711,6 @@ func (s *Server) registerRoleTools() {
 			_ = s.guardrails.Save(gr)
 		}
 
-		// 6. Optional Tunnel
-		var tunNotice string
-		if cfgTunnel && tunServer != "" {
-			if authUser != "" && authPass != "" {
-				_ = tunnel.ValidateCredentials(authUser, authPass)
-			}
-			tState := tunnel.TunnelState{
-				Active:         true,
-				Type:           "frp",
-				ServerAddr:     tunServer,
-				RemoteEndpoint: fmt.Sprintf("frp://%s:7000", tunServer),
-				LocalIP:        "127.0.0.1",
-				LocalPort:      8080,
-				AuthEnabled:    authUser != "" && authPass != "",
-				AuthUser:       authUser,
-				AuthPassMasked: tunnel.MaskSecret(authPass),
-				StartedAt:      time.Now(),
-			}
-			_ = tunnel.SaveTunnelState(s.store.Dir(), tState)
-			cfg := tunnel.DefaultClientConfig(8080, authUser, authPass)
-			cfg.ServerAddr = tunServer
-			_ = os.WriteFile(filepath.Join(s.store.Dir(), "frpc.toml"), []byte(tunnel.GenerateFRPCTOML(cfg)), 0600)
-			tunNotice = fmt.Sprintf("FRP tunnel configured for %s (Auth: %s)", tunServer, tState.AuthPassMasked)
-		}
-
 		// 7. Optional Cron
 		if setupCron {
 			res, _ := cron.RunCheck(s.store, "setup-check")
@@ -693,9 +726,6 @@ func (s *Server) registerRoleTools() {
 		b.WriteString(fmt.Sprintf("- **Strategic Goals**: %d initial goals configured\n", len(st.Goals)))
 		b.WriteString("- **Subsystems Initialized**: Tasks DAG, Knowledge Graph, JSON Roles, Guardrails, Vault\n")
 		b.WriteString("- **Kanban Board**: Rendered to `BOARD.md`\n")
-		if tunNotice != "" {
-			b.WriteString(fmt.Sprintf("- **Tunnel**: %s\n", tunNotice))
-		}
 		b.WriteString("\nMesh is ready for multi-agent collaboration! Agents can now call `gossip_introduce_agent` to join.")
 		return mcp.NewToolResultText(b.String()), nil
 	}
@@ -706,62 +736,6 @@ func (s *Server) registerRoleTools() {
 	setupAlias2 := setupTool
 	setupAlias2.Name = "gsp_setup"
 	s.mcpServer.AddTool(setupAlias2, setupHandler)
-
-	// gossip_introduce_remote_peer (alias: gossip_handshake, gsp_introduce_peer)
-	remotePeerTool := mcp.NewTool("gossip_introduce_remote_peer",
-		mcp.WithDescription("Introduce and register a remote peer agent across the FRP tunnel or LAN into the local mesh, enabling multi-worktree collaboration and remote queries"),
-		mcp.WithString("peer_agent_id", mcp.Required(), mcp.Description("Remote peer agent ID")),
-		mcp.WithString("peer_role", mcp.Required(), mcp.Description("Remote peer role")),
-		mcp.WithString("peer_endpoint", mcp.Required(), mcp.Description("Remote endpoint URL (e.g. 'http://peer.remote:8080' or 'frp://tunnel:7000')")),
-		mcp.WithString("peer_worktree", mcp.Description("Remote peer's worktree path or repository name")),
-		mcp.WithArray("peer_capabilities", mcp.Description("Capabilities offered by remote peer")),
-	)
-	remotePeerHandler := func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		args := getArgsMap(req)
-		peerID := getString(args, "peer_agent_id")
-		peerRole := getString(args, "peer_role")
-		peerEp := getString(args, "peer_endpoint")
-		peerWorktree := getString(args, "peer_worktree")
-		peerCaps := getStringSlice(args, "peer_capabilities")
-
-		if peerID == "" || peerRole == "" || peerEp == "" {
-			return mcp.NewToolResultError("peer_agent_id, peer_role, and peer_endpoint are required"), nil
-		}
-
-		session := state.AgentSession{
-			ID:             peerID,
-			Name:           peerID,
-			Role:           peerRole,
-			Capabilities:   peerCaps,
-			Status:         "active",
-			IsRemote:       true,
-			EndpointType:   "frp",
-			RemoteEndpoint: peerEp,
-		}
-		if err := s.store.RegisterAgent(session); err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("failed to register remote peer: %v", err)), nil
-		}
-
-		// Announcement
-		_, _ = s.messages.SendMessage(peerID, peerRole, "broadcast", "", "Remote Peer Connected",
-			fmt.Sprintf("Remote peer '%s' (%s) connected from %s (Worktree: %s)", peerID, peerRole, peerEp, peerWorktree))
-
-		disc := tunnel.ComputeDisclosure(s.store)
-		return toJSONText(map[string]interface{}{
-			"status":            "connected",
-			"peer_id":           peerID,
-			"peer_role":         peerRole,
-			"endpoint":          peerEp,
-			"remote_disclosure": disc,
-		})
-	}
-	s.mcpServer.AddTool(remotePeerTool, remotePeerHandler)
-	handshakeAlias := remotePeerTool
-	handshakeAlias.Name = "gossip_handshake"
-	s.mcpServer.AddTool(handshakeAlias, remotePeerHandler)
-	handshakeAlias2 := remotePeerTool
-	handshakeAlias2.Name = "gsp_introduce_peer"
-	s.mcpServer.AddTool(handshakeAlias2, remotePeerHandler)
 
 	// gossip_status (alias: gsp_status, gossip_get_status)
 	statusTool := mcp.NewTool("gossip_status",
@@ -819,105 +793,6 @@ func (s *Server) registerRoleTools() {
 	statusAlias2.Name = "gossip_get_status"
 	s.mcpServer.AddTool(statusAlias2, statusHandler)
 
-	// gossip_setup_tunnel (alias: gsp_setup_tunnel)
-	setupTunnelTool := mcp.NewTool("gossip_setup_tunnel",
-		mcp.WithDescription("Configure, generate, or manage FRP reverse-proxy tunnels for WAN/LAN remote access with mandatory HTTP Basic Auth protection"),
-		mcp.WithString("server_addr", mcp.Required(), mcp.Description("FRP server hostname or IP")),
-		mcp.WithNumber("server_port", mcp.Description("FRP server bind port (default: 7000)")),
-		mcp.WithString("auth_token", mcp.Description("FRP server authentication token")),
-		mcp.WithString("custom_domain", mcp.Description("Custom domain or subdomain for HTTP proxying")),
-		mcp.WithString("http_user", mcp.Description("Mandatory HTTP Basic Auth username")),
-		mcp.WithString("http_pass", mcp.Description("Mandatory HTTP Basic Auth password (min 6 characters)")),
-		mcp.WithString("action", mcp.Description("Action: 'activate' (default), 'generate', or 'deactivate'")),
-		mcp.WithString("format", mcp.Description("Format for 'generate': 'toml' (default), 'ini', 'server_toml', 'server_ini'")),
-	)
-	setupTunnelHandler := func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		args := getArgsMap(req)
-		serverAddr := getString(args, "server_addr")
-		serverPort := getInt(args, "server_port", 7000)
-		token := getString(args, "auth_token")
-		domain := getString(args, "custom_domain")
-		user := getString(args, "http_user")
-		pass := getString(args, "http_pass")
-		action := getString(args, "action")
-		if action == "" {
-			action = "activate"
-		}
-		fmtType := getString(args, "format")
-		if fmtType == "" {
-			fmtType = "toml"
-		}
-
-		if action == "generate" {
-			cfg := tunnel.DefaultClientConfig(8080, user, pass)
-			cfg.ServerAddr = serverAddr
-			cfg.ServerPort = serverPort
-			cfg.AuthToken = token
-			if domain != "" {
-				cfg.CustomDomains = []string{domain}
-			}
-			var out string
-			switch fmtType {
-			case "ini":
-				out = tunnel.GenerateFRPCINI(cfg)
-			case "server_toml":
-				out = tunnel.GenerateFRPSTOML(tunnel.FRPServerConfig{BindPort: serverPort, AuthToken: token, VhostHTTPPort: 80})
-			default:
-				out = tunnel.GenerateFRPCTOML(cfg)
-			}
-			return mcp.NewToolResultText(out), nil
-		}
-
-		if action == "deactivate" {
-			_ = tunnel.ClearTunnelState(s.store.Dir())
-			return mcp.NewToolResultText("Tunnel deactivated. Reverted to local isolation."), nil
-		}
-
-		// Activate
-		if user != "" && pass != "" {
-			if err := tunnel.ValidateCredentials(user, pass); err != nil {
-				return mcp.NewToolResultError(fmt.Sprintf("invalid credentials: %v", err)), nil
-			}
-		}
-		ep := domain
-		if ep == "" {
-			ep = fmt.Sprintf("frp://%s:%d", serverAddr, serverPort)
-		}
-		tState := tunnel.TunnelState{
-			Active:         true,
-			Type:           "frp",
-			ServerAddr:     serverAddr,
-			RemoteEndpoint: ep,
-			LocalIP:        "127.0.0.1",
-			LocalPort:      8080,
-			AuthEnabled:    user != "" && pass != "",
-			AuthUser:       user,
-			AuthPassMasked: tunnel.MaskSecret(pass),
-			StartedAt:      time.Now(),
-		}
-		if err := tunnel.SaveTunnelState(s.store.Dir(), tState); err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("failed to save tunnel: %v", err)), nil
-		}
-
-		cfg := tunnel.DefaultClientConfig(8080, user, pass)
-		cfg.ServerAddr = serverAddr
-		cfg.ServerPort = serverPort
-		cfg.AuthToken = token
-		if domain != "" {
-			cfg.CustomDomains = []string{domain}
-		}
-		_ = os.WriteFile(filepath.Join(s.store.Dir(), "frpc.toml"), []byte(tunnel.GenerateFRPCTOML(cfg)), 0600)
-
-		return toJSONText(map[string]interface{}{
-			"status": "activated",
-			"tunnel": tState,
-		})
-	}
-	s.mcpServer.AddTool(setupTunnelTool, setupTunnelHandler)
-	tunAlias := setupTunnelTool
-	tunAlias.Name = "gsp_setup_tunnel"
-	s.mcpServer.AddTool(tunAlias, setupTunnelHandler)
-
 	// gossip_setup_cron (alias: gsp_setup_cron)
 	setupCronTool := mcp.NewTool("gossip_setup_cron",
 		mcp.WithDescription("Configure periodic health check schedule and execute initial check cycle"),
@@ -927,7 +802,7 @@ func (s *Server) registerRoleTools() {
 	setupCronHandler := func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		args := getArgsMap(req)
 		interval := getString(args, "interval")
-		agentID := getString(args, "agent_id")
+		agentID := s.actorID(args)
 		dur, err := cron.ParseInterval(interval)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("invalid interval: %v", err)), nil
@@ -984,7 +859,7 @@ func (s *Server) registerRoleTools() {
 		args := getArgsMap(req)
 		id := getString(args, "id")
 		title := getString(args, "title")
-		callerRole := getString(args, "caller_role")
+		callerRole := s.actorRoleField(args, "caller_role")
 		cat := getString(args, "category")
 		desc := getString(args, "description")
 		prompt := getString(args, "system_prompt")
@@ -1044,16 +919,16 @@ func (s *Server) registerMessageTools() {
 	// gossip_send_message
 	s.mcpServer.AddTool(mcp.NewTool("gossip_send_message",
 		mcp.WithDescription("Send a message to a specific agent, a role channel, or broadcast to all"),
-		mcp.WithString("from", mcp.Required(), mcp.Description("Sender identifier (e.g. 'orch-1', 'math-1')")),
-		mcp.WithString("role", mcp.Required(), mcp.Description("Sender's role (e.g. 'orchestrator', 'math_expert')")),
+		mcp.WithString("from", mcp.Description("Sender identifier (e.g. 'orch-1', 'math-1')")),
+		mcp.WithString("role", mcp.Description("Sender's role (e.g. 'orchestrator', 'math_expert')")),
 		mcp.WithString("to", mcp.Required(), mcp.Description("Target: 'agent:<id>', 'role:<role_id>', or 'all'")),
 		mcp.WithString("content", mcp.Required(), mcp.Description("Message payload")),
 		mcp.WithString("subject", mcp.Description("Short subject line")),
 		mcp.WithString("thread_id", mcp.Description("Optional thread identifier to group replies")),
 	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		args := getArgsMap(req)
-		from := getString(args, "from")
-		role := getString(args, "role")
+		from := s.actorField(args, "from")
+		role := s.actorRole(args)
 		to := getString(args, "to")
 		content := getString(args, "content")
 		subject := getString(args, "subject")
@@ -1078,14 +953,14 @@ func (s *Server) registerMessageTools() {
 	// gossip_broadcast_message
 	s.mcpServer.AddTool(mcp.NewTool("gossip_broadcast_message",
 		mcp.WithDescription("Broadcast a high-priority message or announcement to all active agents in the project"),
-		mcp.WithString("from", mcp.Required(), mcp.Description("Sender identifier")),
-		mcp.WithString("role", mcp.Required(), mcp.Description("Sender role")),
+		mcp.WithString("from", mcp.Description("Sender identifier")),
+		mcp.WithString("role", mcp.Description("Sender role")),
 		mcp.WithString("content", mcp.Required(), mcp.Description("Announcement content")),
 		mcp.WithString("subject", mcp.Description("Announcement subject")),
 	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		args := getArgsMap(req)
-		from := getString(args, "from")
-		role := getString(args, "role")
+		from := s.actorField(args, "from")
+		role := s.actorRole(args)
 		content := getString(args, "content")
 		subject := getString(args, "subject")
 
@@ -1108,15 +983,15 @@ func (s *Server) registerMessageTools() {
 	// gossip_read_inbox
 	s.mcpServer.AddTool(mcp.NewTool("gossip_read_inbox",
 		mcp.WithDescription("Read messages sent to this agent or this agent's role"),
-		mcp.WithString("agent_id", mcp.Required(), mcp.Description("Your agent ID")),
-		mcp.WithString("role", mcp.Required(), mcp.Description("Your agent role")),
+		mcp.WithString("agent_id", mcp.Description("Your agent ID")),
+		mcp.WithString("role", mcp.Description("Your agent role")),
 		mcp.WithBoolean("only_unread", mcp.Description("If true, return only unread messages (default: false)")),
 		mcp.WithString("thread_id", mcp.Description("Filter by conversation thread ID")),
 		mcp.WithInteger("limit", mcp.Description("Max messages to return (default: 20)")),
 	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		args := getArgsMap(req)
-		agentID := getString(args, "agent_id")
-		role := getString(args, "role")
+		agentID := s.actorID(args)
+		role := s.actorRole(args)
 		onlyUnread := getBool(args, "only_unread")
 		threadID := getString(args, "thread_id")
 		limit := getInt(args, "limit", 20)
@@ -1136,11 +1011,11 @@ func (s *Server) registerMessageTools() {
 	// gossip_mark_messages_read
 	s.mcpServer.AddTool(mcp.NewTool("gossip_mark_messages_read",
 		mcp.WithDescription("Mark messages as read for this agent"),
-		mcp.WithString("agent_id", mcp.Required(), mcp.Description("Agent ID marking the messages as read")),
+		mcp.WithString("agent_id", mcp.Description("Agent ID marking the messages as read")),
 		mcp.WithArray("message_ids", mcp.Required(), mcp.Description("List of message IDs to mark read")),
 	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		args := getArgsMap(req)
-		agentID := getString(args, "agent_id")
+		agentID := s.actorID(args)
 		msgIDs := getStringSlice(args, "message_ids")
 
 		if agentID == "" || len(msgIDs) == 0 {
@@ -1182,8 +1057,8 @@ func (s *Server) registerTaskTools() {
 		args := getArgsMap(req)
 		title := getString(args, "title")
 		desc := getString(args, "description")
-		callerRole := getString(args, "caller_role")
-		if callerRole == "" {
+		callerRole := s.actorRoleField(args, "caller_role")
+		if s.identity.ID == "" && callerRole == "" {
 			callerRole = getString(args, "role")
 		}
 		mTitles := getStringSlice(args, "milestone_titles")
@@ -1251,6 +1126,9 @@ func (s *Server) registerTaskTools() {
 		if title == "" || desc == "" {
 			return mcp.NewToolResultError("title and description are required"), nil
 		}
+		if err := s.requireActorRole("orchestrator", "admin"); err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
 
 		if err := security.ValidatePayloadSize(desc, security.MaxMessageSizeBytes); err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("task description too large: %v", err)), nil
@@ -1282,6 +1160,19 @@ func (s *Server) registerTaskTools() {
 
 		if taskID == "" {
 			return mcp.NewToolResultError("task_id is required"), nil
+		}
+		if s.identity.ID != "" {
+			privileged := strings.EqualFold(s.identity.Role, "orchestrator") || strings.EqualFold(s.identity.Role, "admin")
+			if !privileged {
+				existing, loadErr := s.tasks.GetTask(taskID)
+				if loadErr != nil {
+					return mcp.NewToolResultError(fmt.Sprintf("task error: %v", loadErr)), nil
+				}
+				ownsTask := existing.AssignedTo == s.identity.ID || (existing.AssignedTo == "" && assignedTo == s.identity.ID && status == tasks.StatusInProgress)
+				if !ownsTask || (assignedTo != "" && assignedTo != s.identity.ID) {
+					return mcp.NewToolResultError("configured MCP identity may update only its assigned task and cannot reassign work"), nil
+				}
+			}
 		}
 
 		if progressNote != "" {
@@ -1351,14 +1242,14 @@ func (s *Server) registerTaskTools() {
 	// gossip_personal_todo_add
 	s.mcpServer.AddTool(mcp.NewTool("gossip_personal_todo_add",
 		mcp.WithDescription("Add a personal checklist item or scratchpad task for an agent to track internal sub-steps"),
-		mcp.WithString("agent_id", mcp.Required(), mcp.Description("Agent ID")),
+		mcp.WithString("agent_id", mcp.Description("Agent ID")),
 		mcp.WithString("title", mcp.Required(), mcp.Description("Personal to-do item title")),
 		mcp.WithString("priority", mcp.Description("Priority: 'low', 'normal', 'high' (default: 'normal')")),
 		mcp.WithString("context_task_id", mcp.Description("Parent global DAG task ID if applicable")),
 		mcp.WithString("notes", mcp.Description("Working notes, scratchpad remarks, or implementation thoughts")),
 	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		args := getArgsMap(req)
-		agentID := getString(args, "agent_id")
+		agentID := s.actorID(args)
 		title := getString(args, "title")
 		priority := getString(args, "priority")
 		contextTaskID := getString(args, "context_task_id")
@@ -1378,11 +1269,11 @@ func (s *Server) registerTaskTools() {
 	// gossip_personal_todo_list
 	s.mcpServer.AddTool(mcp.NewTool("gossip_personal_todo_list",
 		mcp.WithDescription("List an agent's personal to-do scratchpad items and working checklist"),
-		mcp.WithString("agent_id", mcp.Required(), mcp.Description("Agent ID")),
+		mcp.WithString("agent_id", mcp.Description("Agent ID")),
 		mcp.WithString("status", mcp.Description("Filter by status: 'pending', 'in_progress', 'done'")),
 	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		args := getArgsMap(req)
-		agentID := getString(args, "agent_id")
+		agentID := s.actorID(args)
 		status := getString(args, "status")
 
 		if agentID == "" {
@@ -1399,13 +1290,13 @@ func (s *Server) registerTaskTools() {
 	// gossip_personal_todo_update
 	s.mcpServer.AddTool(mcp.NewTool("gossip_personal_todo_update",
 		mcp.WithDescription("Update status or notes for an agent's personal checklist item"),
-		mcp.WithString("agent_id", mcp.Required(), mcp.Description("Agent ID")),
+		mcp.WithString("agent_id", mcp.Description("Agent ID")),
 		mcp.WithString("item_id", mcp.Required(), mcp.Description("Personal to-do item ID")),
 		mcp.WithString("status", mcp.Description("New status: 'pending', 'in_progress', 'done'")),
 		mcp.WithString("notes", mcp.Description("Updated scratchpad notes")),
 	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		args := getArgsMap(req)
-		agentID := getString(args, "agent_id")
+		agentID := s.actorID(args)
 		itemID := getString(args, "item_id")
 		status := getString(args, "status")
 		notes := getString(args, "notes")
@@ -1424,11 +1315,11 @@ func (s *Server) registerTaskTools() {
 	// gossip_personal_todo_delete
 	s.mcpServer.AddTool(mcp.NewTool("gossip_personal_todo_delete",
 		mcp.WithDescription("Delete an item from an agent's personal checklist"),
-		mcp.WithString("agent_id", mcp.Required(), mcp.Description("Agent ID")),
+		mcp.WithString("agent_id", mcp.Description("Agent ID")),
 		mcp.WithString("item_id", mcp.Required(), mcp.Description("Personal to-do item ID")),
 	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		args := getArgsMap(req)
-		agentID := getString(args, "agent_id")
+		agentID := s.actorID(args)
 		itemID := getString(args, "item_id")
 
 		if agentID == "" || itemID == "" {
@@ -1501,7 +1392,7 @@ func (s *Server) registerGraphTools() {
 		summary := getString(args, "summary")
 		tags := getStringSlice(args, "tags")
 		sourcePath := getString(args, "source_path")
-		createdBy := getString(args, "created_by")
+		createdBy := s.actorField(args, "created_by")
 
 		if nodeType == "" || label == "" || summary == "" {
 			return mcp.NewToolResultError("'type', 'label', and 'summary' are required"), nil
@@ -1557,7 +1448,7 @@ func (s *Server) registerGraphTools() {
 		rel := getString(args, "relation")
 		prov := getString(args, "provenance")
 		summary := getString(args, "summary")
-		createdBy := getString(args, "created_by")
+		createdBy := s.actorField(args, "created_by")
 
 		if src == "" || tgt == "" || rel == "" {
 			return mcp.NewToolResultError("'source', 'target', and 'relation' are required"), nil
@@ -1777,13 +1668,13 @@ func (s *Server) registerDeliberationTools() {
 		mcp.WithString("title", mcp.Required(), mcp.Description("Debate title or motion")),
 		mcp.WithString("description", mcp.Required(), mcp.Description("Detailed problem statement and proposed approach")),
 		mcp.WithString("proposer", mcp.Required(), mcp.Description("Agent ID proposing the motion")),
-		mcp.WithString("role", mcp.Required(), mcp.Description("Proposer's role")),
+		mcp.WithString("role", mcp.Description("Proposer's role")),
 	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		args := getArgsMap(req)
 		title := getString(args, "title")
 		desc := getString(args, "description")
-		proposer := getString(args, "proposer")
-		role := getString(args, "role")
+		proposer := s.actorField(args, "proposer")
+		role := s.actorRole(args)
 
 		if title == "" || desc == "" || proposer == "" || role == "" {
 			return mcp.NewToolResultError("'title', 'description', 'proposer', and 'role' are required"), nil
@@ -1801,15 +1692,15 @@ func (s *Server) registerDeliberationTools() {
 	s.mcpServer.AddTool(mcp.NewTool("gossip_post_argument",
 		mcp.WithDescription("Post an argument in an active multi-agent debate (pro, con, critique, rebuttal, or neutral)"),
 		mcp.WithString("debate_id", mcp.Required(), mcp.Description("ID of the debate")),
-		mcp.WithString("agent_id", mcp.Required(), mcp.Description("Agent ID posting the argument")),
-		mcp.WithString("role", mcp.Required(), mcp.Description("Agent's role")),
+		mcp.WithString("agent_id", mcp.Description("Agent ID posting the argument")),
+		mcp.WithString("role", mcp.Description("Agent's role")),
 		mcp.WithString("stance", mcp.Required(), mcp.Description("Stance: 'pro', 'con', 'critique', 'rebuttal', 'neutral'")),
 		mcp.WithString("content", mcp.Required(), mcp.Description("Detailed argument, evidence, or algorithmic justification")),
 	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		args := getArgsMap(req)
 		debateID := getString(args, "debate_id")
-		agentID := getString(args, "agent_id")
-		role := getString(args, "role")
+		agentID := s.actorID(args)
+		role := s.actorRole(args)
 		stance := getString(args, "stance")
 		content := getString(args, "content")
 
@@ -1829,16 +1720,16 @@ func (s *Server) registerDeliberationTools() {
 	s.mcpServer.AddTool(mcp.NewTool("gossip_cast_vote",
 		mcp.WithDescription("Cast a formal vote on an active debate or proposal"),
 		mcp.WithString("debate_id", mcp.Required(), mcp.Description("ID of the debate")),
-		mcp.WithString("agent_id", mcp.Required(), mcp.Description("Agent ID voting")),
-		mcp.WithString("role", mcp.Required(), mcp.Description("Voter's role")),
+		mcp.WithString("agent_id", mcp.Description("Agent ID voting")),
+		mcp.WithString("role", mcp.Description("Voter's role")),
 		mcp.WithString("choice", mcp.Required(), mcp.Description("Vote choice: 'accept', 'reject', or 'abstain'")),
 		mcp.WithInteger("confidence", mcp.Description("Confidence level from 1 to 5 (default: 3)")),
 		mcp.WithString("reasoning", mcp.Description("Rationale for this vote")),
 	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		args := getArgsMap(req)
 		debateID := getString(args, "debate_id")
-		agentID := getString(args, "agent_id")
-		role := getString(args, "role")
+		agentID := s.actorID(args)
+		role := s.actorRole(args)
 		choice := getString(args, "choice")
 		confidence := getInt(args, "confidence", 3)
 		reasoning := getString(args, "reasoning")
@@ -1859,18 +1750,21 @@ func (s *Server) registerDeliberationTools() {
 	s.mcpServer.AddTool(mcp.NewTool("gossip_conclude_debate",
 		mcp.WithDescription("Conclude a debate, tally votes, establish consensus, and record the final resolution"),
 		mcp.WithString("debate_id", mcp.Required(), mcp.Description("ID of the debate to conclude")),
-		mcp.WithString("resolved_by", mcp.Required(), mcp.Description("Arbiter/Critic agent ID concluding the debate")),
+		mcp.WithString("resolved_by", mcp.Description("Configured agent identity concluding the debate")),
 		mcp.WithString("summary", mcp.Required(), mcp.Description("Executive summary of deliberation and consensus")),
 		mcp.WithString("adopted_decision", mcp.Description("Adopted architectural decision or policy to register")),
 	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		args := getArgsMap(req)
 		debateID := getString(args, "debate_id")
-		resolvedBy := getString(args, "resolved_by")
+		resolvedBy := s.actorField(args, "resolved_by")
 		summary := getString(args, "summary")
 		adoptedDecision := getString(args, "adopted_decision")
 
 		if debateID == "" || resolvedBy == "" || summary == "" {
 			return mcp.NewToolResultError("debate_id, resolved_by, and summary are required"), nil
+		}
+		if err := security.AuthorizeAction(s.actorRole(args), "gossip_conclude_debate"); err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
 		}
 
 		res, err := s.deliberations.ConcludeDebate(debateID, resolvedBy, summary, adoptedDecision)
@@ -1898,13 +1792,13 @@ func (s *Server) registerDeliberationTools() {
 		mcp.WithDescription("Request a formal peer review or critique cycle on a task, artifact, or code file"),
 		mcp.WithString("target_type", mcp.Required(), mcp.Description("Target: 'task', 'file', 'artifact', 'decision'")),
 		mcp.WithString("target_id", mcp.Required(), mcp.Description("Identifier of target (e.g. 'task-1', 'pkg/tasks/tasks.go')")),
-		mcp.WithString("author_id", mcp.Required(), mcp.Description("Author agent ID")),
+		mcp.WithString("author_id", mcp.Description("Configured author identity; use target_type and target_id to select the review target")),
 		mcp.WithString("reviewer_id", mcp.Required(), mcp.Description("Reviewer agent ID (or role:qa_engineer / role:red_team)")),
 	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		args := getArgsMap(req)
 		targetType := getString(args, "target_type")
 		targetID := getString(args, "target_id")
-		authorID := getString(args, "author_id")
+		authorID := s.actorField(args, "author_id")
 		reviewerID := getString(args, "reviewer_id")
 
 		if targetType == "" || targetID == "" || authorID == "" || reviewerID == "" {
@@ -1923,13 +1817,13 @@ func (s *Server) registerDeliberationTools() {
 	s.mcpServer.AddTool(mcp.NewTool("gossip_submit_review",
 		mcp.WithDescription("Submit structured review findings, critique, and formal verdict on a pending review"),
 		mcp.WithString("review_id", mcp.Required(), mcp.Description("ID of the review")),
-		mcp.WithString("reviewer_id", mcp.Required(), mcp.Description("Reviewer agent ID")),
+		mcp.WithString("reviewer_id", mcp.Description("Configured reviewer identity")),
 		mcp.WithString("status", mcp.Required(), mcp.Description("Verdict status: 'approved', 'changes_requested', 'rejected'")),
 		mcp.WithString("verdict", mcp.Required(), mcp.Description("Review summary evaluation")),
 	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		args := getArgsMap(req)
 		reviewID := getString(args, "review_id")
-		reviewerID := getString(args, "reviewer_id")
+		reviewerID := s.actorField(args, "reviewer_id")
 		status := getString(args, "status")
 		verdict := getString(args, "verdict")
 
@@ -1959,7 +1853,7 @@ func (s *Server) registerDeliberationTools() {
 		args := getArgsMap(req)
 		target := getString(args, "target")
 		threatCat := getString(args, "threat_category")
-		attackerID := getString(args, "attacker_id")
+		attackerID := s.actorField(args, "attacker_id")
 		attackVec := getString(args, "attack_vector")
 		poc := getString(args, "poc_payload")
 		status := getString(args, "status")
@@ -2034,16 +1928,16 @@ func (s *Server) registerDeliberationTools() {
 	s.mcpServer.AddTool(mcp.NewTool("gossip_debate_ranked_vote",
 		mcp.WithDescription("Cast a ranked-choice ballot ordering multiple alternative candidates (Borda Count tallying)"),
 		mcp.WithString("debate_id", mcp.Required(), mcp.Description("ID of the debate")),
-		mcp.WithString("agent_id", mcp.Required(), mcp.Description("Voter Agent ID")),
-		mcp.WithString("role", mcp.Required(), mcp.Description("Voter Role")),
+		mcp.WithString("agent_id", mcp.Description("Voter Agent ID")),
+		mcp.WithString("role", mcp.Description("Voter Role")),
 		mcp.WithArray("ranked_choices", mcp.Required(), mcp.Description("Ordered list of candidate options from most preferred (1st) to least preferred")),
 		mcp.WithInteger("confidence", mcp.Description("Confidence level from 1 to 5 (default: 3)")),
 		mcp.WithString("reasoning", mcp.Description("Rationale for this candidate ranking")),
 	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		args := getArgsMap(req)
 		debateID := getString(args, "debate_id")
-		agentID := getString(args, "agent_id")
-		role := getString(args, "role")
+		agentID := s.actorID(args)
+		role := s.actorRole(args)
 		choices := getStringSlice(args, "ranked_choices")
 		confidence := getInt(args, "confidence", 3)
 		reasoning := getString(args, "reasoning")
@@ -2106,7 +2000,7 @@ func (s *Server) registerDeliberationTools() {
 		args := getArgsMap(req)
 		target := getString(args, "target")
 		contextDesc := getString(args, "context")
-		attackerID := getString(args, "attacker_id")
+		attackerID := s.actorField(args, "attacker_id")
 		autoLog := getBool(args, "auto_log")
 		// default to true if key not provided
 		if _, ok := args["auto_log"]; !ok {
@@ -2173,7 +2067,7 @@ func (s *Server) registerSOPTools() {
 		templateName := getString(args, "template")
 		title := getString(args, "title")
 		desc := getString(args, "description")
-		initiator := getString(args, "initiator")
+		initiator := s.actorField(args, "initiator")
 
 		if templateName == "" || title == "" || desc == "" || initiator == "" {
 			return mcp.NewToolResultError("template, title, description, and initiator are required"), nil
@@ -2202,7 +2096,7 @@ func (s *Server) registerSOPTools() {
 		artType := getString(args, "artifact_type")
 		title := getString(args, "title")
 		content := getString(args, "content")
-		createdBy := getString(args, "created_by")
+		createdBy := s.actorField(args, "created_by")
 
 		if wfID == "" || stageID == "" || artType == "" || title == "" || content == "" || createdBy == "" {
 			return mcp.NewToolResultError("workflow_id, stage_id, artifact_type, title, content, and created_by are required"), nil
@@ -2219,13 +2113,13 @@ func (s *Server) registerSOPTools() {
 	s.mcpServer.AddTool(mcp.NewTool("gossip_sop_advance",
 		mcp.WithDescription("Advance an SOP workflow to the next phase gate, verifying that required deliverables and roles match"),
 		mcp.WithString("workflow_id", mcp.Required(), mcp.Description("Active SOP workflow ID")),
-		mcp.WithString("agent_id", mcp.Required(), mcp.Description("Caller Agent ID")),
-		mcp.WithString("role", mcp.Required(), mcp.Description("Caller Role (must match stage required role or orchestrator)")),
+		mcp.WithString("agent_id", mcp.Description("Caller Agent ID")),
+		mcp.WithString("role", mcp.Description("Caller Role (must match stage required role or orchestrator)")),
 	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		args := getArgsMap(req)
 		wfID := getString(args, "workflow_id")
-		agentID := getString(args, "agent_id")
-		role := getString(args, "role")
+		agentID := s.actorID(args)
+		role := s.actorRole(args)
 
 		if wfID == "" || agentID == "" || role == "" {
 			return mcp.NewToolResultError("workflow_id, agent_id, and role are required"), nil
@@ -2308,7 +2202,7 @@ func (s *Server) registerGuardrailTools() {
 	// gossip_guardrails_validate_action (and alias gsp_guardrail_check)
 	validateHandler := func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		args := getArgsMap(req)
-		role := getString(args, "role")
+		role := s.actorRole(args)
 		action := getString(args, "action")
 		targetPath := getString(args, "target_path")
 		payload := getString(args, "payload")
@@ -2326,7 +2220,7 @@ func (s *Server) registerGuardrailTools() {
 
 	s.mcpServer.AddTool(mcp.NewTool("gossip_guardrails_validate_action",
 		mcp.WithDescription("Pre-flight inspection checking whether an action or file modification violates project cautions or forbidden rules"),
-		mcp.WithString("role", mcp.Required(), mcp.Description("Executing agent role")),
+		mcp.WithString("role", mcp.Description("Executing agent role")),
 		mcp.WithString("action", mcp.Required(), mcp.Description("Action name (e.g. 'write_file', 'bypass_race_detector', 'delete_table')")),
 		mcp.WithString("target_path", mcp.Description("Target file or resource path")),
 		mcp.WithString("payload", mcp.Description("Optional payload or diff snippet to scan")),
@@ -2334,7 +2228,7 @@ func (s *Server) registerGuardrailTools() {
 
 	s.mcpServer.AddTool(mcp.NewTool("gsp_guardrail_check",
 		mcp.WithDescription("Alias for gossip_guardrails_validate_action: pre-flight check against active cautions"),
-		mcp.WithString("role", mcp.Required(), mcp.Description("Executing agent role")),
+		mcp.WithString("role", mcp.Description("Executing agent role")),
 		mcp.WithString("action", mcp.Required(), mcp.Description("Action name")),
 		mcp.WithString("target_path", mcp.Description("Target file path")),
 		mcp.WithString("payload", mcp.Description("Payload snippet to scan")),
@@ -2604,8 +2498,8 @@ func (s *Server) registerEventTools() {
 	// gossip_poll_events (alias gsp_poll, gossip_sync)
 	pollHandler := func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		args := getArgsMap(req)
-		agentID := getString(args, "agent_id")
-		role := getString(args, "role")
+		agentID := s.actorID(args)
+		role := s.actorRole(args)
 		sinceTimeStr := getString(args, "since_time")
 		timeoutSec := getInt(args, "timeout_seconds", 0)
 		eventTypes := getStringSlice(args, "event_types")
@@ -2652,8 +2546,8 @@ func (s *Server) registerEventTools() {
 
 	s.mcpServer.AddTool(mcp.NewTool("gossip_poll_events",
 		mcp.WithDescription("Continuously poll or long-poll for updates, new messages, newly unblocked ready tasks, debate rounds, and peer activity with timeout"),
-		mcp.WithString("agent_id", mcp.Required(), mcp.Description("Unique identifier of the calling agent")),
-		mcp.WithString("role", mcp.Required(), mcp.Description("Specialist role of the calling agent")),
+		mcp.WithString("agent_id", mcp.Description("Unique identifier of the calling agent")),
+		mcp.WithString("role", mcp.Description("Specialist role of the calling agent")),
 		mcp.WithString("since_time", mcp.Description("RFC3339 timestamp or relative duration (e.g. '2026-11-04T12:00:00Z', '30s', '5m')")),
 		mcp.WithInteger("timeout_seconds", mcp.Description("Long-polling timeout in seconds (0 to 60; 0 returns immediately, >0 waits for events)")),
 		mcp.WithArray("event_types", mcp.Description("Filter event categories: ['message_received', 'task_ready', 'task_assigned', 'task_updated', 'debate_activity', 'sop_advanced', 'agent_presence']")),
@@ -2664,8 +2558,8 @@ func (s *Server) registerEventTools() {
 
 	s.mcpServer.AddTool(mcp.NewTool("gsp_poll",
 		mcp.WithDescription("Alias for gossip_poll_events: time-based continuous event polling and long-polling sync"),
-		mcp.WithString("agent_id", mcp.Required(), mcp.Description("Unique identifier of the calling agent")),
-		mcp.WithString("role", mcp.Required(), mcp.Description("Specialist role of the calling agent")),
+		mcp.WithString("agent_id", mcp.Description("Unique identifier of the calling agent")),
+		mcp.WithString("role", mcp.Description("Specialist role of the calling agent")),
 		mcp.WithString("since_time", mcp.Description("RFC3339 timestamp or relative duration")),
 		mcp.WithInteger("timeout_seconds", mcp.Description("Long-polling timeout in seconds (0 to 60)")),
 		mcp.WithArray("event_types", mcp.Description("Filter event categories")),
@@ -2676,8 +2570,8 @@ func (s *Server) registerEventTools() {
 
 	s.mcpServer.AddTool(mcp.NewTool("gossip_sync",
 		mcp.WithDescription("Alias for gossip_poll_events: synchronize state, heartbeat, and fetch new events"),
-		mcp.WithString("agent_id", mcp.Required(), mcp.Description("Unique identifier of the calling agent")),
-		mcp.WithString("role", mcp.Required(), mcp.Description("Specialist role of the calling agent")),
+		mcp.WithString("agent_id", mcp.Description("Unique identifier of the calling agent")),
+		mcp.WithString("role", mcp.Description("Specialist role of the calling agent")),
 		mcp.WithString("since_time", mcp.Description("RFC3339 timestamp or relative duration")),
 		mcp.WithInteger("timeout_seconds", mcp.Description("Long-polling timeout in seconds (0 to 60)")),
 	), pollHandler)
@@ -2695,8 +2589,11 @@ func (s *Server) registerEventTools() {
 		args := getArgsMap(req)
 		evtType := getString(args, "type")
 		summary := getString(args, "summary")
-		actorID := getString(args, "actor_id")
-		actorRole := getString(args, "actor_role")
+		actorID := s.actorField(args, "actor_id")
+		actorRole := s.identity.Role
+		if actorRole == "" {
+			actorRole = getString(args, "actor_role")
+		}
 		targetID := getString(args, "target_id")
 		targetRole := getString(args, "target_role")
 
@@ -2747,7 +2644,7 @@ func (s *Server) registerMoETools() {
 		title := getString(args, "title")
 		query := getString(args, "query")
 		domain := getString(args, "domain")
-		initiator := getString(args, "initiator")
+		initiator := s.actorField(args, "initiator")
 		if initiator == "" {
 			initiator = "orchestrator"
 		}
@@ -2756,6 +2653,9 @@ func (s *Server) registerMoETools() {
 
 		if title == "" || query == "" {
 			return mcp.NewToolResultError("'title' and 'query' are required"), nil
+		}
+		if err := s.requireActorRole("orchestrator", "admin"); err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
 		}
 
 		panel, err := s.moe.ConvenePanel(title, query, domain, initiator, rolesList, maxParallel)
@@ -2774,8 +2674,8 @@ func (s *Server) registerMoETools() {
 	argTool := mcp.NewTool("gossip_moe_post_argument",
 		mcp.WithDescription("Post a specialist expert domain perspective and technical argument to an active MoE panel"),
 		mcp.WithString("panel_id", mcp.Required(), mcp.Description("ID of the MoE panel")),
-		mcp.WithString("agent_id", mcp.Required(), mcp.Description("Contributing expert agent ID")),
-		mcp.WithString("role", mcp.Required(), mcp.Description("Expert role")),
+		mcp.WithString("agent_id", mcp.Description("Contributing expert agent ID")),
+		mcp.WithString("role", mcp.Description("Expert role")),
 		mcp.WithString("stance", mcp.Required(), mcp.Description("Stance: 'propose', 'counter', 'caution', or 'endorse'")),
 		mcp.WithString("perspective", mcp.Required(), mcp.Description("Detailed technical domain perspective")),
 		mcp.WithArray("key_points", mcp.Description("List of actionable takeaway points")),
@@ -2783,8 +2683,8 @@ func (s *Server) registerMoETools() {
 	argHandler := func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		args := getArgsMap(req)
 		panelID := getString(args, "panel_id")
-		agentID := getString(args, "agent_id")
-		role := getString(args, "role")
+		agentID := s.actorID(args)
+		role := s.actorRole(args)
 		stance := getString(args, "stance")
 		perspective := getString(args, "perspective")
 		keyPoints := getStringSlice(args, "key_points")
@@ -2809,7 +2709,7 @@ func (s *Server) registerMoETools() {
 	synthTool := mcp.NewTool("gossip_moe_synthesize",
 		mcp.WithDescription("Synthesize the MoE council deliberations into a unified consensus decision and parallel subagent work packages"),
 		mcp.WithString("panel_id", mcp.Required(), mcp.Description("ID of the MoE panel")),
-		mcp.WithString("agent_id", mcp.Required(), mcp.Description("Synthesizing orchestrator agent ID")),
+		mcp.WithString("agent_id", mcp.Description("Synthesizing orchestrator agent ID")),
 		mcp.WithString("consensus_decision", mcp.Required(), mcp.Description("Final technical consensus")),
 		mcp.WithArray("trade_offs", mcp.Description("Documented architectural trade-offs")),
 		mcp.WithArray("recommended_actions", mcp.Description("Concrete implementation actions")),
@@ -2817,13 +2717,16 @@ func (s *Server) registerMoETools() {
 	synthHandler := func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		args := getArgsMap(req)
 		panelID := getString(args, "panel_id")
-		agentID := getString(args, "agent_id")
+		agentID := s.actorID(args)
 		decision := getString(args, "consensus_decision")
 		tradeOffs := getStringSlice(args, "trade_offs")
 		actions := getStringSlice(args, "recommended_actions")
 
 		if panelID == "" || agentID == "" || decision == "" {
 			return mcp.NewToolResultError("'panel_id', 'agent_id', and 'consensus_decision' are required"), nil
+		}
+		if err := s.requireActorRole("orchestrator", "admin"); err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
 		}
 
 		var packages []moe.WorkPackage
@@ -2858,13 +2761,16 @@ func (s *Server) registerMoETools() {
 	dispatchHandler := func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		args := getArgsMap(req)
 		panelID := getString(args, "panel_id")
-		agentID := getString(args, "agent_id")
+		agentID := s.actorID(args)
 		if agentID == "" {
 			agentID = "orchestrator"
 		}
 
 		if panelID == "" {
 			return mcp.NewToolResultError("'panel_id' is required"), nil
+		}
+		if err := s.requireActorRole("orchestrator", "admin"); err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
 		}
 
 		tracks, err := s.moe.DispatchSubagents(panelID, agentID)
@@ -2908,7 +2814,7 @@ func (s *Server) registerMoETools() {
 	)
 	cronCheckHandler := func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		args := getArgsMap(req)
-		agentID := getString(args, "agent_id")
+		agentID := s.actorID(args)
 		res, err := cron.RunCheck(s.store, agentID)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("periodic check failed: %v", err)), nil
@@ -2921,88 +2827,4 @@ func (s *Server) registerMoETools() {
 	cronAlias.Name = "gsp_cron_check"
 	s.mcpServer.AddTool(cronAlias, cronCheckHandler)
 
-	// gossip_secret_transfer (alias: gsp_vault_transfer)
-	secretTransferTool := mcp.NewTool("gossip_secret_transfer",
-		mcp.WithDescription("Securely stage or transfer sensitive secret files (e.g. .env, tokens, keys) across mesh nodes without exposing raw secret contents to agent context or LLM prompt history"),
-		mcp.WithString("source_path", mcp.Required(), mcp.Description("Local path to the secret file")),
-		mcp.WithString("destination_endpoint", mcp.Description("Remote node HTTP/FRP endpoint (e.g. 'http://remote.mesh:8080') or 'local://vault' (default)")),
-		mcp.WithString("auth_token", mcp.Description("Encryption passphrase or tunnel auth token for AES-256-GCM transfer")),
-		mcp.WithString("destination_path", mcp.Description("Target relative file path on destination node (e.g. '.env')")),
-		mcp.WithString("description", mcp.Description("Optional human-readable metadata description")),
-	)
-	secretTransferHandler := func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		args := getArgsMap(req)
-		srcPath := getString(args, "source_path")
-		destEp := getString(args, "destination_endpoint")
-		authToken := getString(args, "auth_token")
-		destPath := getString(args, "destination_path")
-		desc := getString(args, "description")
-
-		if srcPath == "" {
-			return mcp.NewToolResultError("source_path is required"), nil
-		}
-
-		if destEp == "" || destEp == "local://vault" {
-			receipt, err := s.vault.StageSecretFile(srcPath, desc)
-			if err != nil {
-				return mcp.NewToolResultError(fmt.Sprintf("vault staging failed: %v", err)), nil
-			}
-			return toJSONText(receipt)
-		}
-
-		if authToken == "" {
-			return mcp.NewToolResultError("auth_token or passphrase required for remote encrypted transfer"), nil
-		}
-
-		receipt, err := s.vault.TransferSecretToRemote(srcPath, destEp, authToken, destPath)
-		if err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("secure secret transfer failed: %v", err)), nil
-		}
-		return toJSONText(receipt)
-	}
-	s.mcpServer.AddTool(secretTransferTool, secretTransferHandler)
-	vaultAlias := secretTransferTool
-	vaultAlias.Name = "gsp_vault_transfer"
-	s.mcpServer.AddTool(vaultAlias, secretTransferHandler)
-
-	// gossip_remote_query (alias: gsp_remote_query)
-	remoteQueryTool := mcp.NewTool("gossip_remote_query",
-		mcp.WithDescription("Query a remote Gossip mesh node across the FRP tunnel or LAN when worktrees differ (e.g. separate repos or branches), querying remote graph, tasks, repomap, or status"),
-		mcp.WithString("remote_endpoint", mcp.Required(), mcp.Description("Remote node URL (e.g. 'http://mesh.remote:8080')")),
-		mcp.WithString("query_type", mcp.Required(), mcp.Description("Type of query: 'graph', 'tasks', 'status', 'repomap'")),
-		mcp.WithString("query_text", mcp.Description("Query text or symbol label (for 'graph')")),
-		mcp.WithString("auth_user", mcp.Description("HTTP Basic Auth username for remote node")),
-		mcp.WithString("auth_pass", mcp.Description("HTTP Basic Auth password for remote node")),
-	)
-	remoteQueryHandler := func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		args := getArgsMap(req)
-		remoteEp := getString(args, "remote_endpoint")
-		qType := getString(args, "query_type")
-		qText := getString(args, "query_text")
-		authUser := getString(args, "auth_user")
-		authPass := getString(args, "auth_pass")
-
-		if remoteEp == "" || qType == "" {
-			return mcp.NewToolResultError("remote_endpoint and query_type are required"), nil
-		}
-
-		qReq := tunnel.FederatedQueryRequest{
-			QueryID:    fmt.Sprintf("q-%x", time.Now().UnixNano()%1000000),
-			SourceNode: "local-agent",
-			QueryType:  qType,
-			QueryText:  qText,
-			AuthUser:   authUser,
-			AuthPass:   authPass,
-		}
-
-		qRes, err := tunnel.QueryRemoteNode(remoteEp, authUser, authPass, qReq)
-		if err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("remote federated query failed: %v", err)), nil
-		}
-		return toJSONText(qRes)
-	}
-	s.mcpServer.AddTool(remoteQueryTool, remoteQueryHandler)
-	remoteQueryAlias := remoteQueryTool
-	remoteQueryAlias.Name = "gsp_remote_query"
-	s.mcpServer.AddTool(remoteQueryAlias, remoteQueryHandler)
 }

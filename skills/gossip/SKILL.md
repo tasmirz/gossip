@@ -1,333 +1,58 @@
 ---
 name: gossip
-description: Multi-agent coordination fabric, task DAG delegation, MetaGPT-style Standard Operating Procedures (SOPs), inter-agent messaging, Graphify blast-radius RAG, Aider-style PageRank repo-mapping, Multi-Agent Debate (MAD) with Borda consensus, and STRIDE red-teaming. Always trigger this skill whenever coordinating multiple AI agents or subagents, delegating tasks between orchestrators and workers, consulting specialist roles (such as network_engineer, math_expert, systems_architect, security_specialist, qa_engineer, researcher), following structured SOP phase gates, reading or writing shared project state under .local/gossip, or analyzing codebase blast-radii.
+description: Coordinate coding agents using an available Gossip MCP server, including task handoffs, research reports, messaging, and project state. Use when the user requests Gossip collaboration or the current work uses a Gossip mesh.
 ---
 
-# Gossip: Multi-Agent Collaboration Fabric & Shared Knowledge RAG
+# Gossip collaboration
 
-Gossip connects multiple concurrent AI coding agents into an organized, high-velocity engineering organization. Agents share a single source of truth in `<project_root>/.local/gossip/`, communicate asynchronously over direct or role channels, advance tasks along dependency-aware DAGs, execute MetaGPT-style Standard Operating Procedures (SOPs), and explore codebase architectures with deterministic knowledge graph RAG (PageRank centrality, community clusters, and blast-radius analysis inspired by Graphify and Aider).
+Gossip records agent metadata, tasks, messages, and optional reports in its configured store. Use it when the user or project has chosen Gossip and the tools are available. Follow the user's scope and the host's rules for delegation; a Gossip role or assignment does not authorize spawning agents or accessing external resources.
 
----
+Use the authenticated, SQLite-backed `coord-mcp` profile for shared projects, LAN/remote agents, project access control, and review handoffs. Its MCP configuration must point to a private per-project credential; project creation uses the separate create-only bootstrap server. The legacy JSON MCP CLI transport is retired because it has no project membership boundary; the older local CLI and dashboard remain outside multi-agent project access control. Check the available schemas before use and consult `docs/coordination-preview.md` for setup. If `coord-init` or `coord-add` reports a retained credential after an uncertain result, retry with `--resume` and identical provisioning arguments.
 
-## 1. Role Taxonomy & Behavioral Directives
+Before migrating legacy `.local/gossip` data, run `gossip coord-migrate --legacy-dir <path>`. Import supported history into an existing project with `--apply --db <coord.db> --credential-file <owner.json>`; pass `--accept-warnings` only after reviewing reported warnings. The import preserves old identities and roles as unverified history; it does not grant permissions or activate old work. It does not cut over the legacy store.
 
-When participating in a Gossip mesh, each agent assumes a specialized role configured via JSON:
+## Coordination preview
 
-| Role ID | Title | Primary Directives |
-| :--- | :--- | :--- |
-| `orchestrator` | Lead System Orchestrator | Decomposes strategic goals into task DAGs (`blocked_by` chains). Drives SOP phase gates (`gossip_sop_advance`). Monitors `BOARD.md`. Synthesizes final deliverables. |
-| `worker` | General Software Engineer | Claims `todo` tasks, sets status to `in_progress`, writes modular clean code, logs discovered symbols into graph, reports completion with artifacts. |
-| `network_engineer` | Network & Distributed Systems Engineer | Protocol design, socket multiplexing, length-prefixed binary framing, serialization overhead, latency budgets, exponential backoff, connection state machines. |
-| `math_expert` | Mathematical & Algorithmic Specialist | Algorithmic invariants, time/space complexity proofs ($O$, $\Omega$, $\Theta$), graph algorithms (BFS, DAG cycles), polynomial selection (CRC32 Castagnoli), numerical stability. |
-| `systems_architect` | Systems & OS Architect | Concurrency safety, race-condition freedom, memory allocation churn, POSIX file locking (`flock`), atomic rename persistence, crash consistency. |
-| `security_specialist` | Security & Vulnerability Auditor | STRIDE threat modeling, input sanitization, directory traversal defense, cryptographically secure randomness, deserialization safety, DoS protection. |
-| `qa_engineer` | Verification & Test Specialist | Authors deterministic unit and integration test harnesses, edge cases (empty, boundary, overflow), invariant assertions, race condition detection (`-race`). |
-| `researcher` | Codebase & External Researcher | Explores documentation, RFC standards, existing code patterns, and populates the knowledge graph with verified facts (`EXTRACTED`) and insights (`INFERRED`). |
-| `red_team` | Adversarial Red Team Specialist | Aggressively probes edge cases, injects data races, fuzzes inputs, generates STRIDE attack vectors, and stress-tests architectural assumptions. |
-| `critic` | Independent Critic & Consensus Arbiter | Evaluates debates impartially, identifies hidden trade-offs, tallies Borda ranked votes, checks convergence, and commits decisions to the shared knowledge graph. |
+- Read `gossip_join` and `gossip_plan`; acknowledge the active revision before claiming. Use `gossip_roles` to inspect versioned duties, expected outputs, handoff format, and escalation conditions. Work roles never grant permissions. Owners can assign preset or custom duties per project or task.
+- When creating a coordination-preview task, supply a stable unique `request_id`; if a response is lost, retry with that exact ID and payload. The server returns the existing task or conflicts on changed content. Create or select a bounded `gossip_task` with a report contract, prerequisites, and intended assignee. If `gossip_budget` is enabled, an owner reserves tokens before claim. Each attempt holds an allocation until explicitly released; provider usage remains unknown and can exceed the reservation.
+- Claim with the intended `workspace_id`. The adapter refreshes its local Git baseline by default; `refresh_git: false` uses the stored observation. A claim grants a fenced, renewable lease, not proof the agent is working. The MCP process renews by default; `auto_renew: false` opts out.
+- Submit live work with `gossip_submit`; an expired or superseded attempt cannot complete the task. For a planned `full_code` review, call `gossip_submit` `capture_diff` with the task ID, attempt number, and stable `request_id`; it captures the registered checkout from the attempt's recorded commit, including staged, unstaged, and non-ignored untracked changes. Capture only works when the current MCP process is running in that registered Git root, and the diff is limited to 1 MiB and 1,000 untracked files. With a configured remote outbox, capture queues the evidence for retry. Use `save_candidate` or `enqueue_candidate` for other candidate artifacts; a manually submitted full-code diff is structurally checked but its completeness is not independently established. A candidate is unaccepted evidence, not a completed task. Review the exact submitted digest independently with `gossip_review`.
+- Use `gossip_send` for targeted messages. On a configured remote outbox, `enqueue` records pending delivery; inspect `outbox` for confirmation. If `request_review` reports queued delivery, inspect `gossip_task` `review_outbox` until it is delivered; repair the connection and use `retry_review` for failed entries. For event processing, read the `gossip_sync` checkpoint, then use `wait` with that cursor when awaiting a worker handoff instead of polling repeatedly. Process returned events before acknowledging the last processed sequence; `wait` never advances the checkpoint. A checkpoint is shared by sessions using the same credential.
+- With a remote outbox configured, explicitly request `cached` plan or task data during a disconnect. Its observation time and authorization may be stale; claims and authoritative changes still require the home node. A queued message or candidate confirms local persistence, not recipient delivery or task completion.
+- Use `gossip_sync` `refresh_cache` to update the bounded project snapshot and visible-event delta in one home transaction. Continue while `events_may_continue` is true; persist `next_event_cursor` with the cache. If `reset_required` is true, replace old cached project data. A reconnect authorization denial clears received snapshots/events; pending outbound requests remain queued for review. This is still a point-in-time cache, not a full replica or offline write authority.
 
-> **Dynamic Role Creation & Multiple Instances**: The orchestrator can define custom project roles dynamically using `gossip_register_custom_role` (persisted to `roles.json`). Multiple concurrent instances of any role can run simultaneously (e.g., `worker-1`, `worker-2`, `red-team-alpha`, `red-team-beta`).
+## Join and coordinate
 
----
+1. Check which Gossip tools are available and inspect their schemas. If Gossip is unavailable, report that limitation and continue with the available collaboration method; do not claim a mesh exists.
+2. Confirm agents are using the intended store and project before sharing information. The store is selected by an explicit directory, `GOSSIP_DIR`, the nearest ancestor `.local/gossip`, or a new `.local/gossip` in the current directory. Separate worktrees or machines can resolve to different stores. Registration and a remote endpoint do not themselves synchronize stores or Git changes.
+3. Use `gossip_introduce_agent` or `gossip_reidentify_agent` as appropriate, then inspect relevant goals, tasks, and inbox. Registration and message identities are caller-supplied metadata, not authenticated principals.
+4. For delegated work, create a bounded task with a description, acceptance criteria, and existing prerequisite IDs. Communicate its ID, expected output, project/worktree, relevant revision or dirty state, and interfaces to the intended worker. Use `gossip_send_message` for questions and handoffs; prefer specific recipients and concise updates.
+5. The worker updates the task to `in_progress`, reports blockers or progress, and submits the result with evidence. An assignment or status update is not an exclusive lease or proof that a worker started. Launching or notifying a worker requires a host capability; confirm acknowledgment and do not assume MoE dispatch starts processes.
+6. Review the result against the request and the actual code or evidence as appropriate. Record the outcome and remaining risks; only mark work completed when the applicable acceptance criteria are met. Gossip task status does not itself verify quality.
 
-## 2. MetaGPT-Style Standard Operating Procedures (SOPs)
+For polling, use `gossip_poll_events` or read the inbox when useful; tolerate duplicate or incomplete results and use returned timestamps carefully. Mark only messages actually handled as read. Routine status changes should not require repeated full-history reads.
 
-Multi-agent engineering succeeds when agents follow structured assembly-line workflows instead of chaotic, free-form chat:
+## Research and review handoffs
 
-$$\text{Code} = \text{SOP}(\text{Team})$$
+A coordinator can request research through an ordinary task and message. State the questions, scope, requested output, relevant revision, evidence requirements, and any time or token budget. Parallelize only independent questions; dependent implementation and integration should stay sequenced, since multi-agent work can cost more tokens. For a combined Git result, give an integrator an `integration` task and grant the project-scoped `integration` permission. Once the clean combined commit and checks exist, use `gossip_integration` with each candidate ID and checks tied to the combined revision; use `enqueue` when remote delivery may be interrupted, then inspect the outbox until it is delivered. Ask for a concise Markdown report and, when useful, a Mermaid sequence, state, or class diagram with file/symbol references, conditions, error paths, and clearly identified unknowns. Separate observed behavior from inference, and distinguish static analysis from runtime traces.
 
-Gossip provides three built-in SOP templates, each enforced by formal phase gates and structured artifact handoffs:
+Start with the requested summary or diagram, then fetch targeted source, tests, diffs, or traces to resolve important uncertainties. A summary or diagram is not proof of correctness, and accepting a research report does not accept an implementation. Choose review depth according to the user's request and risk. The legacy profile does not enforce report contracts, token budgets, revision-bound reviews, or automatic worker execution; these are coordination instructions rather than server guarantees.
 
-### A. Feature Delivery Workflow (`feature_delivery`)
-1. **Requirements Gate** (`orchestrator`): Deliver `prd` artifact.
-2. **Architecture Gate** (`systems_architect`): Deliver `system_design` artifact with API schemas and data models.
-3. **Planning Gate** (`orchestrator`): Deliver `task_plan` artifact and populate Gossip task DAG.
-4. **Implementation Gate** (`worker`): Deliver `code_manifest` artifact with tested code.
-5. **QA Review Gate** (`qa_engineer`): Deliver `peer_review` artifact with test results.
-6. **Security Audit Gate** (`security_specialist`): Deliver `security_audit` artifact with STRIDE mitigations.
-7. **Release Signoff Gate** (`orchestrator`): Deliver `release_notes` artifact and finalize.
+## Current limitations and optional tools
 
-### B. Bug Investigation Workflow (`bug_investigation`)
-1. **Incident Triage** $\to$ 2. **Root Cause & Blast Radius** (via `gossip_rag_impact_analysis`) $\to$ 3. **Fix Patch** $\to$ 4. **QA Regression Test** $\to$ 5. **Resolution Signoff**.
+- `gossip_moe_dispatch_subagents` records work tracks; it does not launch agents or enforce the recorded parallel limit. SOP gates and reviews record workflow state; their checks do not authenticate identities or independently assess artifact quality.
+- Guardrail validation is an explicit tool, not an interceptor for all actions. Caller-supplied role labels do not establish permissions. Protect the underlying store and MCP process using the host's access controls.
+- The coordination dashboard defaults to loopback. Non-loopback access requires HTTPS mutual TLS, a current database grant for that client certificate and project, and a project credential; the browser session is bound to its client certificate. Owners can invite a project member from the dashboard or use `coord-add`. The dashboard prepares and downloads the credential before enrollment, then retries the same identity safely if a response is lost; protect the file and use `coord-add --resume` with the same name and role to recover an uncertain invite. Every TLS dashboard/API user, on the LAN or remotely, needs a client certificate granted to the selected project through the dashboard or `gossip_access`/`coord-access --remote`, plus that project’s member credential. Certificate grants may have an expiry, which is checked on every request. Project credentials establish membership; project roles and explicit permissions govern application actions. Client certificates establish TLS transport trust only. Owners can revoke either project-scoped grant immediately. Start a project from a local Git folder in the dashboard using **Connect a project**; Gossip infers repository metadata and creates its first workspace with the project. MCP-driven creation uses the separate `coord-mcp-bootstrap` stdio server with a private create-only API key file; it saves the owner credential privately, and all later project actions use the normal project-scoped `coord-mcp` credential. FRP only forwards transport and does not provide project authorization; remote coordination is online access to one home node, not replicated federation. Legacy peer registration from model-supplied IDs, roles, and endpoints is removed; use project-scoped certificate pairing for remote membership. The installer leaves editor MCP configuration unchanged until a project-scoped credential is available; configure `coord-mcp` with that private file after connecting a local project folder.
+- Project roles currently gate broad action groups. `gossip_permissions` supports the explicit `task.delegate` grant for non-owners; it permits creating and assigning tasks only. Role presets are guidance and do not grant permission. The coordination preview enforces explicit project-scoped action grants (`project.read`, `message.send`, `task.claim`, `task.delegate`, `result.submit`, `plan.edit`, `settings.edit`, `review.decide`, `integration`, and `membership.manage`); verify the active tool profile because the legacy JSON profile remains separate.
+- During task planning, ask the user to choose full code review or a Markdown report with UML class and sequence diagrams whenever the request does not specify one. Record that choice in the task contract. For `diagram_report`, submit a downloadable Markdown report covering the task scope and acceptance criteria, with fenced Mermaid `classDiagram` and `sequenceDiagram` blocks. Include the relevant classes and relationships, participants and messages, and applicable alternate, failure, retry, and authorization paths; state assumptions and anything not inspected. The service rejects missing or structurally empty diagrams, but semantic completeness remains a reviewer judgment. Workers can request the planned review during a live attempt through `gossip_task` `request_review`; the durable project event identifies the task, attempt and review type. With a configured remote outbox, transient connection failures queue the request; inspect `review_outbox` and use `retry_review` for failed delivery. This notifies the orchestrator, not automatic reviewer launch or review execution.
+- For project access over TLS on a LAN or remote connection, owners can include a target client certificate fingerprint in the Agents-panel member invite. This atomically creates the project principal and grants that certificate access to the selected project. The CLI equivalent is `coord-add --client-certificate <client.crt>`, optionally with `--access-expires-in 24h`. The user needs the private certificate key and downloaded project credential; repeat the project-specific grant for every project they should access.
+- Owners can issue a one-use, short-lived certificate invitation from the dashboard or `coord-pair --action create`, then deliver its private file to a CA-verified client for `coord-pair --action redeem`. Bind it to an expected client fingerprint when known. The client still needs a separate project credential. Retry an uncertain creation with the same file and `--resume`; a redeemed invitation cannot restore a revoked certificate grant.
+- For project recognition, an owner can add normalized Git remote hints to a repository with `gossip_workspace` operation `add_remote_hint`. An agent can call `recognize_git` with its local checkout path to inspect sanitized remotes and receive matching repositories within its bound project; it must explicitly choose a repository before `register_git`. The dashboard searches only projects already connected to the browser session; a URL match is a suggestion and never grants access. Multiple matches require an explicit project choice. Before submitting a workspace-bound report or candidate, call `gossip_workspace` operation `attempt` with the task ID and attempt number, then use `commit:<workspace_head>` as the baseline when the attempt has a recorded head; the server rejects a different commit. If `workspace_dirty` is true, describe that state and the uncommitted changes you inspected—the service records the dirty flag but does not snapshot those file contents. If no head was recorded, explain the source baseline instead of inventing a commit.
+- Legacy HTTP dashboard tunnels are disabled through `gossip ui --frp-server`, `gossip tunnel init/config`, `gossip_setup_tunnel`, `gossip_setup configure_tunnel`, and the old dashboard tunnel API. Existing manually launched legacy `frpc` processes/configs are not removed automatically. Use `coord-frp` to write a private FRP TCP config to the mTLS listener started by `coord-serve`; the connection retains mutual TLS and project authorization.
+- Do not use legacy vault staging to share secrets between agents. Remote secret transfer is disabled, its MCP tool is removed from the default tool list, and the legacy dashboard staging panel stores plaintext locally. Deliver secrets through an independently approved secure channel.
+- Graph queries and impact analysis are heuristic; index results can be stale and are not proof of runtime behavior. Check relevant source and tests. The repo-map token budget is approximate.
+- The store uses JSON files and advisory locks; some multi-file operations are not transactional. Treat generated boards and briefings as snapshots, and surface partial failures.
 
-### C. Security Hardening Workflow (`security_hardening`)
-1. **STRIDE Threat Modeling** $\to$ 2. **Red-Team Probing** (via `gossip_redteam_generate_stride_probes`) $\to$ 3. **Defensive Patching** $\to$ 4. **Security Clearance Signoff**.
+Use SOP, debate, graph, and role tools only when they help the task. Roles describe responsibilities and can be adapted to the work; they are not authorization. MCP prompts provide instructions but do not execute them.
 
-#### Using SOPs:
-```json
-// 1. Start a feature workflow
-gossip_sop_start({
-  "template": "feature_delivery",
-  "title": "WebSocket Streaming Transport",
-  "description": "High-throughput binary framing socket transport",
-  "initiator": "agent:lead_orchestrator"
-})
-
-// 2. Save required deliverable artifact
-gossip_sop_save_artifact({
-  "workflow_id": "sop-feature_delivery-1793794674",
-  "stage_id": "requirements",
-  "artifact_type": "prd",
-  "title": "WebSocket Transport PRD",
-  "content": "## Goal\nImplement full-duplex socket transport with Castagnoli CRC32 framing...",
-  "created_by": "agent:pm"
-})
-
-// 3. Advance to next phase gate (validates required artifact presence)
-gossip_sop_advance({
-  "workflow_id": "sop-feature_delivery-1793794674",
-  "agent_id": "agent:lead_orchestrator",
-  "role": "orchestrator"
-})
-```
-
----
-
-## 3. Knowledge Graph RAG & Codebase Architecture Tools
-
-Inspired by **Graphify** and **Aider repo-map**, Gossip's knowledge graph provides deterministic code exploration without heavy vector databases:
-
-### A. PageRank Architectural Centrality
-Identify the most load-bearing hubs and utilities in the codebase:
-```json
-gossip_rag_pagerank({
-  "damping": 0.85,
-  "max_iterations": 100,
-  "tolerance": 0.00001
-})
-```
-
-### B. Blast-Radius & Affected Components Analysis (Graphify-style)
-Before changing a file, function, or architectural invariant, calculate who will break:
-```json
-gossip_rag_impact_analysis({
-  "seed_node_id": "util:core",
-  "depth": 3
-})
-```
-*Returns direct dependents (depth 1), transitive dependents (depth 2+), blast radius risk score (0.0–100.0), critical bottlenecks, and required verification test targets.*
-
-### C. Architectural Cluster & Subsystem Detection
-Partition the knowledge graph into functional submodules:
-```json
-gossip_rag_clusters({})
-```
-
-### D. Token-Budgeted Compact Repo-Map (Aider-style)
-Generate a compact summary of central symbols and dependencies that fits inside a strict LLM token budget (e.g. 1000 tokens):
-```json
-gossip_rag_repo_map({
-  "max_tokens": 1000
-})
-```
-
----
-
-## 4. Multi-Agent Debate (MAD), Ranked Voting & Red Teaming
-
-Gossip incorporates formal dialectic and adversarial testing protocols:
-
-### A. Multi-Agent Debate with Convergence Detection
-1. **Open Debate**: `gossip_start_debate({"title": "Protocol Selection", "description": "gRPC vs WebSocket vs SSE", "proposer": "net-1", "role": "network_engineer"})`
-2. **Post Arguments**: `gossip_post_argument({"debate_id": "deb-1", "agent_id": "net-1", "role": "network_engineer", "stance": "pro", "content": "WebSocket minimizes roundtrip handshakes."})`
-3. **Advance Rounds**: `gossip_advance_debate_round({"debate_id": "deb-1"})`
-4. **Check Convergence (Du et al., 2024)**:
-   ```json
-   gossip_debate_check_convergence({"debate_id": "deb-1"})
-   ```
-   *Returns agreement ratio, stance stability score, and recommendations (`proceed_to_vote`, `continue_debate`, or `deadlock_detected`).*
-
-### B. Ranked-Choice Voting (Borda Count)
-When deciding among multiple candidates, agents cast ordered preferences with confidence ratings (1-5):
-```json
-// Cast ranked vote
-gossip_debate_ranked_vote({
-  "debate_id": "deb-1",
-  "agent_id": "arch-1",
-  "role": "systems_architect",
-  "ranked_choices": ["Option B (WebSocket)", "Option A (gRPC)", "Option C (SSE)"],
-  "confidence": 5,
-  "reasoning": "Full duplex socket framing with lowest memory overhead"
-})
-
-// Tally consensus
-gossip_debate_tally_ranked_votes({"debate_id": "deb-1"})
-```
-
-### C. Adversarial Red-Team STRIDE Attack Probes
-1. **Automated STRIDE Probe Generation**:
-   Generate 6 structured attack scenarios (Spoofing, Tampering, Repudiation, Info Disclosure, DoS, Elevation of Privilege) against any component:
-   ```json
-   gossip_redteam_generate_stride_probes({
-     "target": "pkg/state/state.go",
-     "context": "Advisory file locking with flock",
-     "auto_log": true
-   })
-   ```
-2. **Generate Executive Security Report**:
-   Compile all probes into `.local/gossip/AUDIT_REPORT.md`:
-   ```json
-   gossip_redteam_generate_audit_report({})
-   ```
-
----
-
-## 5. Storage Architecture (`.local/gossip`)
-
-All state is persisted under `.local/gossip/` inside the current project root:
-- `.lock`: Advisory lockfile preventing file corruption across concurrent agent processes.
-- `state.json`: Agent registry, last heartbeats, active project goals, and milestones.
-- `tasks.json`: Task DAG, blocker lists, assignees, progress logs, and deliverables.
-- `sop.json`: Standard Operating Procedure workflows, active stage gates, and deliverables.
-- `artifacts/`: Directory of versioned Markdown artifacts (`<workflow>_<stage>_<type>.md`).
-- `deliberations.json`: Debates, multi-option votes, peer reviews, and red-team security probes.
-- `messages.jsonl`: Append-only audit ledger of every message sent between agents.
-- `graph.json`: Knowledge graph nodes and edges with relational provenance (`EXTRACTED` vs `INFERRED`).
-- `roles.json`: JSON-driven role definitions, directives, prompts, and tools (extensible dynamically).
-- `BOARD.md`: Automatically rendered Markdown Kanban board showing goals, debates, probes, and task lanes.
-- `GRAPH_REPORT.md`: Automatically rendered knowledge analysis summarizing core hubs and proofs.
-- `SOP_PIPELINE.md`: Live phase-gate pipeline tracker for active SOP workflows.
-- `AUDIT_REPORT.md`: Executive STRIDE security audit summary with remediation statuses.
-
----
-
-## 6. Complete MCP Tools Reference (56 Tools)
-
-### Bootstrap, Self-Introduction & Mesh Status
-- `gossip_setup` (aliases: `gsp_setup`, `gossip_setup_mesh`): Zero-friction project bootstrap initializing `.local/gossip`, roles, graph, guardrails, and setting up initial goal.
-- `gossip_introduce_agent` (aliases: `gossip_introduce`, `gsp_introduce`): First-class agent introduction and registration into the mesh. Sends a welcome briefing with current tasks, peers, and broadcasts an introduction announcement across the mesh.
-- `gossip_introduce_remote_peer` (aliases: `gossip_handshake`, `gsp_introduce_peer`): Register or handshake with a remote agent peer operating through an FRP/LAN tunnel or federated mesh node.
-- `gossip_status` (aliases: `gsp_status`, `gossip_get_status`): Full multi-agent system status, active tasks, and mandatory Remote Agent & Tunnel Disclosure status.
-
-### Agent & Role Management
-- `gossip_register_agent`: Join the active agent mesh (`agent_id`, `role`, `name`, `capabilities`).
-- `gossip_reidentify_agent` (aliases: `gsp_reidentify`, `gossip_resume_session`): Re-identify or resume an agent session across restarts or new context sessions, returning an instant catch-up briefing of in-progress tasks, unread inbox messages, active SOP stages, and personal to-dos.
-- `gossip_list_agents`: View online/idle agents, their scopes (`local` vs `remote:tunnel` / `remote:lan`), and current tasks.
-- `gossip_heartbeat`: Send heartbeat and update active status (`agent_id`, `current_task_id`, `status`).
-- `gossip_get_role_definition`: Read system prompt and directives for a role (`role_id`).
-- `gossip_list_roles`: List all specialist roles loaded from JSON.
-- `gossip_register_custom_role`: Dynamically register a new custom role in JSON (`id`, `title`, `description`, `system_prompt`, `directives`).
-
-### Inter-Agent Messaging
-- `gossip_send_message`: Send point-to-point, role (`role:<role>`), or broadcast message (`from`, `role`, `to`, `subject`, `content`).
-- `gossip_broadcast_message`: Broadcast announcement to all agents (`from`, `role`, `content`, `subject`).
-- `gossip_read_inbox`: Check incoming communications (`agent_id`, `role`, `only_unread`, `limit`).
-- `gossip_mark_messages_read`: Acknowledge receipt of messages (`agent_id`, `message_ids`).
-- `gossip_list_threads`: Inspect active discussion threads (`limit`).
-
-### Strategic Goals & Task DAG
-- `gossip_set_goal`: Set high-level strategic target (`title`, `description`, `milestone_titles`).
-- `gossip_get_goals`: View active goals and milestone progress.
-- `gossip_create_task`: Create task with dependency constraints (`title`, `description`, `role`, `blocked_by`).
-- `gossip_update_task`: Advance task lifecycle (`task_id`, `status`, `assigned_to`, `notes`, `artifact`).
-- `gossip_list_tasks`: Query task board (`status`, `role`, `assigned_to`).
-- `gossip_get_task`: View task details and history (`task_id`).
-- `gossip_render_board`: Fetch live Markdown Kanban board (`BOARD.md`).
-
-### Multi-Level To-Do & Orchestrator Delegation Lists
-- `gossip_personal_todo_add`: Add a personal checklist item or scratchpad task for an agent (`agent_id`, `title`, `priority`, `context_task_id`, `notes`).
-- `gossip_personal_todo_list`: List an agent's personal to-do items and working scratchpad (`agent_id`, `status`).
-- `gossip_personal_todo_update`: Update status (`pending`, `in_progress`, `done`) or notes on a personal task.
-- `gossip_personal_todo_delete`: Remove a personal checklist item (`agent_id`, `item_id`).
-- `gossip_system_todo_list`: Unified cross-system backlog aggregating ready DAG tasks, incomplete milestones, pending SOP phase gates, and open STRIDE security vulnerabilities.
-- `gossip_orchestrator_assignments`: Centralized workload and assignment matrix showing active tasks per agent, bottlenecks, and idle-worker delegation recommendations.
-
-### MetaGPT-Style Standard Operating Procedures (SOPs)
-- `gossip_sop_list_workflows`: List active workflows and available templates (`feature_delivery`, `bug_investigation`, `security_hardening`).
-- `gossip_sop_start`: Initiate an SOP workflow (`template`, `title`, `description`, `initiator`).
-- `gossip_sop_save_artifact`: Save structured artifact deliverable (`workflow_id`, `stage_id`, `artifact_type`, `title`, `content`, `created_by`).
-- `gossip_sop_advance`: Advance stage through phase gates after validating required deliverables and roles.
-- `gossip_sop_get_status`: Inspect active stage, blockers, and artifacts for a workflow.
-
-### Knowledge Graph RAG & Architectural Analysis
-- `gossip_rag_add_node`: Record concept/symbol/proof in shared RAG (`id`, `type`, `label`, `summary`, `tags`).
-- `gossip_rag_add_edge`: Link two nodes with `EXTRACTED` or `INFERRED` provenance (`source`, `target`, `relation`, `provenance`).
-- `gossip_rag_query`: Search shared knowledge graph with token ranking (`query`, `type`, `tag`, `limit`).
-- `gossip_rag_get_neighborhood`: Inspect 1-hop or 2-hop connected subgraph (`node_id`, `depth`).
-- `gossip_rag_find_path`: Shortest relationship path between two concepts (`source`, `target`).
-- `gossip_rag_export_report`: Fetch human-readable `GRAPH_REPORT.md`.
-- `gossip_rag_pagerank`: Compute PageRank centrality scores across all knowledge nodes.
-- `gossip_rag_impact_analysis`: Calculate blast radius and affected dependents (Graphify-style).
-- `gossip_rag_clusters`: Detect modular architectural clusters and submodules.
-- `gossip_rag_repo_map`: Generate PageRank-prioritized compact repo map (Aider-style).
-
-### Deliberations, Debates & Consensus
-- `gossip_start_debate`: Launch a multi-agent debate session (`title`, `description`, `proposer`, `role`).
-- `gossip_post_argument`: Contribute argument/rebuttal to debate round (`debate_id`, `agent_id`, `role`, `stance`, `content`).
-- `gossip_advance_debate_round`: Advance active debate to the next round.
-- `gossip_cast_vote`: Cast yes/no/abstain vote with confidence rating (`debate_id`, `agent_id`, `role`, `choice`, `confidence`).
-- `gossip_debate_ranked_vote`: Cast ranked-choice ballot across multiple candidates (`debate_id`, `agent_id`, `role`, `ranked_choices`, `confidence`).
-- `gossip_debate_tally_ranked_votes`: Run Borda Count tally to determine consensus winner.
-- `gossip_debate_check_convergence`: Check if debate has converged across rounds (Du et al., 2024).
-- `gossip_conclude_debate`: Conclude debate, tally votes, and register consensus decision in graph.
-
-### Peer Reviews & Red Teaming
-- `gossip_request_review`: Request formal peer review on deliverable (`target_type`, `target_id`, `author_id`, `reviewer_id`).
-- `gossip_submit_review`: Issue formal critique verdict & findings (`review_id`, `reviewer_id`, `status`, `verdict`).
-- `gossip_log_red_team_probe`: Log red-team exploit or race condition probe (`target`, `threat_category`, `attack_vector`, `poc`).
-- `gossip_redteam_generate_stride_probes`: Generate automated STRIDE attack scenarios for a target component.
-- `gossip_redteam_generate_audit_report`: Generate executive security audit report (`AUDIT_REPORT.md`).
-- `gossip_list_deliberations`: Query active debates, reviews, or probes (`type`, `status`).
-
-### Continuous Event Polling, State Sync & Cron Checking
-- `gossip_poll_events` (alias `gsp_poll`, `gossip_sync`): Continuously poll or long-poll for incoming messages, unblocked ready tasks, debate rounds, SOP phase gates, and peer heartbeats with configurable timeout (`since_time`, `timeout_seconds`, `event_types`, `auto_heartbeat`).
-  - Returns `server_time`, `has_updates`, `events`, `unread_messages_count`, `ready_tasks_count`, and `active_agents_count`.
-- `gossip_log_event`: Append an explicit custom milestone or event to the shared event ledger (`events.jsonl`).
-- `gossip_setup_cron` (alias `gsp_setup_cron`): Configure periodic cron check interval (e.g. `*/5 * * * *`, `@hourly`, `@every 30s`).
-- `gossip_cron_check` (alias `gsp_cron_check`): Run a single periodic cron pulse checking for unread inbox messages, ready tasks, stale heartbeats, and remote peer disclosures.
-
-### Protected FRP Tunneling & Federated Mesh Across Decoupled Worktrees
-- `gossip_setup_tunnel` (alias `gsp_setup_tunnel`): Configure FRP reverse-proxy tunnel for secure remote or local LAN access with mandatory HTTP basic auth protection and secret masking.
-- `gossip_remote_query` (alias `gsp_remote_query`): Query remote agent nodes across FRP/LAN tunnel without sharing filesystem paths across decoupled worktrees (`agent <-> mcp <-> frp/local <mcp> -> agent`).
-
-### Zero-Exposure Secret Vault
-- `gossip_secret_transfer` (alias `gsp_vault_transfer`): Securely stage and transfer secret files (e.g. `.env`, tokens, certs) between mesh nodes using AES-256-GCM encryption without exposing secret contents to the agent context or logs.
-
-### Mixture of Experts (MoE) Councils & Subagent Parallelism
-- `gossip_moe_convene_panel` (alias `gsp_moe_convene`): Convene an MoE council with automated router gating and specialist expert summoning (`title`, `query`, `domain`, `roles`, `max_parallel`).
-- `gossip_moe_post_argument` (alias `gsp_moe_argument`): Submit domain-specific technical arguments and trade-off points (`panel_id`, `agent_id`, `role`, `stance`, `perspective`, `key_points`).
-- `gossip_moe_synthesize` (alias `gsp_moe_synthesize`): Synthesize expert council viewpoints into unified consensus and modular parallel work packages.
-- `gossip_moe_dispatch_subagents` (alias `gsp_parallel`, `gsp_moe_dispatch`): Dispatch concurrent subagent workers for decoupled parallel tracks.
-- `gossip_moe_list_panels` (alias `gsp_moe_list`): Inspect all active and historical MoE discussion panels.
-
-### Guardrails, Role Derivation & Project Invariants
-- `gossip_derive_project_roles` (alias `gsp_derive_roles`): Synthesize LLM-derived specialist roles, cautions, and invariants for the project; generates `guardrails.json`, `AGENTS.md`, and `RULES.md`.
-- `gossip_guardrails_validate_action` (alias `gsp_guardrail_check`): Pre-action safety check checking caller role, action name, and target file against active invariants.
-- `gossip_set_caution_rule`: Register a custom caution rule (`id`, `category`, `level`, `trigger_pattern`, `directive`, `enforcement`).
-- `gossip_get_guardrails`: Inspect project invariants, tech stack, and active caution rules.
-- `gossip_export_agents_md`: Export human-readable Markdown agent directives (`AGENTS.md`).
-
----
-
-## 7. Native MCP Prompts as Slash Commands (`/gsp:...`)
-
-Gossip registers 15 official Model Context Protocol Prompts that modern MCP clients expose directly in chat as `/gsp:...`:
-
-1. `/gsp:moe`: Convene a Mixture of Experts discussion council to resolve a complex dilemma.
-2. `/gsp:parallel`: Dispatch parallel subagent execution tracks for decoupled tasks.
-3. `/gsp:resume`: Re-identify an agent across restarts or in a new session with an instant catch-up briefing.
-2. `/gsp:poll`: Set up continuous event polling and long-polling sync loop.
-3. `/gsp:assignments`: Inspect Orchestrator workload distribution, assigned tasks, and delegation suggestions.
-4. `/gsp:my_todos`: Inspect and update personal agent scratchpad checklist.
-5. `/gsp:system_todos`: Inspect unified project-wide action backlog.
-6. `/gsp:derive_roles`: Synthesize specialist roles and guardrails tailored to the active repository.
-7. `/gsp:blast_radius`: Analyze reverse dependency impact before modifying files or symbols.
-8. `/gsp:sop_advance`: Advance SOP phase gate with verification checklist.
-9. `/gsp:debate`: Initiate an adversarial multi-agent debate with convergence tracking.
-10. `/gsp:stride_audit`: Execute automated STRIDE threat modeling against interfaces.
-11. `/gsp:review`: Request or submit a formal peer review on deliverables.
-12. `/gsp:guardrail_check`: Pre-flight action inspection against caution rules.
-13. `/gsp:repomap`: Fetch token-budgeted PageRank architectural repo map.
-
----
-
-## 8. Research Citations & Attributions
-
-Gossip builds on foundational open-source multi-agent and AI security research. Formal citations are documented in `ATTRIBUTIONS.md`:
-- **MetaGPT (`geekan/MetaGPT`)**: Assembly-line Standard Operating Procedures ($\text{Code} = \text{SOP}(\text{Team})$).
-- **Graphify (`Graphify-Labs/graphify`)**: Deterministic knowledge graph RAG, reverse dependency blast radius (`affected.py`), and community clustering (`cluster.py`).
-- **Aider (`Aider-AI/aider`)**: PageRank centrality repo-mapping for compact token-budgeted codebase context injection.
-- **Multi-Agent Debate (Du et al., 2024 / Mohit Parkash)**: Multi-round dialectic deliberation with stance stability convergence tracking and Borda Count ranked-choice voting.
-- **Microsoft AutoGen & CrewAI**: Dynamic agent registration, task DAGs, and autonomous peer review protocols.
-- **PyRIT (`Azure/PyRIT`) & MultiAgent-RedTeam-Toolkit**: Adversarial red-team probing and STRIDE security audit generation.
-- **NVIDIA NeMo Guardrails**: Pre-action guardrail inspection, caution rule enforcement, and `AGENTS.md` synthesis.
+For repository maintenance, consult `docs/mcp-architecture-security-efficiency.md` and `docs/implementation-mechanics.md` when available for the current implementation and operation sequences. `docs/gossip-redesign-plan.md` includes both implemented and proposed behavior; verify implementation before relying on it.

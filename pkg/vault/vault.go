@@ -1,7 +1,6 @@
 package vault
 
 import (
-	"bytes"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/hmac"
@@ -12,13 +11,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 )
+
+var ErrRemoteSecretTransferDisabled = errors.New("legacy remote secret transfer is disabled; deliver credentials through a separate secure channel")
 
 // TransferReceipt summarizes a secure file transfer without revealing secret contents to agent context.
 type TransferReceipt struct {
@@ -228,75 +228,11 @@ func (m *Manager) ListStagedFiles() ([]VaultEntry, error) {
 	return list, nil
 }
 
-// TransferSecretToRemote encrypts a local file and sends it directly to a remote Gossip node
-// over the FRP tunnel or LAN endpoint, returning only a verified receipt.
+// TransferSecretToRemote is retained for source compatibility, but remote
+// secret transfer is disabled. Project credentials and transport certificates
+// must be delivered through a separate secure channel.
 func (m *Manager) TransferSecretToRemote(srcPath, remoteEndpoint, authToken, destRelPath string) (*TransferReceipt, error) {
-	data, err := os.ReadFile(srcPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read source file: %w", err)
-	}
-
-	size := int64(len(data))
-	checksum := ComputeSHA256(data)
-	fileName := filepath.Base(srcPath)
-	if destRelPath == "" {
-		destRelPath = fileName
-	}
-
-	// Encrypt payload with AES-256-GCM using authToken or derived passphrase
-	encData, err := EncryptPayload(data, authToken)
-	if err != nil {
-		return nil, fmt.Errorf("encryption failed: %w", err)
-	}
-
-	transferID := fmt.Sprintf("xfr-%x", time.Now().UnixNano()%100000000)
-
-	// If remoteEndpoint is an HTTP/FRP URL, perform HTTP POST to /api/vault/receive
-	if strings.HasPrefix(remoteEndpoint, "http://") || strings.HasPrefix(remoteEndpoint, "https://") {
-		targetURL := fmt.Sprintf("%s/api/vault/receive", strings.TrimRight(remoteEndpoint, "/"))
-		reqBody := map[string]interface{}{
-			"transfer_id":   transferID,
-			"filename":      destRelPath,
-			"payload_b64":   hex.EncodeToString(encData),
-			"sha256":        checksum,
-			"size_bytes":    size,
-			"encrypted":     true,
-			"auth_token":    authToken,
-		}
-		bodyBytes, _ := json.Marshal(reqBody)
-
-		client := &http.Client{Timeout: 30 * time.Second}
-		req, err := http.NewRequest(http.MethodPost, targetURL, bytes.NewReader(bodyBytes))
-		if err != nil {
-			return nil, fmt.Errorf("failed to create transfer request: %w", err)
-		}
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("X-Gossip-Vault-Transfer", transferID)
-
-		resp, err := client.Do(req)
-		if err != nil {
-			return nil, fmt.Errorf("network transfer to remote endpoint failed: %w", err)
-		}
-		defer resp.Body.Close()
-
-		if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-			respBytes, _ := io.ReadAll(resp.Body)
-			return nil, fmt.Errorf("remote node rejected transfer (HTTP %d): %s", resp.StatusCode, string(respBytes))
-		}
-	}
-
-	return &TransferReceipt{
-		TransferID:          transferID,
-		SourcePath:          srcPath,
-		DestinationEndpoint: remoteEndpoint,
-		DestinationPath:     destRelPath,
-		SizeBytes:           size,
-		SHA256:              checksum,
-		Encrypted:           true,
-		Status:              "COMPLETED",
-		Timestamp:           time.Now(),
-		Note:                "File transferred via authenticated AES-256-GCM encrypted tunnel. Secret contents shielded from agent context.",
-	}, nil
+	return nil, ErrRemoteSecretTransferDisabled
 }
 
 // ReceiveSecretPayload receives, decrypts, and saves a secret file with 0600 permissions.

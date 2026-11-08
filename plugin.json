@@ -25,14 +25,12 @@
     "gossip": {
       "command": "/absolute/path/to/gossip",
       "args": [
-        "serve",
-        "--dir",
-        "/private/path/gossip"
+        "coord-mcp",
+        "--credential-file",
+        "/private/path/to/project-credential.json"
       ],
       "cwd": "/path/to/gossip",
-      "env": {
-        "GOSSIP_DIR": "/private/path/gossip"
-      }
+      "env": {}
     }
   },
   "skills": [

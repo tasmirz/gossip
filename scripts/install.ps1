@@ -2,7 +2,7 @@
 .SYNOPSIS
     Gossip Universal Auto-Installer for Windows PowerShell
 .DESCRIPTION
-    Installs Gossip binaries and auto-configures MCP servers for Antigravity, OpenCode, Claude Desktop, Cursor, and VS Code.
+    Installs Gossip and prepares editor integrations; MCP registration is deferred until a project credential exists.
 .EXAMPLE
     .\scripts\install.ps1 -All
     .\scripts\install.ps1 -Client claude
@@ -47,13 +47,11 @@ if (-not $DryRun) {
         Push-Location $RepoRoot
         try {
             go build -o "$BinDir\gossip.exe" .\cmd\gossip
-            go build -o "$BinDir\gossip-mcp.exe" .\cmd\gossip
         } finally {
             Pop-Location
         }
     } elseif (Test-Path "$RepoRoot\bin\gossip-windows-amd64.exe") {
         Copy-Item "$RepoRoot\bin\gossip-windows-amd64.exe" "$BinDir\gossip.exe" -Force
-        Copy-Item "$RepoRoot\bin\gossip-windows-amd64.exe" "$BinDir\gossip-mcp.exe" -Force
     } else {
         Write-Warning "No prebuilt Windows binary found and Go compiler not in PATH."
     }
@@ -70,86 +68,49 @@ if (-not $DryRun) {
     Write-Host "  [DRY-RUN] Would install binaries to $BinDir"
 }
 
-function Update-McpJson {
-    param (
-        [string]$FilePath,
-        [string]$ServerName,
-        [string]$CommandPath
-    )
-
-    if ($DryRun) {
-        Write-Host "  [DRY-RUN] Would register '$ServerName' in $FilePath"
-        return
-    }
-
-    $ParentDir = Split-Path -Parent $FilePath
-    if (-not (Test-Path $ParentDir)) {
-        New-Item -ItemType Directory -Path $ParentDir -Force | Out-Null
-    }
-
-    $jsonObj = [PSCustomObject]@{}
-    if (Test-Path $FilePath) {
-        try {
-            $raw = Get-Content -Raw -Path $FilePath -ErrorAction SilentlyContinue
-            if ($raw) {
-                $jsonObj = $raw | ConvertFrom-Json
-            }
-        } catch {}
-    }
-
-    if (-not $jsonObj.mcpServers) {
-        $jsonObj | Add-Member -MemberType NoteProperty -Name "mcpServers" -Value ([PSCustomObject]@{}) -Force
-    }
-
-    $srvObj = [PSCustomObject]@{
-        command = $CommandPath
-        args = @("mcp")
-    }
-
-    $jsonObj.mcpServers | Add-Member -MemberType NoteProperty -Name $ServerName -Value $srvObj -Force
-
-    $jsonObj | ConvertTo-Json -Depth 10 | Set-Content -Path $FilePath -Encoding UTF8
-    Write-Host "  [OK] Registered MCP in $FilePath"
+function Explain-McpSetup {
+    param ([string]$FilePath, [string]$ServerName, [string]$CommandPath)
+    Write-Host "  [NOTE] Leaving $FilePath unchanged; configure coord-mcp after creating a project credential."
 }
 
 $ExePath = Join-Path $BinDir "gossip.exe"
 
 # 2. Configure Antigravity
 if ($All -or ($Client -like "*antigravity*")) {
-    Write-Host "[2/6] Configuring Antigravity Agent & MCP plugin..."
+    Write-Host "[2/6] Preparing Antigravity integration..."
     $AgyCfg = Join-Path $env:USERPROFILE ".gemini\config\config.json"
     $AgyMcpCfg = Join-Path $env:USERPROFILE ".gemini\config\mcp_config.json"
-    Update-McpJson -FilePath $AgyCfg -ServerName "gossip" -CommandPath $ExePath
-    Update-McpJson -FilePath $AgyMcpCfg -ServerName "gossip" -CommandPath $ExePath
+    Explain-McpSetup -FilePath $AgyCfg -ServerName "gossip" -CommandPath $ExePath
+    Explain-McpSetup -FilePath $AgyMcpCfg -ServerName "gossip" -CommandPath $ExePath
 }
 
 # 3. Configure OpenCode
 if ($All -or ($Client -like "*opencode*")) {
-    Write-Host "[3/6] Configuring OpenCode MCP..."
+    Write-Host "[3/6] Preparing OpenCode integration..."
     $OcCfg = Join-Path $env:USERPROFILE ".config\opencode\opencode.json"
-    Update-McpJson -FilePath $OcCfg -ServerName "gossip" -CommandPath $ExePath
+    Explain-McpSetup -FilePath $OcCfg -ServerName "gossip" -CommandPath $ExePath
 }
 
 # 4. Configure Claude Desktop
 if ($All -or ($Client -like "*claude*")) {
-    Write-Host "[4/6] Configuring Claude Desktop MCP..."
+    Write-Host "[4/6] Preparing Claude Desktop integration..."
     $ClaudeCfg = Join-Path $env:APPDATA "Claude\claude_desktop_config.json"
-    Update-McpJson -FilePath $ClaudeCfg -ServerName "gossip" -CommandPath $ExePath
+    Explain-McpSetup -FilePath $ClaudeCfg -ServerName "gossip" -CommandPath $ExePath
 }
 
 # 5. Configure Cursor
 if ($All -or ($Client -like "*cursor*")) {
-    Write-Host "[5/6] Configuring Cursor MCP..."
+    Write-Host "[5/6] Preparing Cursor integration..."
     $CursorCfg = Join-Path $env:USERPROFILE ".cursor\mcp.json"
-    Update-McpJson -FilePath $CursorCfg -ServerName "gossip" -CommandPath $ExePath
+    Explain-McpSetup -FilePath $CursorCfg -ServerName "gossip" -CommandPath $ExePath
 }
 
 # 6. Configure VS Code
 if ($All -or ($Client -like "*vscode*")) {
-    Write-Host "[6/6] Configuring VS Code Workspace MCP..."
+    Write-Host "[6/6] Preparing VS Code Workspace integration..."
     $VscodeCfg = ".vscode\mcp.json"
     if ((Test-Path ".vscode") -or ($Client -like "*vscode*")) {
-        Update-McpJson -FilePath $VscodeCfg -ServerName "gossip" -CommandPath $ExePath
+        Explain-McpSetup -FilePath $VscodeCfg -ServerName "gossip" -CommandPath $ExePath
     } else {
         Write-Host "  [SKIP] No .vscode directory found in current working directory"
     }
@@ -158,12 +119,8 @@ if ($All -or ($Client -like "*vscode*")) {
 # Optional FRP Tunnel
 if ($WithFRP) {
     Write-Host ""
-    Write-Host "[TUNNEL] Configuring Protected FRP Reverse-Proxy Tunnel..."
-    if ($FRPServer) {
-        & "$ExePath" tunnel init --server $FRPServer --user $User --pass $Pass
-    } else {
-        Write-Host "  [NOTE] Run 'gossip tunnel init --server <addr> --user <user> --pass <pass>' to configure tunnel."
-    }
+    Write-Host "[TUNNEL] FRP forwards TCP to a coord-serve mutual-TLS listener."
+    Write-Host "  [NOTE] Configure the home certificate and client grants, then run 'gossip coord-frp'."
 }
 
 Write-Host ""
@@ -171,8 +128,8 @@ Write-Host "+--------------------------------------------------------+"
 Write-Host "| [SUCCESS] GOSSIP INSTALLATION COMPLETED                |"
 Write-Host "+--------------------------------------------------------+"
 Write-Host "Verify status:          gossip status"
-Write-Host "Start MCP stdio mode:   gossip mcp"
+Write-Host "Connect a project folder, then configure coord-mcp with its private project credential."
 Write-Host "Launch Web Control:     gossip ui --port 8080"
 Write-Host "Periodic cron check:    gossip cron --interval 30s"
-Write-Host "Protected FRP tunnel:   gossip tunnel status"
+Write-Host "FRP transport:          gossip coord-frp (after coord-serve is configured)"
 Write-Host "+--------------------------------------------------------+"

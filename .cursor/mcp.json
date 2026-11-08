@@ -3,11 +3,20 @@
     "gossip": {
       "command": "${workspaceFolder}/bin/gossip-mcp",
       "args": [
-        "serve"
-      ],
-      "env": {
-        "GOSSIP_DIR": "${workspaceFolder}/.local/gossip"
-      }
+        "coord-mcp",
+        "--credential-file",
+        "${userHome}/.config/gossip/credentials/project.json"
+      ]
+    },
+    "gossip-project-bootstrap": {
+      "command": "${workspaceFolder}/bin/gossip-mcp",
+      "args": [
+        "coord-mcp-bootstrap",
+        "--bootstrap-api-key-file",
+        "${userHome}/.config/gossip/bootstrap.key",
+        "--credential-dir",
+        "${userHome}/.config/gossip/credentials"
+      ]
     }
   }
 }

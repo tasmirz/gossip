@@ -3,15 +3,96 @@ package web_test
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/tasmirz/gossip/pkg/roles"
 	"github.com/tasmirz/gossip/pkg/state"
 	"github.com/tasmirz/gossip/pkg/web"
 )
+
+func localRequest(method, target string, body io.Reader) *http.Request {
+	if !strings.HasPrefix(target, "http://") && !strings.HasPrefix(target, "https://") {
+		target = "http://localhost" + target
+	}
+	req := httptest.NewRequest(method, target, body)
+	if method != http.MethodGet && method != http.MethodHead && method != http.MethodOptions {
+		req.Header.Set("Origin", "http://localhost")
+	}
+	return req
+}
+
+func TestLegacyDashboardRejectsUntrustedBrowserOrigins(t *testing.T) {
+	store, err := state.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := web.NewServer(0, store, roles.GetDefaultService()).Handler()
+
+	for _, host := range []string{"attacker.example", "attacker.example:8080"} {
+		req := httptest.NewRequest(http.MethodGet, "http://"+host+"/api/vault/list", nil)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusForbidden {
+			t.Errorf("untrusted Host %q reached local dashboard: got %d", host, rec.Code)
+		}
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "http://localhost/api/tunnel", bytes.NewBufferString(`{"action":"generate"}`))
+	req.Header.Set("Origin", "http://attacker.example")
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("cross-origin mutation reached local dashboard: got %d", rec.Code)
+	}
+
+	for _, host := range []string{"localhost", "localhost:8080", "127.0.0.1:8080", "[::1]:8080"} {
+		req := httptest.NewRequest(http.MethodGet, "http://"+host+"/api/status", nil)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Errorf("loopback Host %q was rejected: got %d", host, rec.Code)
+		}
+	}
+}
+
+func TestIncompleteAuthenticationFailsClosed(t *testing.T) {
+	store, err := state.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := web.NewServer(0, store, roles.GetDefaultService())
+	for _, credentials := range [][2]string{{"admin", ""}, {"", "password"}} {
+		server.SetAuth(credentials[0], credentials[1])
+		req := localRequest(http.MethodGet, "/api/status", nil)
+		req.SetBasicAuth(credentials[0], credentials[1])
+		rec := httptest.NewRecorder()
+		server.Handler().ServeHTTP(rec, req)
+		if rec.Code != http.StatusServiceUnavailable {
+			t.Fatalf("incomplete credentials: got %d", rec.Code)
+		}
+	}
+}
+
+func TestLegacyRemoteVaultEndpointsDisabled(t *testing.T) {
+	store, err := state.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := web.NewServer(0, store, roles.GetDefaultService()).Handler()
+	for _, path := range []string{"/api/vault/transfer", "/api/vault/receive"} {
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, localRequest(http.MethodPost, path, bytes.NewBufferString("{}")))
+		if rec.Code != http.StatusGone {
+			t.Fatalf("%s: got %d", path, rec.Code)
+		}
+	}
+}
 
 func TestWebDashboardEndpoints(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "gossip-web-test-*")
@@ -30,7 +111,7 @@ func TestWebDashboardEndpoints(t *testing.T) {
 	handler := server.Handler()
 
 	// 1. Test GET / (HTML Index)
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req := localRequest(http.MethodGet, "/", nil)
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -48,7 +129,7 @@ func TestWebDashboardEndpoints(t *testing.T) {
 	}
 
 	// 2. Test GET /api/projects
-	req = httptest.NewRequest(http.MethodGet, "/api/projects", nil)
+	req = localRequest(http.MethodGet, "/api/projects", nil)
 	rec = httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -56,7 +137,7 @@ func TestWebDashboardEndpoints(t *testing.T) {
 	}
 
 	// 3. Test GET /api/status
-	req = httptest.NewRequest(http.MethodGet, "/api/status", nil)
+	req = localRequest(http.MethodGet, "/api/status", nil)
 	rec = httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -71,7 +152,7 @@ func TestWebDashboardEndpoints(t *testing.T) {
 		"priority":    "high",
 	}
 	data, _ := json.Marshal(taskPayload)
-	req = httptest.NewRequest(http.MethodPost, "/api/tasks", bytes.NewBuffer(data))
+	req = localRequest(http.MethodPost, "/api/tasks", bytes.NewBuffer(data))
 	rec = httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -79,7 +160,7 @@ func TestWebDashboardEndpoints(t *testing.T) {
 	}
 
 	// 4. Test GET /api/tasks (List Tasks)
-	req = httptest.NewRequest(http.MethodGet, "/api/tasks", nil)
+	req = localRequest(http.MethodGet, "/api/tasks", nil)
 	rec = httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -94,7 +175,7 @@ func TestWebDashboardEndpoints(t *testing.T) {
 		"content": "All agents resume work",
 	}
 	data, _ = json.Marshal(msgPayload)
-	req = httptest.NewRequest(http.MethodPost, "/api/broadcast", bytes.NewBuffer(data))
+	req = localRequest(http.MethodPost, "/api/broadcast", bytes.NewBuffer(data))
 	rec = httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -110,7 +191,7 @@ func TestWebDashboardEndpoints(t *testing.T) {
 		"max_parallel": 4,
 	}
 	data, _ = json.Marshal(moePayload)
-	req = httptest.NewRequest(http.MethodPost, "/api/moe/convene", bytes.NewBuffer(data))
+	req = localRequest(http.MethodPost, "/api/moe/convene", bytes.NewBuffer(data))
 	rec = httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -122,7 +203,7 @@ func TestWebDashboardEndpoints(t *testing.T) {
 		ID string `json:"id"`
 	}
 	// Extract task ID from previous list
-	req = httptest.NewRequest(http.MethodGet, "/api/tasks", nil)
+	req = localRequest(http.MethodGet, "/api/tasks", nil)
 	rec = httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 	var taskList []struct {
@@ -151,7 +232,7 @@ func TestWebDashboardEndpoints(t *testing.T) {
 		"progress_note": "Starting execution",
 	}
 	data, _ = json.Marshal(modPayload)
-	req = httptest.NewRequest(http.MethodPost, "/api/tasks/modify", bytes.NewBuffer(data))
+	req = localRequest(http.MethodPost, "/api/tasks/modify", bytes.NewBuffer(data))
 	rec = httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -175,7 +256,7 @@ func TestWebDashboardEndpoints(t *testing.T) {
 		"content":  "# High Availability Deployment Plan\n\nPhase 1: Rollout...",
 	}
 	data, _ = json.Marshal(planPayload)
-	req = httptest.NewRequest(http.MethodPost, "/api/artifacts/create", bytes.NewBuffer(data))
+	req = localRequest(http.MethodPost, "/api/artifacts/create", bytes.NewBuffer(data))
 	rec = httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -183,7 +264,7 @@ func TestWebDashboardEndpoints(t *testing.T) {
 	}
 
 	// 9. Test GET /api/artifacts (List Plans & Artifacts)
-	req = httptest.NewRequest(http.MethodGet, "/api/artifacts", nil)
+	req = localRequest(http.MethodGet, "/api/artifacts", nil)
 	rec = httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -206,7 +287,7 @@ func TestWebDashboardEndpoints(t *testing.T) {
 	}
 
 	// 10. Test GET /api/artifacts/content
-	req = httptest.NewRequest(http.MethodGet, "/api/artifacts/content?file=.local/gossip/artifacts/DEPLOYMENT_PLAN.md", nil)
+	req = localRequest(http.MethodGet, "/api/artifacts/content?file=.local/gossip/artifacts/DEPLOYMENT_PLAN.md", nil)
 	rec = httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -226,7 +307,7 @@ func TestWebDashboardEndpoints(t *testing.T) {
 		"content": "# Updated Plan\n\nPhase 2 Complete.",
 	}
 	data, _ = json.Marshal(savePayload)
-	req = httptest.NewRequest(http.MethodPost, "/api/artifacts/save", bytes.NewBuffer(data))
+	req = localRequest(http.MethodPost, "/api/artifacts/save", bytes.NewBuffer(data))
 	rec = httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -234,7 +315,7 @@ func TestWebDashboardEndpoints(t *testing.T) {
 	}
 
 	// 12. Security Test: Path Traversal on Artifacts Must Be Blocked
-	req = httptest.NewRequest(http.MethodGet, "/api/artifacts/content?file=../../../../etc/passwd", nil)
+	req = localRequest(http.MethodGet, "/api/artifacts/content?file=../../../../etc/passwd", nil)
 	rec = httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 	if rec.Code == http.StatusOK {
@@ -250,7 +331,7 @@ func TestWebDashboardEndpoints(t *testing.T) {
 		"content": "Can you check node 3 metrics?",
 	}
 	data, _ = json.Marshal(dmPayload)
-	req = httptest.NewRequest(http.MethodPost, "/api/messages", bytes.NewBuffer(data))
+	req = localRequest(http.MethodPost, "/api/messages", bytes.NewBuffer(data))
 	rec = httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -269,22 +350,15 @@ func TestWebDashboardEndpoints(t *testing.T) {
 		"http_password": "ProtectedPassword123",
 	}
 	data, _ = json.Marshal(genPayload)
-	req = httptest.NewRequest(http.MethodPost, "/api/tunnel", bytes.NewBuffer(data))
+	req = localRequest(http.MethodPost, "/api/tunnel", bytes.NewBuffer(data))
 	rec = httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("Expected 200 for POST /api/tunnel, got %d: %s", rec.Code, rec.Body.String())
-	}
-	var genRes struct {
-		Config string `json:"config"`
-	}
-	_ = json.Unmarshal(rec.Body.Bytes(), &genRes)
-	if !bytes.Contains([]byte(genRes.Config), []byte(`httpUser = "meshadmin"`)) {
-		t.Fatalf("Generated FRP TOML missing httpUser: %s", genRes.Config)
+	if rec.Code != http.StatusGone || !bytes.Contains(rec.Body.Bytes(), []byte("coord-serve")) {
+		t.Fatalf("legacy HTTP tunnel was not rejected with secure migration guidance: %d %s", rec.Code, rec.Body.String())
 	}
 
 	// 15. Test GET /api/tunnel/disclosure
-	req = httptest.NewRequest(http.MethodGet, "/api/tunnel/disclosure", nil)
+	req = localRequest(http.MethodGet, "/api/tunnel/disclosure", nil)
 	rec = httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -299,7 +373,7 @@ func TestWebDashboardEndpoints(t *testing.T) {
 		"description": "Test environment key",
 	}
 	data, _ = json.Marshal(vaultPayload)
-	req = httptest.NewRequest(http.MethodPost, "/api/vault/stage", bytes.NewBuffer(data))
+	req = localRequest(http.MethodPost, "/api/vault/stage", bytes.NewBuffer(data))
 	rec = httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -307,7 +381,7 @@ func TestWebDashboardEndpoints(t *testing.T) {
 	}
 
 	// 17. Test GET /api/vault/list
-	req = httptest.NewRequest(http.MethodGet, "/api/vault/list", nil)
+	req = localRequest(http.MethodGet, "/api/vault/list", nil)
 	rec = httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -317,7 +391,7 @@ func TestWebDashboardEndpoints(t *testing.T) {
 	// 18. Test BasicAuth Protection
 	server.SetAuth("admin", "correctpassword")
 	// Without auth: expect 401
-	req = httptest.NewRequest(http.MethodGet, "/api/status", nil)
+	req = localRequest(http.MethodGet, "/api/status", nil)
 	rec = httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusUnauthorized {
@@ -325,7 +399,7 @@ func TestWebDashboardEndpoints(t *testing.T) {
 	}
 
 	// With correct auth: expect 200
-	req = httptest.NewRequest(http.MethodGet, "/api/status", nil)
+	req = localRequest(http.MethodGet, "/api/status", nil)
 	req.SetBasicAuth("admin", "correctpassword")
 	rec = httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)

@@ -7,8 +7,10 @@ import (
 
 	"github.com/mark3labs/mcp-go/mcp"
 	gossipmcp "github.com/tasmirz/gossip/pkg/mcp"
+	"github.com/tasmirz/gossip/pkg/messages"
 	"github.com/tasmirz/gossip/pkg/roles"
 	"github.com/tasmirz/gossip/pkg/state"
+	"github.com/tasmirz/gossip/pkg/tasks"
 )
 
 func TestMCPServerInitializationAndDynamicRoles(t *testing.T) {
@@ -62,6 +64,119 @@ func TestMCPServerInitializationAndDynamicRoles(t *testing.T) {
 	mcpServer := srv.MCPServer()
 	if mcpServer == nil {
 		t.Fatal("Expected non-nil MCPServer instance")
+	}
+}
+
+func TestMCPConfiguredIdentityCannotBeSpoofedByToolArguments(t *testing.T) {
+	store, err := state.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := gossipmcp.NewServerForAgent(store, nil, gossipmcp.AgentIdentity{ID: "worker-1", Role: "worker", Name: "Trusted Worker"})
+
+	register := srv.MCPServer().GetTool("gossip_register_agent")
+	result, err := register.Handler(context.Background(), mcp.CallToolRequest{Params: mcp.CallToolParams{Name: "gossip_register_agent", Arguments: map[string]any{
+		"agent_id": "orchestrator", "role": "orchestrator", "name": "Spoofed Owner",
+	}}})
+	if err != nil || result.IsError {
+		t.Fatalf("configured identity registration failed: result=%+v err=%v", result, err)
+	}
+	if agent, found, err := store.GetAgent("worker-1"); err != nil || !found || agent.Role != "worker" || agent.Name != "Trusted Worker" {
+		t.Fatalf("trusted server identity was not stored: agent=%+v found=%v err=%v", agent, found, err)
+	}
+	if _, found, err := store.GetAgent("orchestrator"); err != nil || found {
+		t.Fatalf("model-supplied identity was registered: found=%v err=%v", found, err)
+	}
+
+	send := srv.MCPServer().GetTool("gossip_send_message")
+	result, err = send.Handler(context.Background(), mcp.CallToolRequest{Params: mcp.CallToolParams{Name: "gossip_send_message", Arguments: map[string]any{
+		"from": "orchestrator", "role": "orchestrator", "to": "all", "content": "identity binding check",
+	}}})
+	if err != nil || result.IsError {
+		t.Fatalf("bound message send failed: result=%+v err=%v", result, err)
+	}
+	entries, err := messages.NewManager(store).LoadAllMessages()
+	if err != nil || len(entries) != 1 || entries[0].From != "worker-1" || entries[0].Role != "worker" {
+		t.Fatalf("message sender identity was spoofable: entries=%+v err=%v", entries, err)
+	}
+
+	setGoal := srv.MCPServer().GetTool("gossip_set_goal")
+	result, err = setGoal.Handler(context.Background(), mcp.CallToolRequest{Params: mcp.CallToolParams{Name: "gossip_set_goal", Arguments: map[string]any{
+		"title": "Must be denied", "description": "The model claims orchestrator", "caller_role": "orchestrator",
+	}}})
+	if err != nil || !result.IsError {
+		t.Fatalf("model-supplied role escalated goal permission: result=%+v err=%v", result, err)
+	}
+	createTask := srv.MCPServer().GetTool("gossip_create_task")
+	result, err = createTask.Handler(context.Background(), mcp.CallToolRequest{Params: mcp.CallToolParams{Name: "gossip_create_task", Arguments: map[string]any{
+		"title": "Must be denied", "description": "Worker claims orchestrator through target role", "role": "orchestrator",
+	}}})
+	if err != nil || !result.IsError {
+		t.Fatalf("worker escalated task delegation: result=%+v err=%v", result, err)
+	}
+
+	otherTask, err := tasks.NewManager(store).CreateTask("Other agent's task", "Do not overwrite this task", "worker", "normal", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	updateTask := srv.MCPServer().GetTool("gossip_update_task")
+	result, err = updateTask.Handler(context.Background(), mcp.CallToolRequest{Params: mcp.CallToolParams{Name: "gossip_update_task", Arguments: map[string]any{
+		"task_id": otherTask.ID, "status": tasks.StatusCompleted, "assigned_to": "worker-1",
+	}}})
+	if err != nil || !result.IsError {
+		t.Fatalf("worker changed an unassigned task: result=%+v err=%v", result, err)
+	}
+}
+
+func TestSecretTransferToolsAreNotExposedToAgents(t *testing.T) {
+	store, err := state.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := gossipmcp.NewServer(store, nil)
+	for _, name := range []string{"gossip_secret_transfer", "gsp_vault_transfer"} {
+		if tool := srv.MCPServer().GetTool(name); tool != nil {
+			t.Fatalf("unsafe legacy tool %s is still exposed", name)
+		}
+	}
+}
+
+func TestArbitraryRemoteQueryToolsAreNotExposedToAgents(t *testing.T) {
+	store, err := state.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := gossipmcp.NewServer(store, nil)
+	for _, name := range []string{"gossip_remote_query", "gsp_remote_query"} {
+		if tool := srv.MCPServer().GetTool(name); tool != nil {
+			t.Fatalf("arbitrary-endpoint tool %s is still exposed", name)
+		}
+	}
+}
+
+func TestLegacyHTTPFRPTunnelingDisabled(t *testing.T) {
+	store, err := state.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := gossipmcp.NewServer(store, nil).MCPServer()
+	before, err := store.LoadProjectState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	setup := srv.GetTool("gossip_setup")
+	res, err := setup.Handler(context.Background(), mcp.CallToolRequest{Params: mcp.CallToolParams{Name: "gossip_setup", Arguments: map[string]any{"project_name": "should-not-initialize", "configure_tunnel": true}}})
+	if err != nil || !res.IsError {
+		t.Fatalf("legacy setup enabled HTTP FRP: %+v %v", res, err)
+	}
+	stored, err := store.LoadProjectState()
+	if err != nil || stored.ProjectName != before.ProjectName || len(stored.Goals) != len(before.Goals) {
+		t.Fatalf("rejected legacy tunnel setup mutated project state: %+v %v", stored, err)
+	}
+	for _, name := range []string{"gossip_setup_tunnel", "gsp_setup_tunnel"} {
+		if tool := srv.GetTool(name); tool != nil {
+			t.Fatalf("retired legacy tunnel tool %s is still exposed", name)
+		}
 	}
 }
 
@@ -186,30 +301,15 @@ func TestMCPSetupAndIntroduce(t *testing.T) {
 		t.Fatalf("Introduced agent not found in store: %+v", sess)
 	}
 
-	// 3. Test gossip_introduce_remote_peer
-	peerTool := srv.MCPServer().GetTool("gossip_introduce_remote_peer")
-	if peerTool == nil {
-		t.Fatal("Expected tool gossip_introduce_remote_peer to be registered")
+	// 3. Remote membership must be established by the project-scoped mTLS flow,
+	// not by a model-supplied peer ID, role, and endpoint.
+	for _, name := range []string{"gossip_introduce_remote_peer", "gossip_handshake", "gsp_introduce_peer"} {
+		if srv.MCPServer().GetTool(name) != nil {
+			t.Fatalf("unauthenticated remote peer registration tool %s is still exposed", name)
+		}
 	}
-
-	res, err = peerTool.Handler(context.Background(), mcp.CallToolRequest{
-		Params: mcp.CallToolParams{
-			Name: "gossip_introduce_remote_peer",
-			Arguments: map[string]any{
-				"peer_agent_id": "remote-bob",
-				"peer_role":     "security_specialist",
-				"peer_endpoint": "frp://remote.cloud:7000",
-				"peer_worktree": "/home/bob/backend",
-			},
-		},
-	})
-	if err != nil || res.IsError {
-		t.Fatalf("gossip_introduce_remote_peer failed: %v, res: %+v", err, res)
-	}
-
-	remoteSess, found, _ := store.GetAgent("remote-bob")
-	if !found || !remoteSess.IsRemote || remoteSess.RemoteEndpoint != "frp://remote.cloud:7000" {
-		t.Fatalf("Remote peer not properly recorded: %+v", remoteSess)
+	if _, found, err := store.GetAgent("remote-bob"); err != nil || found {
+		t.Fatalf("retired remote registration unexpectedly changed local agent state: found=%v err=%v", found, err)
 	}
 
 	// 4. Test gossip_status
@@ -242,25 +342,6 @@ func TestMCPSetupAndIntroduce(t *testing.T) {
 		t.Fatalf("gossip_cron_check failed: %v, res: %+v", err, res)
 	}
 
-	// 6. Test gossip_secret_transfer (local staging)
-	dummyFile := tmpDir + "/secret.env"
-	_ = os.WriteFile(dummyFile, []byte("SECRET_KEY=12345"), 0600)
-	xfrTool := srv.MCPServer().GetTool("gossip_secret_transfer")
-	if xfrTool == nil {
-		t.Fatal("Expected tool gossip_secret_transfer to be registered")
-	}
-	res, err = xfrTool.Handler(context.Background(), mcp.CallToolRequest{
-		Params: mcp.CallToolParams{
-			Name: "gossip_secret_transfer",
-			Arguments: map[string]any{
-				"source_path": dummyFile,
-				"description": "API credentials",
-			},
-		},
-	})
-	if err != nil || res.IsError {
-		t.Fatalf("gossip_secret_transfer failed: %v, res: %+v", err, res)
-	}
 }
 
 // Dummy context to satisfy unused imports if needed
