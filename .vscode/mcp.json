@@ -4,6 +4,8 @@
       "command": "${workspaceFolder}/bin/gossip-mcp",
       "args": [
         "coord-mcp",
+        "--db",
+        "${userHome}/.config/gossip/coord.db",
         "--credential-file",
         "${userHome}/.config/gossip/credentials/project.json"
       ]
@@ -12,6 +14,8 @@
       "command": "${workspaceFolder}/bin/gossip-mcp",
       "args": [
         "coord-mcp-bootstrap",
+        "--db",
+        "${userHome}/.config/gossip/coord.db",
         "--bootstrap-api-key-file",
         "${userHome}/.config/gossip/bootstrap.key",
         "--credential-dir",

@@ -133,10 +133,19 @@ func TestProjectBootstrapMCPCreatesInferredWorkspaceAndPrivateCredential(t *test
 		}
 	}
 	credentialDir := filepath.Join(t.TempDir(), "credentials")
-	srv := coord.ProjectBootstrapMCPServer(store, credentialDir)
+	bootstrapKey := strings.Repeat("local-bootstrap-secret-", 2)
+	if err := store.ConfigureLocalBootstrapKey(context.Background(), bootstrapKey); err != nil {
+		t.Fatal(err)
+	}
+	srv := coord.ProjectBootstrapMCPServer(store, credentialDir, bootstrapKey)
 	tool := srv.GetTool("gossip_create_project")
 	if tool == nil {
 		t.Fatal("bootstrap project tool missing")
+	}
+	wrongServer := coord.ProjectBootstrapMCPServer(store, filepath.Join(t.TempDir(), "wrong-credentials"), strings.Repeat("wrong-bootstrap-secret-", 2))
+	wrongResult, wrongErr := wrongServer.GetTool("gossip_create_project").Handler(context.Background(), mcp.CallToolRequest{Params: mcp.CallToolParams{Name: "gossip_create_project", Arguments: map[string]any{"local_path": root, "request_id": "bootstrap-wrong-key"}}})
+	if wrongErr != nil || !wrongResult.IsError {
+		t.Fatalf("local bootstrap accepted an unconfigured API key: result=%+v err=%v", wrongResult, wrongErr)
 	}
 	requestID := "bootstrap-project-test"
 	result, err := tool.Handler(context.Background(), mcp.CallToolRequest{Params: mcp.CallToolParams{Name: "gossip_create_project", Arguments: map[string]any{"local_path": root, "request_id": requestID}}})

@@ -563,7 +563,7 @@ func TestRemoteWebCertificateProjectGrants(t *testing.T) {
 	if first.Code != http.StatusOK || len(first.Result().Cookies()) == 0 {
 		t.Fatalf("authorized certificate could not connect: %d %s", first.Code, first.Body.String())
 	}
-	if denied := login(p2.ID, owner2.Token, certificate); denied.Code != http.StatusUnauthorized {
+	if denied := login(p2.ID, owner2.Token, certificate); denied.Code != http.StatusForbidden {
 		t.Fatalf("certificate accessed ungranted project: %d", denied.Code)
 	}
 	cookie := first.Result().Cookies()[0]
@@ -591,7 +591,7 @@ func TestRemoteWebCertificateProjectGrants(t *testing.T) {
 	if _, err := s.WhoAmI(context.Background(), p2.ID, invited.Token); !errors.Is(err, coord.ErrUnauthorized) {
 		t.Fatalf("invited project credential crossed project scope: %v", err)
 	}
-	if denied := login(p1.ID, invited.Token, other); denied.Code != http.StatusUnauthorized {
+	if denied := login(p1.ID, invited.Token, other); denied.Code != http.StatusForbidden {
 		t.Fatalf("project credential bypassed the remote certificate grant: %d", denied.Code)
 	}
 	otherSum := sha256.Sum256(other.Raw)
@@ -912,7 +912,7 @@ func TestRemoteWebLiveMutualTLS(t *testing.T) {
 	}
 	denied := post(client(ungrantedCert), "/api/login", `{"project_id":"`+project.ID+`","token":"`+owner.Token+`"}`, nil)
 	defer denied.Body.Close()
-	if denied.StatusCode != http.StatusUnauthorized {
+	if denied.StatusCode != http.StatusForbidden {
 		t.Fatalf("CA-trusted but project-ungranted client could log in: %d", denied.StatusCode)
 	}
 }

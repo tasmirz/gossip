@@ -33,10 +33,10 @@ Open [http://127.0.0.1:8081](http://127.0.0.1:8081), choose **Create local proje
 In each MCP client, configure `coord-mcp` with that project's credential file. The checked-in [MCP examples](mcp.json) also include a separate, optional create-only bootstrap server. Generate its private API key with:
 
 ```sh
-./bin/gossip coord-bootstrap-key --key-file /private/path/gossip/bootstrap.key
+./bin/gossip coord-bootstrap-key --db /private/path/gossip/coord.db --key-file /private/path/gossip/bootstrap.key
 ```
 
-Configure `coord-mcp-bootstrap` with `--bootstrap-api-key-file` pointing to that file and `--credential-dir` pointing to a private directory. Its only tool creates projects from Git folders; it saves credentials privately and does not return the token to the model. For remote creation, the home must also enable the bootstrap key and the MCP client must use a CA-verified TLS client certificate. See [coordination setup](docs/coordination-preview.md).
+For local creation, `--db` stores only a SHA-256 digest in that coordinator database; the MCP server checks the key against it before creating a project. Use the same database path with `coord-mcp-bootstrap` (or `--socket` for a daemon using that database). For remote creation, generate the key without `--db`, configure the home with `coord-serve --bootstrap-api-key-file`, and use a CA-verified TLS client certificate. In both cases `coord-mcp-bootstrap` requires `--bootstrap-api-key-file` and `--credential-dir`; its only tool creates projects from Git folders, saves credentials privately, and does not return the token to the model. See [coordination setup](docs/coordination-preview.md).
 
 ## LAN and remote access
 

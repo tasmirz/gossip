@@ -72,6 +72,32 @@ func TestCoordBootstrapKeyWritesPrivateOneTimeKey(t *testing.T) {
 	}
 }
 
+func TestCoordBootstrapKeyConfiguresLocalDatabase(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "coord.db")
+	keyPath := filepath.Join(dir, "bootstrap.key")
+	if err := runCoordBootstrapKey([]string{"--db", dbPath, "--key-file", keyPath}); err != nil {
+		t.Fatal(err)
+	}
+	keyBytes, err := os.ReadFile(keyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := coord.Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	projectID, credential, err := coord.PrepareCredential("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	observation := coord.GitObservation{Root: "/private/checkout", Branch: "main"}
+	if _, _, _, _, err = store.CreatePreparedProjectWithWorkspaceUsingBootstrapKey(context.Background(), strings.TrimSpace(string(keyBytes)), projectID, "authorized", "owner", "repo", "host", observation, credential); err != nil {
+		t.Fatalf("generated key was not configured in local database: %v", err)
+	}
+}
+
 func TestCoordRemoteAccessCommands(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()

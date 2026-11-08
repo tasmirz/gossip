@@ -318,6 +318,22 @@ func rpcHandler(s *Store, requireTLS bool, pins map[[32]byte]map[string]bool, ce
 		var v any
 		var err error
 		switch q.Operation {
+		case "project.create_workspace_local_bootstrap_prepared":
+			if requireTLS {
+				err = ErrUnauthorized
+				break
+			}
+			var project Project
+			var credential Credential
+			var repository Repository
+			var workspace Workspace
+			project, credential, repository, workspace, err = s.CreatePreparedProjectWithWorkspaceUsingBootstrapKey(ctx, token, q.Project, q.Name, q.OwnerName, q.Title, q.Node, q.Observation, q.PreparedCredential)
+			v = struct {
+				Project    Project    `json:"project"`
+				Credential Credential `json:"credential"`
+				Repository Repository `json:"repository"`
+				Workspace  Workspace  `json:"workspace"`
+			}{project, credential, repository, workspace}
 		case "remote.access.status":
 			if requireTLS {
 				err = ErrUnauthorized
