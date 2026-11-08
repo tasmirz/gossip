@@ -1,5 +1,27 @@
 package coord
 
+// Task State Lifecycle & Execution Truthfulness:
+//
+// Task state transitions (ready, running, blocked, submitted, accepted, needs_replan, cancelled)
+// represent coordination lifecycle records within Gossip's transactional state machine in SQLite.
+// Gossip operates strictly as a coordination engine and collaboration ledger, NOT an OS process
+// supervisor, container orchestrator, or kernel runtime.
+//
+// Specific lifecycle invariants:
+// - "ready" -> "running": Recorded when an authenticated agent claims a task attempt with a lease.
+//   This transition reflects lease acquisition in SQLite; Gossip does NOT spawn OS processes, launch
+//   containers, or verify active model execution on the agent host.
+// - "running" -> "submitted": Recorded when an agent submits report evidence or candidate diffs. The
+//   active lease is cleared upon submission.
+// - "submitted" -> "accepted": Recorded when an authorized reviewer accepts the submission digest,
+//   unblocking downstream prerequisite tasks in the coordination DAG.
+// - "submitted" -> "ready": Recorded when rework is requested, releasing the attempt and resetting
+//   the task for another claim.
+// - "cancelled": Recorded when a project owner cancels a task, resetting lease and owner in SQLite.
+//   Gossip does NOT send OS process signals (e.g. SIGKILL, SIGTERM) or terminate host processes.
+// - Leases: Task leases are optimistic fencing tokens in SQLite. When a lease expires, the task
+//   returns to "ready" in the coordination ledger; no external process teardown is performed.
+
 import (
 	"bytes"
 	"context"
@@ -383,6 +405,11 @@ func (s *Store) ClaimObservedWorkspace(ctx context.Context, project, token, id, 
 	}
 	return s.claimTask(ctx, project, token, id, workspace, &observation, lease)
 }
+
+// claimTask transitions a ready task to running and issues an attempt lease.
+//
+// Execution Truthfulness Notice: This transition updates SQLite coordination records only;
+// it does not spawn or supervise external OS processes, containers, or model runners.
 func (s *Store) claimTask(ctx context.Context, project, token, id, workspace string, observation *GitObservation, lease time.Duration) (Task, error) {
 	if lease < time.Second || lease > time.Hour {
 		return Task{}, errors.New("lease must be between one second and one hour")
@@ -540,6 +567,10 @@ func (s *Store) SubmitReportWithID(ctx context.Context, project, token, taskID s
 	return s.submitReport(ctx, project, token, taskID, attempt, baseline, body, requestID)
 }
 
+// submitReport transitions a running task to submitted and records report evidence.
+//
+// Execution Truthfulness Notice: This transition updates coordination records and clears
+// attempt leases in SQLite.
 func (s *Store) submitReport(ctx context.Context, project, token, taskID string, attempt int, baseline, body, requestID string) (Report, error) {
 	var r Report
 	if strings.TrimSpace(body) == "" || !utf8.ValidString(body) || len(body) > 1024*1024 || strings.TrimSpace(baseline) == "" || len(baseline) > 4096 {
@@ -663,9 +694,11 @@ func (s *Store) submitReport(ctx context.Context, project, token, taskID string,
 	return r, nil
 }
 
-// AcceptReport records an independent review of the exact submitted report.
 // RequestRework returns a submitted task to the ready queue, preserving the report
 // and recording the review feedback in the same transaction.
+//
+// Execution Truthfulness Notice: This transition updates SQLite coordination records,
+// clearing the active attempt owner so the task can be claimed anew.
 func (s *Store) RequestRework(ctx context.Context, project, token, reportID, digest, feedback string) error {
 	if strings.TrimSpace(feedback) == "" || len(feedback) > 64*1024 {
 		return errors.New("review feedback is required and must be within size limits")
@@ -711,6 +744,11 @@ func (s *Store) RequestRework(ctx context.Context, project, token, reportID, dig
 	return tx.Commit()
 }
 
+// AcceptReport records an independent review of the exact submitted report and
+// transitions the task to accepted.
+//
+// Execution Truthfulness Notice: This transition updates SQLite coordination records and
+// transitions unblocked dependent tasks to ready in the coordination DAG.
 func (s *Store) AcceptReport(ctx context.Context, project, token, reportID, digest string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {

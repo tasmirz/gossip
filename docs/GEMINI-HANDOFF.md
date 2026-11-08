@@ -105,15 +105,17 @@ The current phase audit is authoritative for what remains. Prioritize by evidenc
 5. Update `docs/gossip-redesign-plan.md`, `docs/coordination-preview.md`, `README.md`, and relevant MCP/skill docs so claims match evidence. Keep open gates open when not actually exercised.
 6. Report changed files, commands/results, known remaining work, and a concise release recommendation. Do not push extra changes without coordinating with the user; the requested version push is handled in the original task.
 
-## Suggested first deliverable
+## Gemini review already delivered
 
-Produce `docs/gemini-review.md` with:
+Gemini's audit and test pass are recorded in [`gemini-review.md`](gemini-review.md). It correctly leaves these gates open:
 
-- a security-focused kill-switch audit (all ingress paths, race/deadlock/migration findings);
-- a short staged acceptance report for P0/P2/P3/P4/P6;
-- precise tests or manual runs actually performed;
-- prioritized implementation changes with file/test targets;
-- explicit “not verified” statements for unavailable physical hosts/credentials;
-- final release status: complete, partial, or blocked, with evidence.
+- actual two-host acceptance on two distinct physical or virtual machines;
+- managed agent start/wake/interruption and enforceable provider runtime/spend controls;
+- representative task evaluations for role presets and measured token/time/cost comparisons;
+- complete project ACLs in the legacy JSON database/dashboard, if those old surfaces remain collaborative entrypoints.
 
-Do not say “done” because the Go test suite passes. The decisive open acceptance gap is a real independent two-host run, plus managed runtime and measured role/cost claims.
+Gemini's specific kill-switch hardening items were reviewed and completed in the current worktree: the web backend requires a remote-access status method, SQLite UPSERT recovery, migration and CLI coverage, remote dashboard/bootstrap tests, removal of legacy dead tunnel controls, and a read-only dashboard status indicator. Mutations remain restricted to the local CLI/private socket; the web UI deliberately has no unauthenticated toggle. Its 401/403 UI change was corrected during independent validation: 401 expires the project credential session; action-level 403 preserves the valid session; refresh-time 403 clears cached project data but keeps the session connected. The full race suite passed after these changes.
+
+Rendered-browser verification for the new dashboard panel is still open. The browser's saved permission denied `http://127.0.0.1:18081`; do not bypass that restriction. Automated loopback HTTP tests cover the panel API and confirm TLS callers cannot toggle it.
+
+Do not mark the redesign complete because the Go test suite passes. The two-host acceptance, managed runtime, and empirical role/cost gates still require real evidence.

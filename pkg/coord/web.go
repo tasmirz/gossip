@@ -35,6 +35,8 @@ type browserSession struct {
 // user; remote HTTPS deployments require enrolled client certificate grants.
 type WebBackend interface {
 	Backend
+	RemoteAccessEnabled(context.Context) (bool, error)
+	CreateProjectWithWorkspace(context.Context, string, string, string, string, GitObservation) (Project, Credential, Repository, Workspace, error)
 	EventRetentionStatus(context.Context, string, string) (EventRetention, error)
 	WhoAmI(context.Context, string, string) (Principal, error)
 	FindRepositoriesByRemote(context.Context, string, string, string) ([]Repository, error)
@@ -180,14 +182,10 @@ func (h *WebHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.TLS != nil {
-		if gate, ok := h.store.(interface {
-			RemoteAccessEnabled(context.Context) (bool, error)
-		}); ok {
-			enabled, err := gate.RemoteAccessEnabled(r.Context())
-			if err != nil || !enabled {
-				http.Error(w, "remote dashboard is disabled by the local kill switch", http.StatusServiceUnavailable)
-				return
-			}
+		enabled, err := h.store.RemoteAccessEnabled(r.Context())
+		if err != nil || !enabled {
+			http.Error(w, "remote dashboard is disabled by the local kill switch", http.StatusServiceUnavailable)
+			return
 		}
 		pin := webClientPin(r)
 		if len(r.TLS.VerifiedChains) == 0 || pin == "" || (!h.dynamicCertificateGrants && len(h.clientProjects[pin]) == 0) {
@@ -238,6 +236,8 @@ func (h *WebHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write(data)
 	case r.URL.Path == "/api/login" && r.Method == "POST":
 		h.login(w, r)
+	case r.URL.Path == "/api/remote-access" && r.Method == http.MethodGet:
+		h.localRemoteAccess(w, r)
 	case r.URL.Path == "/api/logout" && r.Method == "POST":
 		h.logout(w, r)
 	case r.URL.Path == "/api/projects" && r.Method == "GET":
@@ -253,6 +253,24 @@ func (h *WebHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.NotFound(w, r)
 	}
+}
+
+// localRemoteAccess exposes the network kill switch only to a loopback HTTP
+// dashboard. TLS dashboard clients can use the dashboard but cannot toggle the
+// host-wide remote-access boundary.
+func (h *WebHandler) localRemoteAccess(w http.ResponseWriter, r *http.Request) {
+	if r.TLS != nil || !localHost(r.Host) || !loopbackPeer(r.RemoteAddr) {
+		http.Error(w, "remote access controls are available only from the local loopback dashboard", http.StatusForbidden)
+		return
+	}
+	enabled, err := h.store.RemoteAccessEnabled(r.Context())
+	if err != nil {
+		jsonError(w, err)
+		return
+	}
+	jsonReply(w, struct {
+		Enabled bool `json:"enabled"`
+	}{enabled})
 }
 
 // createLocalProject is an onboarding shortcut for a dashboard bound to the
@@ -291,15 +309,8 @@ func (h *WebHandler) createLocalProject(w http.ResponseWriter, r *http.Request) 
 	if current, e := user.Current(); e == nil && strings.TrimSpace(current.Username) != "" {
 		ownerName = current.Username
 	}
-	creator, ok := h.store.(interface {
-		CreateProjectWithWorkspace(context.Context, string, string, string, string, GitObservation) (Project, Credential, Repository, Workspace, error)
-	})
-	if !ok {
-		http.Error(w, "local folder setup requires a dashboard connected directly to its coordination database", http.StatusConflict)
-		return
-	}
 	node, _ := os.Hostname()
-	project, credential, repository, workspace, err := creator.CreateProjectWithWorkspace(r.Context(), projectName, ownerName, repositoryName, node, observation)
+	project, credential, repository, workspace, err := h.store.CreateProjectWithWorkspace(r.Context(), projectName, ownerName, repositoryName, node, observation)
 	if err != nil {
 		jsonError(w, err)
 		return

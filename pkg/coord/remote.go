@@ -96,6 +96,10 @@ func (r *Remote) RemoteAccessEnabled(ctx context.Context) (bool, error) {
 	return r.LocalRemoteAccessStatus(ctx)
 }
 
+func (r *Remote) SetRemoteAccessEnabled(ctx context.Context, enabled bool) error {
+	return r.LocalSetRemoteAccessEnabled(ctx, enabled)
+}
+
 // LocalSetRemoteAccessEnabled changes the network-access kill switch through the private socket.
 func (r *Remote) LocalSetRemoteAccessEnabled(ctx context.Context, enabled bool) error {
 	if !r.local {

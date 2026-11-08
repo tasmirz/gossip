@@ -50,16 +50,21 @@ type MoESynthesis struct {
 	SynthesizedAt        time.Time     `json:"synthesized_at"`
 }
 
-// SubagentTrack tracks concurrent background execution of an assigned work package.
+// SubagentTrack tracks coordination lifecycle state of an assigned work package.
+//
+// Execution Truthfulness Invariant:
+// Subagent tracks are local planning records. They are not linked to a
+// coordination-service principal or session, so a pending track does not mean
+// any external agent has claimed or started the work.
 type SubagentTrack struct {
 	TrackID     string    `json:"track_id"`
 	PackageID   string    `json:"package_id"`
 	TaskID      string    `json:"task_id"`
 	Role        string    `json:"role"`
-	AgentID     string    `json:"agent_id"`
+	AgentID     string    `json:"agent_id,omitempty"`
 	Status      string    `json:"status"` // pending, running, completed, failed
 	Artifact    string    `json:"artifact,omitempty"`
-	StartedAt   time.Time `json:"started_at"`
+	StartedAt   time.Time `json:"started_at,omitempty"`
 	CompletedAt time.Time `json:"completed_at,omitempty"`
 }
 
@@ -69,7 +74,7 @@ type MoEPanel struct {
 	Title           string            `json:"title"`
 	Query           string            `json:"query"`
 	Domain          string            `json:"domain"`
-	Status          string            `json:"status"` // open, deliberating, synthesized, executing, completed
+	Status          string            `json:"status"` // open, deliberating, synthesized, dispatched, completed
 	Initiator       string            `json:"initiator"`
 	SelectedExperts []ExpertSelection `json:"selected_experts"`
 	Arguments       []ExpertArgument  `json:"arguments"`
@@ -343,6 +348,12 @@ func (m *Manager) Synthesize(panelID, agentID, consensusDecision string, tradeOf
 }
 
 // DispatchSubagents converts parallel work packages into active subagent execution tracks.
+//
+// Execution Truthfulness Enforcement:
+// Subagent tracks represent local DAG task records in state and do NOT spawn OS
+// processes, containers, background goroutines, or external model runners. They record
+// coordination dispatch state only; active task execution is handled by external agents
+// claiming and executing the corresponding tasks.
 func (m *Manager) DispatchSubagents(panelID, agentID string) ([]SubagentTrack, error) {
 	unlock, err := m.store.Lock()
 	if err != nil {
@@ -369,20 +380,22 @@ func (m *Manager) DispatchSubagents(panelID, agentID string) ([]SubagentTrack, e
 
 	for i, pkg := range panel.Synthesis.ParallelWorkPackages {
 		trackID := fmt.Sprintf("track-%s-%d", panel.ID, i+1)
+		// A dispatch record is not evidence that a worker started. Keep the
+		// suggested task ID as provided; do not invent an ID for a task that
+		// the coordination store has not actually created.
 		track := SubagentTrack{
 			TrackID:   trackID,
 			PackageID: pkg.PackageID,
 			TaskID:    pkg.SuggestedTaskID,
 			Role:      pkg.AssignedRole,
-			AgentID:   fmt.Sprintf("subagent-%s-%d", pkg.AssignedRole, i+1),
-			Status:    "running",
-			StartedAt: now,
+			AgentID:   "", // no external agent is registered or launched by this manager
+			Status:    "pending",
 		}
 		newTracks = append(newTracks, track)
 	}
 
 	panel.SubagentTracks = append(panel.SubagentTracks, newTracks...)
-	panel.Status = "executing"
+	panel.Status = "dispatched"
 	panel.UpdatedAt = now
 	c.Panels[panelID] = panel
 
@@ -494,7 +507,11 @@ func (p *MoEPanel) RenderMarkdown() string {
 	if len(p.SubagentTracks) > 0 {
 		sb.WriteString("### [TRACKS] Active Subagent Parallel Execution Tracks\n")
 		for _, track := range p.SubagentTracks {
-			sb.WriteString(fmt.Sprintf("- Track `%s` -> Agent `%s` (%s) [%s]\n", track.TrackID, track.AgentID, track.Role, track.Status))
+			agent := track.AgentID
+			if agent == "" {
+				agent = "unassigned"
+			}
+			sb.WriteString(fmt.Sprintf("- Track `%s` -> Agent `%s` (%s) [%s]\n", track.TrackID, agent, track.Role, track.Status))
 		}
 	}
 

@@ -13,6 +13,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"io"
 	"math/big"
 	"net"
 	"net/http"
@@ -457,8 +458,8 @@ func TestWebProjectAccessErrorsDistinguishMissingCredentialFromRoleDenial(t *tes
 	assetResponse := httptest.NewRecorder()
 	h.ServeHTTP(assetResponse, assetRequest)
 	app := assetResponse.Body.String()
-	if assetResponse.Code != http.StatusOK || !strings.Contains(app, "response.status===401&&projectPath)expireProjectSession") || !strings.Contains(app, "e.status===401||e.status===403?'denied'") {
-		t.Fatalf("browser does not preserve a valid session on permission denial and distinguish invalid credentials: status=%d", assetResponse.Code)
+	if assetResponse.Code != http.StatusOK || !strings.Contains(app, "response.status===401&&projectPath){expireProjectSession") || !strings.Contains(app, "e.status===403&&state.project?.project_id===project.project_id") {
+		t.Fatalf("browser does not distinguish invalid credentials from permission denial: status=%d", assetResponse.Code)
 	}
 }
 
@@ -937,7 +938,7 @@ func TestWebAccessControlsExposeTheirSelectedProjectScope(t *testing.T) {
 		}
 	}
 	app := request("/app.js")
-	if app.Code != http.StatusOK || !strings.Contains(app.Body.String(), "state.project=project;state.replicas=[]") || !strings.Contains(app.Body.String(), "renderAccessScope()") || !strings.Contains(app.Body.String(), "$('#access-project-id').textContent=project.project_id") || !strings.Contains(app.Body.String(), "hasProjectPermission('plan.edit')") || !strings.Contains(app.Body.String(), "hasProjectPermission('settings.edit')") || !strings.Contains(app.Body.String(), "hasProjectPermission('membership.manage')") {
+	if app.Code != http.StatusOK || !strings.Contains(app.Body.String(), "state.project=project;state.projectReadDenied=false;state.replicas=[]") || !strings.Contains(app.Body.String(), "renderAccessScope()") || !strings.Contains(app.Body.String(), "$('#access-project-id').textContent=project.project_id") || !strings.Contains(app.Body.String(), "hasProjectPermission('plan.edit')") || !strings.Contains(app.Body.String(), "hasProjectPermission('settings.edit')") || !strings.Contains(app.Body.String(), "hasProjectPermission('membership.manage')") {
 		t.Fatalf("dashboard does not bind access controls to the selected project: %d", app.Code)
 	}
 }
@@ -1090,5 +1091,399 @@ func TestWebOwnerCanInviteProjectPrincipalOnce(t *testing.T) {
 	principal, err := s.WhoAmI(context.Background(), project.ID, credential.Token)
 	if err != nil || principal.ID != credential.PrincipalID || principal.Role != "reviewer" || principal.Name != "Remote reviewer" {
 		t.Fatalf("invited credential is not project-scoped as requested: %+v %v", principal, err)
+	}
+}
+
+func TestWebRemoteAccessKillSwitchRejectsHTTPS(t *testing.T) {
+	s, _, project, owner, _ := setup(t)
+	ctx := context.Background()
+
+	// Verify initially disabled
+	enabled, err := s.RemoteAccessEnabled(ctx)
+	if err != nil || enabled {
+		t.Fatalf("expected initial RemoteAccessEnabled=false, got: %v %v", enabled, err)
+	}
+
+	now := time.Now()
+	genKey := func() *ecdsa.PrivateKey {
+		t.Helper()
+		k, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return k
+	}
+	caKey := genKey()
+	caTemplate := &x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: "Gossip test CA"},
+		NotBefore:             now.Add(-time.Hour),
+		NotAfter:              now.Add(time.Hour),
+		IsCA:                  true,
+		BasicConstraintsValid: true,
+		KeyUsage:              x509.KeyUsageCertSign,
+	}
+	caDER, err := x509.CreateCertificate(rand.Reader, caTemplate, caTemplate, &caKey.PublicKey, caKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ca, err := x509.ParseCertificate(caDER)
+	if err != nil {
+		t.Fatal(err)
+	}
+	issue := func(serial int64, usage x509.ExtKeyUsage, ips []net.IP) tls.Certificate {
+		t.Helper()
+		k := genKey()
+		template := &x509.Certificate{
+			SerialNumber: big.NewInt(serial),
+			NotBefore:    now.Add(-time.Hour),
+			NotAfter:     now.Add(time.Hour),
+			KeyUsage:     x509.KeyUsageDigitalSignature,
+			ExtKeyUsage:  []x509.ExtKeyUsage{usage},
+			IPAddresses:  ips,
+			DNSNames:     []string{"localhost"},
+		}
+		der, err := x509.CreateCertificate(rand.Reader, template, ca, &k.PublicKey, caKey)
+		if err != nil {
+			t.Fatal(err)
+		}
+		cert, err := x509.ParseCertificate(der)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return tls.Certificate{Certificate: [][]byte{der}, PrivateKey: k, Leaf: cert}
+	}
+	serverCert := issue(2, x509.ExtKeyUsageServerAuth, []net.IP{net.ParseIP("127.0.0.1")})
+	clientCert := issue(3, x509.ExtKeyUsageClientAuth, nil)
+
+	pin := sha256.Sum256(clientCert.Leaf.Raw)
+	if _, err = s.AddCertificateGrant(ctx, project.ID, owner.Token, hex.EncodeToString(pin[:])); err != nil {
+		t.Fatal(err)
+	}
+
+	ts := httptest.NewUnstartedServer(nil)
+	host, port, err := net.SplitHostPort(ts.Listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	portNumber, err := strconv.Atoi(port)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hostPort := net.JoinHostPort(host, strconv.Itoa(portNumber))
+	ts.Config.Handler = coord.NewWebHandlerWithCertificateGrants(s, []string{hostPort})
+	roots := x509.NewCertPool()
+	roots.AddCert(ca)
+	ts.TLS = &tls.Config{
+		MinVersion:   tls.VersionTLS13,
+		Certificates: []tls.Certificate{serverCert},
+		ClientCAs:    roots,
+		ClientAuth:   tls.RequireAndVerifyClientCert,
+	}
+	ts.StartTLS()
+	defer ts.Close()
+
+	client := &http.Client{
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{
+				MinVersion:   tls.VersionTLS13,
+				RootCAs:      roots,
+				Certificates: []tls.Certificate{clientCert},
+			},
+		},
+	}
+
+	loginPayload, _ := json.Marshal(map[string]string{"project_id": project.ID, "token": owner.Token})
+
+	// 1. When kill switch is disabled (default): HTTPS request returns 503
+	req, err := http.NewRequest(http.MethodPost, ts.URL+"/api/login", bytes.NewReader(loginPayload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Origin", ts.URL)
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("expected HTTP 503 when remote access disabled, got %d: %s", resp.StatusCode, string(body))
+	}
+	if !strings.Contains(string(body), "remote dashboard is disabled by the local kill switch") {
+		t.Fatalf("expected kill switch notice in body, got: %s", string(body))
+	}
+
+	// 2. Loopback HTTP (r.TLS == nil) is NOT blocked by kill switch
+	loopbackReq := httptest.NewRequest(http.MethodGet, "http://localhost:8081/", nil)
+	loopbackReq.RemoteAddr = "127.0.0.1:12345"
+	loopbackRec := httptest.NewRecorder()
+	ts.Config.Handler.ServeHTTP(loopbackRec, loopbackReq)
+	if loopbackRec.Code != http.StatusOK {
+		t.Fatalf("loopback HTTP request was blocked: got %d", loopbackRec.Code)
+	}
+
+	// 3. Enable remote access: HTTPS requests succeed
+	if err = s.SetRemoteAccessEnabled(ctx, true); err != nil {
+		t.Fatal(err)
+	}
+	req2, err := http.NewRequest(http.MethodPost, ts.URL+"/api/login", bytes.NewReader(loginPayload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req2.Header.Set("Content-Type", "application/json")
+	req2.Header.Set("Origin", ts.URL)
+	resp2, err := client.Do(req2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp2.Body.Close()
+	if resp2.StatusCode != http.StatusOK {
+		t.Fatalf("expected HTTP 200 after enabling remote access, got %d", resp2.StatusCode)
+	}
+
+	// 4. Disable remote access: HTTPS requests immediately fail with 503 again
+	if err = s.SetRemoteAccessEnabled(ctx, false); err != nil {
+		t.Fatal(err)
+	}
+	req3, err := http.NewRequest(http.MethodPost, ts.URL+"/api/login", bytes.NewReader(loginPayload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req3.Header.Set("Content-Type", "application/json")
+	req3.Header.Set("Origin", ts.URL)
+	resp3, err := client.Do(req3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body3, _ := io.ReadAll(resp3.Body)
+	resp3.Body.Close()
+	if resp3.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("expected HTTP 503 after re-disabling remote access, got %d", resp3.StatusCode)
+	}
+	if !strings.Contains(string(body3), "remote dashboard is disabled by the local kill switch") {
+		t.Fatalf("expected kill switch notice in body, got: %s", string(body3))
+	}
+}
+
+func TestWebRemoteAccessStatusIsLoopbackOnlyAndReadOnly(t *testing.T) {
+	s, _, _, _, _ := setup(t)
+	h := coord.NewWebHandlerWithCertificateGrants(s, []string{"dashboard.example"})
+	request := func(method, target, body string, secure bool) *httptest.ResponseRecorder {
+		t.Helper()
+		r := httptest.NewRequest(method, target, strings.NewReader(body))
+		r.RemoteAddr = "127.0.0.1:12345"
+		if body != "" {
+			r.Header.Set("Content-Type", "application/json")
+			if secure {
+				r.Header.Set("Origin", "https://dashboard.example")
+			} else {
+				r.Header.Set("Origin", "http://localhost:8081")
+			}
+		}
+		if secure {
+			certificate := &x509.Certificate{Raw: []byte("trusted dashboard client")}
+			r.TLS = &tls.ConnectionState{PeerCertificates: []*x509.Certificate{certificate}, VerifiedChains: [][]*x509.Certificate{{certificate}}}
+		}
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		return w
+	}
+	status := request(http.MethodGet, "http://localhost:8081/api/remote-access", "", false)
+	if status.Code != http.StatusOK || !strings.Contains(status.Body.String(), `"enabled":false`) {
+		t.Fatalf("loopback status did not report safe default: %d %s", status.Code, status.Body.String())
+	}
+	localWrite := request(http.MethodPost, "http://localhost:8081/api/remote-access", `{"enabled":true}`, false)
+	if localWrite.Code != http.StatusNotFound {
+		t.Fatalf("loopback UI exposed an unauthenticated switch mutation: %d %s", localWrite.Code, localWrite.Body.String())
+	}
+	if enabled, err := s.RemoteAccessEnabled(context.Background()); err != nil || enabled {
+		t.Fatalf("local UI write changed switch: enabled=%v err=%v", enabled, err)
+	}
+	if err := s.SetRemoteAccessEnabled(context.Background(), true); err != nil {
+		t.Fatal(err)
+	}
+	remoteRead := request(http.MethodGet, "https://dashboard.example/api/remote-access", "", true)
+	if remoteRead.Code != http.StatusForbidden {
+		t.Fatalf("remote TLS dashboard read host-local state: %d %s", remoteRead.Code, remoteRead.Body.String())
+	}
+	remoteWrite := request(http.MethodPost, "https://dashboard.example/api/remote-access", `{"enabled":false}`, true)
+	if remoteWrite.Code != http.StatusNotFound {
+		t.Fatalf("remote TLS dashboard exposed switch mutation: %d %s", remoteWrite.Code, remoteWrite.Body.String())
+	}
+	if enabled, err := s.RemoteAccessEnabled(context.Background()); err != nil || !enabled {
+		t.Fatalf("web attempt changed switch despite denial: enabled=%v err=%v", enabled, err)
+	}
+}
+
+func TestWebBackendCreateProjectWithWorkspaceCompliance(t *testing.T) {
+	s, _, _, _, _ := setup(t)
+	ctx := context.Background()
+
+	// Compile-time interface compliance check
+	var backend coord.WebBackend = s
+
+	// Direct interface call
+	tmpDir := t.TempDir()
+	observation := coord.GitObservation{
+		Root:   tmpDir,
+		Branch: "feature/test",
+		Head:   "1111222233334444555566667777888899990000",
+		Dirty:  false,
+	}
+
+	project, cred, repo, ws, err := backend.CreateProjectWithWorkspace(
+		ctx,
+		"interface-check-project",
+		"interface-owner",
+		"interface-repo",
+		"test-node",
+		observation,
+	)
+	if err != nil {
+		t.Fatalf("CreateProjectWithWorkspace failed via WebBackend interface: %v", err)
+	}
+	if project.Name != "interface-check-project" {
+		t.Fatalf("unexpected project name: %q", project.Name)
+	}
+	if cred.PrincipalID == "" || cred.Token == "" {
+		t.Fatalf("expected non-empty owner credential: %+v", cred)
+	}
+	if repo.Name != "interface-repo" {
+		t.Fatalf("unexpected repo name: %q", repo.Name)
+	}
+	if ws.Branch != "feature/test" || ws.Head != observation.Head {
+		t.Fatalf("unexpected workspace: %+v", ws)
+	}
+
+	// Also verify that WebHandler invokes it cleanly through /api/projects/create
+	h := coord.NewWebHandler(backend)
+	runGit := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = tmpDir
+		cmd.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=Test",
+			"GIT_AUTHOR_EMAIL=test@example.com",
+			"GIT_COMMITTER_NAME=Test",
+			"GIT_COMMITTER_EMAIL=test@example.com",
+		)
+		out, gitErr := cmd.CombinedOutput()
+		if gitErr != nil {
+			t.Fatalf("git %v failed: %v\n%s", args, gitErr, string(out))
+		}
+	}
+	runGit("init")
+	runGit("checkout", "-b", "main")
+	testFile := filepath.Join(tmpDir, "README.md")
+	if err := os.WriteFile(testFile, []byte("# Test Repo\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	runGit("add", "README.md")
+	runGit("commit", "-m", "initial commit")
+
+	reqBody, _ := json.Marshal(map[string]string{
+		"name":       "web-created-project",
+		"local_path": tmpDir,
+	})
+	createReq := httptest.NewRequest(http.MethodPost, "http://localhost:8081/api/projects/create", bytes.NewReader(reqBody))
+	createReq.RemoteAddr = "127.0.0.1:12345"
+	createReq.Header.Set("Content-Type", "application/json")
+	createReq.Header.Set("Origin", "http://localhost:8081")
+
+	createRec := httptest.NewRecorder()
+	h.ServeHTTP(createRec, createReq)
+	if createRec.Code != http.StatusOK {
+		t.Fatalf("expected HTTP 200 from createLocalProject, got %d: %s", createRec.Code, createRec.Body.String())
+	}
+	var createdResult struct {
+		Project struct {
+			Name string `json:"project_name"`
+		} `json:"project"`
+		Credential struct {
+			Token string `json:"token"`
+		} `json:"credential"`
+	}
+	if err := json.Unmarshal(createRec.Body.Bytes(), &createdResult); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if createdResult.Project.Name != "web-created-project" || createdResult.Credential.Token == "" {
+		t.Fatalf("unexpected project created via web endpoint: %+v", createdResult)
+	}
+}
+
+func TestWebDistinct401Vs403StatusReturnsOnAccessLoss(t *testing.T) {
+	s, _, project, owner, worker := setup(t)
+	h := coord.NewWebHandler(s)
+
+	doReq := func(method, path, body string, cookie *http.Cookie) *httptest.ResponseRecorder {
+		t.Helper()
+		req := httptest.NewRequest(method, "http://localhost:8081"+path, strings.NewReader(body))
+		req.RemoteAddr = "127.0.0.1:12345"
+		if body != "" {
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Origin", "http://localhost:8081")
+		}
+		if cookie != nil {
+			req.AddCookie(cookie)
+		}
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec
+	}
+
+	login := func(token string) *http.Cookie {
+		t.Helper()
+		payload := `{"project_id":"` + project.ID + `","token":"` + token + `"}`
+		rec := doReq(http.MethodPost, "/api/login", payload, nil)
+		if rec.Code != http.StatusOK || len(rec.Result().Cookies()) != 1 {
+			t.Fatalf("login failed: %d %s", rec.Code, rec.Body.String())
+		}
+		return rec.Result().Cookies()[0]
+	}
+
+	workerCookie := login(worker.Token)
+
+	// 1. HTTP 403 Forbidden: Valid authenticated member lacking role permission
+	// Worker attempts to access owner-only replica synchronization receipts
+	rec403 := doReq(http.MethodGet, "/api/projects/"+project.ID+"/replicas", "", workerCookie)
+	if rec403.Code != http.StatusForbidden {
+		t.Fatalf("expected HTTP 403 Forbidden for role unauthorized action, got %d: %s", rec403.Code, rec403.Body.String())
+	}
+	if !strings.Contains(rec403.Body.String(), "project role is not allowed to perform that action") {
+		t.Fatalf("expected role denial message, got: %s", rec403.Body.String())
+	}
+
+	// Worker attempts to modify project settings (requires settings.edit permission)
+	settingsPayload := `{"settings":{"max_parallel":4,"max_lease_seconds":300,"summary_token_target":1000,"default_review_mode":"report_first"}}`
+	settings403 := doReq(http.MethodPost, "/api/projects/"+project.ID+"/settings", settingsPayload, workerCookie)
+	if settings403.Code != http.StatusForbidden {
+		t.Fatalf("expected HTTP 403 Forbidden for settings mutation without permission, got %d: %s", settings403.Code, settings403.Body.String())
+	}
+
+	// 2. HTTP 401 Unauthorized: Access loss via credential/principal revocation
+	// Owner revokes the worker principal
+	ctx := context.Background()
+	if err := s.RevokePrincipal(ctx, project.ID, owner.Token, worker.PrincipalID); err != nil {
+		t.Fatalf("failed to revoke principal: %v", err)
+	}
+
+	// Worker tries to access plan using the now-revoked credential session
+	rec401Revoked := doReq(http.MethodGet, "/api/projects/"+project.ID+"/plan", "", workerCookie)
+	if rec401Revoked.Code != http.StatusUnauthorized {
+		t.Fatalf("expected HTTP 401 Unauthorized after credential revocation, got %d: %s", rec401Revoked.Code, rec401Revoked.Body.String())
+	}
+	if !strings.Contains(rec401Revoked.Body.String(), "project access is no longer valid; reconnect a credential for this project") {
+		t.Fatalf("expected access no longer valid message, got: %s", rec401Revoked.Body.String())
+	}
+
+	// 3. HTTP 401 Unauthorized: Unauthenticated request without session cookie
+	rec401Missing := doReq(http.MethodGet, "/api/projects/"+project.ID+"/plan", "", nil)
+	if rec401Missing.Code != http.StatusUnauthorized {
+		t.Fatalf("expected HTTP 401 Unauthorized for missing session, got %d: %s", rec401Missing.Code, rec401Missing.Body.String())
+	}
+	if !strings.Contains(rec401Missing.Body.String(), "no project credential is connected") {
+		t.Fatalf("expected missing credential message, got: %s", rec401Missing.Body.String())
 	}
 }

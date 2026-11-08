@@ -12,6 +12,14 @@ import (
 
 const agentPresenceTTL = 45 * time.Second
 
+// AgentPresence represents the connectivity and metadata state of an enrolled project principal.
+//
+// Execution Truthfulness Notice:
+//   - Online state reflects authenticated adapter transport connectivity (heartbeats received within
+//     agentPresenceTTL) rather than verified model reasoning, active thinking, or correct task execution.
+//   - Capabilities with source "host_reported" (e.g., wake, launch, interrupt) are descriptive host
+//     declarations configured by the host environment, NOT independently verified runtime execution
+//     capabilities, container sandboxes, or authorization grants.
 type AgentPresence struct {
 	PrincipalID      string            `json:"principal_id"`
 	Name             string            `json:"name"`
@@ -29,8 +37,10 @@ type MCPClientInfo struct {
 	Version string `json:"version,omitempty"`
 }
 
-// AgentCapability is capability metadata reported by the MCP adapter or its
-// configured host. Host reports are descriptive and are never permissions.
+// AgentCapability is capability metadata reported by the MCP adapter ("adapter") or its
+// configured host ("host_reported"). Host declarations are purely descriptive integration
+// metadata (such as wake, launch, interrupt, notification) and are never authorization grants
+// or verified runtime execution guarantees.
 type AgentCapability struct {
 	Name   string `json:"name"`
 	Source string `json:"source"`
@@ -43,6 +53,9 @@ var adapterCapabilities = map[string]bool{
 	"durable_outbox":           true,
 }
 
+// hostCapabilities are descriptive capability declarations reported by the host environment.
+// These reflect host integration features (wake, launch, interrupt, etc.) and are descriptive
+// claims only; Gossip does not independently verify host execution environments.
 var hostCapabilities = map[string]bool{
 	"notification":       true,
 	"wake":               true,
@@ -135,9 +148,12 @@ func requireReportedCapabilities(ctx context.Context, tx *sql.Tx, project, princ
 	return fmt.Errorf("task requires a current authenticated session reporting capabilities %s: %w", strings.Join(required, ", "), ErrConflict)
 }
 
-// HostReportedCapabilities validates locally configured host capability
-// labels. These labels describe the configured integration, not verified
-// execution support or authorization.
+// HostReportedCapabilities validates locally configured host capability labels.
+//
+// Execution Truthfulness Notice:
+// These labels describe configured integration features reported by the host (e.g. wake,
+// launch, interrupt, isolated_workspace). They are descriptive metadata declarations only;
+// they do NOT constitute verified runtime execution capabilities or authorization grants.
 func HostReportedCapabilities(names []string) ([]AgentCapability, error) {
 	if len(names) > 16 {
 		return nil, errors.New("at most 16 host capabilities may be configured")
@@ -159,8 +175,12 @@ func HostReportedCapabilities(names []string) ([]AgentCapability, error) {
 	return out, nil
 }
 
-// HeartbeatAgent records process presence for an authenticated adapter
-// instance. It is metadata only and does not grant any project permissions.
+// HeartbeatAgent records transport connectivity presence for an authenticated adapter instance.
+//
+// Execution Truthfulness Notice:
+// Heartbeats reflect authenticated adapter transport connectivity (periodic network check-ins),
+// NOT verified model reasoning, active thinking, or correct task execution. It is metadata only
+// and does not grant any project permissions or verify process health.
 func (s *Store) HeartbeatAgent(ctx context.Context, project, token, instanceID string) error {
 	return s.HeartbeatAgentWithCapabilities(ctx, project, token, instanceID, nil)
 }
@@ -261,8 +281,13 @@ func (s *Store) EndAgentSession(ctx context.Context, project, token, instanceID 
 	return tx.Commit()
 }
 
-// ListAgentPresence returns current project members with their freshest
-// adapter session. A crashed process becomes offline after the heartbeat TTL.
+// ListAgentPresence returns current project members with their freshest adapter session.
+// An agent is considered online if an authenticated adapter session submitted a heartbeat
+// within the last 45 seconds (agentPresenceTTL).
+//
+// Execution Truthfulness Notice:
+// Presence reflects authenticated adapter connectivity only. It does not attest that an
+// agent is actively executing tasks, reasoning, or functioning correctly.
 func (s *Store) ListAgentPresence(ctx context.Context, project, token string) ([]AgentPresence, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
