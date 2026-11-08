@@ -90,7 +90,7 @@ func (s *Store) createTask(ctx context.Context, project, token, requestID string
 			return zero, errors.New("diagram_report requires markdown, mermaid_sequence, and mermaid_class formats")
 		}
 	case "":
-		return zero, errors.New("review_type must be chosen during planning: full_code or diagram_report")
+		return zero, errors.New("review_type must be chosen during planning: ask the user to choose full_code (full source review) or diagram_report (Markdown with UML class and sequence diagrams), then retry task creation")
 	default:
 		return zero, errors.New("invalid review type")
 	}
