@@ -5,11 +5,12 @@ All state is persistently synchronized with non-blocking atomic POSIX file locks
 
 ## Core MCP Tool Workflows
 
-1. **Role Identification & Presence**:
-   - `gossip_register_agent`: Register your identity and assumed role (e.g. `orchestrator`, `worker`, `systems_architect`, `security_specialist`, `math_expert`, `network_engineer`, `qa_engineer`, `researcher`, `red_team`, `critic`).
-   - `gossip_heartbeat`: Record periodic liveness.
-   - `gossip_list_roles` & `gossip_get_role_definition`: Query active role contracts.
-   - `gossip_register_custom_role`: Define new project-specific roles dynamically.
+1. **Role Identification & Work Roles**:
+   - `gossip_roles`: Inspect role presets, list project role assignments, or assign advisory duties.
+     - `operation: "presets"`: Returns the 6 versioned starter role presets (`coordinator`, `researcher`, `implementer`, `reviewer`, `verifier`, `integrator`) with documented provenance citing first-party references.
+     - `operation: "list"`: Lists active work role assignments for the authenticated project.
+     - `operation: "assign"`: (Project owners only) Assign a preset or custom role to a principal or specific task scope.
+     - **Security Invariant**: Work roles define advisory operational duties, handoff boundaries, and escalation guidance only. Work roles NEVER grant project permissions; explicit project permission grants (`principal_permissions`) remain strictly independent.
 
 2. **Inter-Agent Messaging & Continuous Sync**:
    - `gossip_send_message`: Send targeted direct messages (`agent:<id>`) or role broadcasts (`role:<role_id>`).

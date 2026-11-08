@@ -685,6 +685,9 @@ func mcpServer(store Backend, project, token string, keeper *leaseKeeper, outbox
 			switch str(a, "operation") {
 			case "create":
 				c := ReportContract{Questions: list(a, "questions"), Formats: list(a, "formats"), Coverage: list(a, "coverage"), RequiredRole: str(a, "required_role"), RequiredCapabilities: list(a, "required_capabilities"), ReviewMode: str(a, "review_mode"), ReviewType: str(a, "review_type"), SummaryTokenTarget: num(a, "summary_token_target", 0)}
+				if strings.TrimSpace(c.ReviewType) == "diagram_report" && len(c.Formats) == 0 {
+					c.Formats = []string{"markdown", "mermaid_sequence", "mermaid_class"}
+				}
 				t, err := store.CreateTaskWithID(ctx, project, token, str(a, "request_id"), rev, str(a, "title"), str(a, "description"), str(a, "kind"), c, list(a, "dependencies"))
 				return result(t, err)
 			case "list":

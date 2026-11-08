@@ -3,6 +3,7 @@ package coord_test
 import (
 	"context"
 	"errors"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -23,6 +24,13 @@ func TestWorkRolePresetsAreVersionedAndIncludeHandoffBoundaries(t *testing.T) {
 		for _, source := range preset.Sources {
 			if !strings.HasPrefix(source, "https://") {
 				t.Fatalf("preset %q has an untrusted or non-HTTPS source: %q", preset.Name, source)
+			}
+			parsed, err := url.Parse(source)
+			if err != nil {
+				t.Fatalf("preset %q has invalid URL %q: %v", preset.Name, source, err)
+			}
+			if parsed.Hostname() != "developers.openai.com" && parsed.Hostname() != "openai.github.io" {
+				t.Fatalf("preset %q has unapproved source domain %q", preset.Name, parsed.Hostname())
 			}
 		}
 	}
@@ -63,5 +71,19 @@ func TestWorkRoleChangesDutiesWithoutGrantingPermissions(t *testing.T) {
 	}
 	if _, err = s.SetWorkRole(ctx, other.ID, otherOwner.Token, worker.PrincipalID, "", "researcher", "", 0, 0); !errors.Is(err, coord.ErrNotFound) {
 		t.Fatalf("cross project principal: %v", err)
+	}
+	caseRole, err := s.SetWorkRole(ctx, p.ID, owner.Token, worker.PrincipalID, "", "Coordinator", "", 0, role.Revision)
+	if err != nil || caseRole.Name != "coordinator" {
+		t.Fatalf("case-insensitive preset name failed or did not canonicalize: %+v %v", caseRole, err)
+	}
+	roleTask, err := s.CreateTask(ctx, p.ID, owner.Token, 1, "Role Task", "Requires coordinator", "review", coord.ReportContract{ReviewType: "full_code", RequiredRole: "coordinator"}, nil)
+	if err != nil {
+		t.Fatalf("create role task: %v", err)
+	}
+	if err := s.RevokePrincipal(ctx, p.ID, owner.Token, worker.PrincipalID); err != nil {
+		t.Fatalf("revoke principal: %v", err)
+	}
+	if _, err := s.AssignTask(ctx, p.ID, owner.Token, roleTask.ID, worker.PrincipalID); err == nil {
+		t.Fatal("expected assign task to fail for revoked principal despite work_role row")
 	}
 }

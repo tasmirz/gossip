@@ -6,13 +6,14 @@ Gossip is a project-scoped coordination service and MCP adapter for coding agent
 
 ## What it supports
 
-- One authoritative home coordinator per project, with agents connecting locally, over a LAN, or through an FRP TCP tunnel.
-- Project membership credentials plus per-project client-certificate grants for network access. FRP forwards transport; it does not authorize access.
-- Local-folder-first setup. The dashboard inspects a Git checkout, infers its repository metadata, and creates the project and first workspace together.
+- One authoritative home coordinator per project backed by SQLite in WAL mode with immediate txlock and serialized connections, with agents connecting locally, over a LAN, or through an FRP TCP tunnel.
+- Mutual TLS 1.3 (`tls.RequireAndVerifyClientCert`) with independent project membership credentials and revocable per-project client-certificate grants. FRP forwards transport; it does not authorize access.
+- Local-only remote access kill switch (`coord-remote`), default-off on new and upgraded databases, gating all network RPC and remote HTTPS with HTTP 503 while leaving local loopback HTTP and private Unix socket administration intact.
+- Planning-time mandatory selection of either a full-code review (`full_code`) or a Markdown report with UML class and sequence diagrams (`diagram_report`). Auto-populates mandatory formats (`markdown`, `mermaid_sequence`, `mermaid_class`).
+- 6 curated starter role presets with first-party OpenAI documentation provenance and advisory duties, separate from permissions.
+- Local-folder-first setup with automatic Git repository inference.
 - Separate workspaces, branches, and checkouts for parallel agents, with recorded Git baselines and owner-private local paths.
 - Project-filtered views for tasks, agents, conversations, activity, workspaces, settings, and history.
-- Planning-time selection of either a full-code review or a Markdown report with UML class and sequence diagrams. Task creation requires a choice. Workers can request the planned review from the orchestrator.
-- Optional role and capability requirements for task claims. Capability labels are reports; host-reported capabilities are not proof that an action is executable.
 
 ## Start locally
 
@@ -46,7 +47,7 @@ Remote access is **disabled by default**. Before exposing the home over a LAN or
 
 The dashboard's **Settings** view shows the current switch state. It is read-only; change the setting with the local CLI or private socket so an unauthenticated localhost HTTP request cannot toggle the host-wide boundary.
 
-For FRP, forward TCP to the TLS listener. Do not expose the legacy HTTP dashboard or use the retired arbitrary-peer registration tools. The remote model is single-home: replicas may cache bounded read snapshots and queue idempotent actions, while the home remains authoritative.
+For FRP, use `gossip coord-frp` to generate hardened, mode 0600 reverse proxy configurations forwarding TCP to the TLS listener. Do not expose the legacy HTTP dashboard or use the retired arbitrary-peer registration tools. The remote model is single-home: replicas may cache bounded read snapshots and queue idempotent actions, while the home remains authoritative.
 
 See [LAN, FRP, certificate grants, pairing, and bootstrap instructions](docs/coordination-preview.md) for command examples and details.
 
@@ -69,20 +70,24 @@ The legacy JSON MCP CLI transport and schema exporter are retired. The older loc
 
 Local project setup, project access controls, task/review contracts, the dashboard, and backend remote TLS handoffs have implementation and test coverage. The redesign is still in progress:
 
-- Full P2 workflows have not yet been accepted between genuinely separate physical machines.
-- Managed agent launch, interruption, and trusted host capability discovery remain open.
-- Usage and cost records are self-reported, not provider-verified or hard spending limits.
-- Role presets and token/latency/cost savings still need representative evaluations.
+- Physical two-machine acceptance (P4) remains an unverified open gate. Local multi-worktree coordination across distinct checkouts (`pkg/coord/multi_worktree_acceptance_test.go`) and container network namespaces (`scripts/coordination-container-network-smoke.sh`) is automated and passing, but execution on separate physical hardware is pending.
+- Release status is PARTIAL. The repository may be pushed as a preview with the physical two-host acceptance gate clearly open; do not label it a completed release until that gate passes.
+- Managed agent launch, interruption, and trusted host capability discovery remain open (P2/P3 process supervisor).
+- Usage and cost records are self-reported estimates, not provider-verified or hard spending limits.
+- A comparative benchmark harness and rubric are implemented locally (`benchmarks/`); its checked-in fixtures are deterministic sample data, not empirical model runs or evidence of savings. Representative live multi-model evaluations remain open.
 - The legacy local JSON store remains outside the project permission model and should not be used for multi-agent access control.
 
-See the phase-by-phase [redesign plan](docs/gossip-redesign-plan.md) and [coordination preview guide](docs/coordination-preview.md).
+See the phase-by-phase [redesign plan](docs/gossip-redesign-plan.md), [coordination preview guide](docs/coordination-preview.md), and [two-host acceptance runbook](docs/two-host-acceptance.md).
 
 ## Development checks
 
 ```sh
 go test ./...
-go test -race ./...
+go test -race ./pkg/coord ./cmd/gossip
 go vet ./...
+git diff --check
+node --check pkg/coord/ui/app.js
+./scripts/coordination-container-network-smoke.sh
 ```
 
 ## License

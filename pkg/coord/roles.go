@@ -15,9 +15,10 @@ func requireAssignedWorkRole(ctx context.Context, tx *sql.Tx, project, principal
 		return nil
 	}
 	var assignedRole string
-	err := tx.QueryRowContext(ctx, `SELECT name FROM work_roles
-		WHERE project_id=? AND principal_id=? AND task_id IN ('',?) AND name<>'' AND (expires_at=0 OR expires_at>?)
-		ORDER BY CASE WHEN task_id=? THEN 0 ELSE 1 END LIMIT 1`, project, principal, task, now, task).Scan(&assignedRole)
+	err := tx.QueryRowContext(ctx, `SELECT r.name FROM work_roles r
+		JOIN principals p ON p.id=r.principal_id AND p.project_id=r.project_id
+		WHERE r.project_id=? AND r.principal_id=? AND p.revoked=0 AND r.task_id IN ('',?) AND r.name<>'' AND (r.expires_at=0 OR r.expires_at>?)
+		ORDER BY CASE WHEN r.task_id=? THEN 0 ELSE 1 END LIMIT 1`, project, principal, task, now, task).Scan(&assignedRole)
 	if errors.Is(err, sql.ErrNoRows) || (err == nil && !strings.EqualFold(strings.TrimSpace(assignedRole), requiredRole)) {
 		return fmt.Errorf("task requires the active %q role assignment: %w", requiredRole, ErrUnauthorized)
 	}
@@ -107,8 +108,9 @@ func (s *Store) SetWorkRole(ctx context.Context, project, token, principal, task
 		}
 	} else if strings.TrimSpace(duties) == "" {
 		for _, preset := range WorkRolePresets() {
-			if preset.Name == name {
+			if strings.EqualFold(preset.Name, name) {
 				duties = preset.dutyText()
+				name = preset.Name
 				break
 			}
 		}

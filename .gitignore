@@ -2,6 +2,7 @@
 .local/
 *.tmp.*
 *.tmp
+/gossip
 
 # OS and Editor files
 .DS_Store
