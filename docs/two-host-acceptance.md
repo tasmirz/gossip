@@ -2,6 +2,10 @@
 
 This procedure closes the P4 acceptance gate for a real LAN or FRP deployment. Run Host A and Host B on separate physical computers. Docker namespaces or two processes on one computer are useful tests, but do not count as this acceptance run. Use a disposable project and test certificates. Never paste private keys or project credential tokens into this record.
 
+Before using separate hosts, run [`scripts/coordination-container-network-smoke.sh`](../scripts/coordination-container-network-smoke.sh) as a network preflight. It creates two isolated Docker network namespaces and verifies mTLS, project-scoped certificate and credential checks, revocation, and the default-off remote kill switch. It does not test an external LAN route or FRP and cannot close this acceptance gate.
+
+The actual FRP transport/reconnect integration subtest is also available when official `frpc` and `frps` binaries are installed: set `GOSSIP_TEST_FRPC` and `GOSSIP_TEST_FRPS` to their paths, then run `go test ./pkg/coord -run '^TestRemoteMutualTLSResearchHandoff$' -count=1 -v`. This checkout passed the subtest with the official v0.72.0 Linux amd64 release after SHA-256 verification. The test runs FRP locally on loopback; it does not replace the separate-host procedure below.
+
 ## Prerequisites
 
 - The same built `gossip` version is installed on both hosts.
