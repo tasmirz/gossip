@@ -17,25 +17,25 @@ import (
 
 // FederatedQueryRequest represents a cross-node query sent across the tunnel.
 type FederatedQueryRequest struct {
-	QueryID     string `json:"query_id"`
-	SourceNode  string `json:"source_node"`
-	QueryType   string `json:"query_type"` // "graph", "tasks", "status", "repomap"
-	QueryText   string `json:"query_text"`
-	Depth       int    `json:"depth,omitempty"`
-	AuthUser    string `json:"auth_user,omitempty"`
-	AuthPass    string `json:"auth_pass,omitempty"`
+	QueryID    string `json:"query_id"`
+	SourceNode string `json:"source_node"`
+	QueryType  string `json:"query_type"` // "graph", "tasks", "status", "repomap"
+	QueryText  string `json:"query_text"`
+	Depth      int    `json:"depth,omitempty"`
+	AuthUser   string `json:"auth_user,omitempty"`
+	AuthPass   string `json:"auth_pass,omitempty"`
 }
 
 // FederatedQueryResult holds the response from a remote node's independent worktree.
 type FederatedQueryResult struct {
-	QueryID          string      `json:"query_id"`
-	TargetNodeID     string      `json:"target_node_id"`
-	RemoteWorktree   string      `json:"remote_worktree"`
-	QueryType        string      `json:"query_type"`
-	Timestamp        time.Time   `json:"timestamp"`
-	Data             interface{} `json:"data"`
-	DisclosedPeers   int         `json:"disclosed_peers"`
-	ExecutionTimeMs  int64       `json:"execution_time_ms"`
+	QueryID         string      `json:"query_id"`
+	TargetNodeID    string      `json:"target_node_id"`
+	RemoteWorktree  string      `json:"remote_worktree"`
+	QueryType       string      `json:"query_type"`
+	Timestamp       time.Time   `json:"timestamp"`
+	Data            interface{} `json:"data"`
+	DisclosedPeers  int         `json:"disclosed_peers"`
+	ExecutionTimeMs int64       `json:"execution_time_ms"`
 }
 
 // NodeIdentity represents the local node in the federated multi-worktree mesh.

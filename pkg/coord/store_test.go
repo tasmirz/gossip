@@ -2,6 +2,7 @@ package coord_test
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/tasmirz/gossip/pkg/coord"
+	_ "modernc.org/sqlite"
 )
 
 func setup(t *testing.T) (*coord.Store, string, coord.Project, coord.Credential, coord.Credential) {
@@ -764,5 +766,97 @@ func TestReworkPreservesReportAndFencesOldReview(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("review feedback missing from event stream")
+	}
+}
+
+func TestStoreMigrationCreatesRemoteAccessControlTableAndDefaultsDisabled(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "legacy.db")
+
+	// 1. Manually create an older SQLite database without the remote_access_control table
+	rawDB, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	createTableSQL := `
+	CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT NOT NULL, plan_revision INTEGER NOT NULL DEFAULT 0);
+	CREATE TABLE node_identity (id INTEGER PRIMARY KEY CHECK(id=1), instance_id TEXT NOT NULL UNIQUE);
+	INSERT INTO node_identity (id, instance_id) VALUES (1, 'legacy-instance-id');
+	INSERT INTO projects (id, name, plan_revision) VALUES ('proj-legacy-1', 'Legacy Project', 1);
+	`
+	if _, err = rawDB.Exec(createTableSQL); err != nil {
+		rawDB.Close()
+		t.Fatal(err)
+	}
+
+	// Verify remote_access_control table does NOT exist in the database initially
+	var tableName string
+	err = rawDB.QueryRow(`SELECT name FROM sqlite_master WHERE type='table' AND name='remote_access_control'`).Scan(&tableName)
+	if !errors.Is(err, sql.ErrNoRows) {
+		rawDB.Close()
+		t.Fatalf("expected remote_access_control table to not exist, got: %v (name=%s)", err, tableName)
+	}
+	rawDB.Close()
+
+	// 2. Open with coord.Open to trigger schema migration and initialization
+	s, err := coord.Open(dbPath)
+	if err != nil {
+		t.Fatalf("coord.Open failed on database missing remote_access_control: %v", err)
+	}
+	defer s.Close()
+
+	// 3. Verify RemoteAccessEnabled defaults to false (enabled=0)
+	enabled, err := s.RemoteAccessEnabled(ctx)
+	if err != nil {
+		t.Fatalf("RemoteAccessEnabled failed: %v", err)
+	}
+	if enabled {
+		t.Fatal("expected RemoteAccessEnabled to default to false on upgraded database, got true")
+	}
+
+	// 4. Directly inspect the database row in remote_access_control
+	inspectDB, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer inspectDB.Close()
+
+	var id, rowEnabled, updatedAt int64
+	err = inspectDB.QueryRow(`SELECT id, enabled, updated_at FROM remote_access_control WHERE id=1`).Scan(&id, &rowEnabled, &updatedAt)
+	if err != nil {
+		t.Fatalf("failed to query remote_access_control table: %v", err)
+	}
+	if id != 1 || rowEnabled != 0 {
+		t.Fatalf("unexpected remote_access_control row: id=%d enabled=%d updated_at=%d", id, rowEnabled, updatedAt)
+	}
+
+	// 5. Test toggling remote access via SetRemoteAccessEnabled
+	if err = s.SetRemoteAccessEnabled(ctx, true); err != nil {
+		t.Fatalf("SetRemoteAccessEnabled(true): %v", err)
+	}
+	enabled, err = s.RemoteAccessEnabled(ctx)
+	if err != nil || !enabled {
+		t.Fatalf("expected enabled=true, got: %v %v", enabled, err)
+	}
+
+	if err = s.SetRemoteAccessEnabled(ctx, false); err != nil {
+		t.Fatalf("SetRemoteAccessEnabled(false): %v", err)
+	}
+	enabled, err = s.RemoteAccessEnabled(ctx)
+	if err != nil || enabled {
+		t.Fatalf("expected enabled=false, got: %v %v", enabled, err)
+	}
+
+	// 6. Test UPSERT behavior: delete row 1 directly and ensure SetRemoteAccessEnabled recreates it
+	if _, err = inspectDB.Exec(`DELETE FROM remote_access_control WHERE id=1`); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.SetRemoteAccessEnabled(ctx, true); err != nil {
+		t.Fatalf("SetRemoteAccessEnabled failed after row deletion (UPSERT): %v", err)
+	}
+	enabled, err = s.RemoteAccessEnabled(ctx)
+	if err != nil || !enabled {
+		t.Fatalf("expected enabled=true after UPSERT recreation, got: %v %v", enabled, err)
 	}
 }

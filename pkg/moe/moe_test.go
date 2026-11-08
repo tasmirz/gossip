@@ -112,8 +112,8 @@ func TestMoEPanelLifecycleAndParallelDispatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetPanel failed: %v", err)
 	}
-	if fetched.Status != "executing" {
-		t.Fatalf("Expected status 'executing', got %s", fetched.Status)
+	if fetched.Status != "dispatched" {
+		t.Fatalf("Expected status 'dispatched', got %s", fetched.Status)
 	}
 	if len(fetched.SubagentTracks) != 2 {
 		t.Fatalf("Expected 2 persisted subagent tracks, got %d", len(fetched.SubagentTracks))

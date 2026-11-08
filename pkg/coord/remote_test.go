@@ -15,6 +15,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"io"
 	"math/big"
 	"net"
 	"net/http"
@@ -921,5 +922,186 @@ func TestRemoteMutualTLSResearchHandoff(t *testing.T) {
 	}
 	if _, err = remote.CurrentPlan(ctx, p.ID, owner.Token); !errors.Is(err, coord.ErrUnavailable) {
 		t.Fatalf("active remote listener did not immediately honor local kill switch: %v", err)
+	}
+}
+
+func TestRemoteBootstrapKillSwitchDisabled(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "home.db")
+	s, err := coord.Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	// Initially disabled by default
+	enabled, err := s.RemoteAccessEnabled(ctx)
+	if err != nil || enabled {
+		t.Fatalf("expected initial RemoteAccessEnabled=false: %v %v", enabled, err)
+	}
+
+	key := func() *ecdsa.PrivateKey {
+		t.Helper()
+		k, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return k
+	}
+	now := time.Now()
+	caKey := key()
+	caTemplate := &x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: "coord test CA"},
+		NotBefore:             now.Add(-time.Hour),
+		NotAfter:              now.Add(time.Hour),
+		IsCA:                  true,
+		BasicConstraintsValid: true,
+		KeyUsage:              x509.KeyUsageCertSign,
+	}
+	caDER, err := x509.CreateCertificate(rand.Reader, caTemplate, caTemplate, &caKey.PublicKey, caKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ca, err := x509.ParseCertificate(caDER)
+	if err != nil {
+		t.Fatal(err)
+	}
+	issue := func(serial int64, name string, usage x509.ExtKeyUsage) ([]byte, []byte) {
+		t.Helper()
+		privateKey := key()
+		template := &x509.Certificate{
+			SerialNumber: big.NewInt(serial),
+			Subject:      pkix.Name{CommonName: name},
+			NotBefore:    now.Add(-time.Hour),
+			NotAfter:     now.Add(time.Hour),
+			KeyUsage:     x509.KeyUsageDigitalSignature,
+			ExtKeyUsage:  []x509.ExtKeyUsage{usage},
+		}
+		if usage == x509.ExtKeyUsageServerAuth {
+			template.DNSNames = []string{"localhost"}
+			template.IPAddresses = []net.IP{net.ParseIP("127.0.0.1")}
+		}
+		der, err := x509.CreateCertificate(rand.Reader, template, ca, &privateKey.PublicKey, caKey)
+		if err != nil {
+			t.Fatal(err)
+		}
+		keyDER, err := x509.MarshalPKCS8PrivateKey(privateKey)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER})
+	}
+	serverPEM, serverKey := issue(2, "coord server", x509.ExtKeyUsageServerAuth)
+	clientPEM, clientKey := issue(3, "bootstrap client", x509.ExtKeyUsageClientAuth)
+	serverCert, err := tls.X509KeyPair(serverPEM, serverKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	bootstrapAPIKey := strings.Repeat("bootstrap-secret-", 4)
+	handler, err := coord.RPCHandlerWithBootstrapKey(s, bootstrapAPIKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	clientPool := x509.NewCertPool()
+	clientPool.AddCert(ca)
+	ts := httptest.NewUnstartedServer(handler)
+	ts.TLS = &tls.Config{
+		MinVersion:   tls.VersionTLS13,
+		Certificates: []tls.Certificate{serverCert},
+		ClientCAs:    clientPool,
+		ClientAuth:   tls.RequireAndVerifyClientCert,
+	}
+	ts.StartTLS()
+	defer ts.Close()
+
+	write := func(name string, data []byte) string {
+		t.Helper()
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, data, 0600); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	caFile := write("ca.pem", pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caDER}))
+	clientCertFile := write("client.pem", clientPEM)
+	clientKeyFile := write("client-key.pem", clientKey)
+
+	bootstrapRemote, err := coord.NewRemoteBootstrap(ts.URL, caFile, clientCertFile, clientKeyFile, "", bootstrapAPIKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	checkout := filepath.Join(dir, "repo")
+	if err = os.MkdirAll(checkout, 0700); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{{"init", "-b", "main"}, {"remote", "add", "origin", "https://github.com/acme/bootstrapped.git"}} {
+		cmd := exec.Command("git", append([]string{"-C", checkout}, args...)...)
+		if output, gitErr := cmd.CombinedOutput(); gitErr != nil {
+			t.Fatalf("git %v: %v: %s", args, gitErr, output)
+		}
+	}
+	observation, err := coord.InspectGitWorkspace(ctx, checkout)
+	if err != nil {
+		t.Fatal(err)
+	}
+	preparedProjectID, preparedOwner, err := coord.PrepareCredential("")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 1. Verify that while kill switch is disabled, bootstrap RPC returns ErrUnavailable (HTTP 503)
+	_, _, _, _, err = bootstrapRemote.CreatePreparedProjectWithWorkspace(ctx, preparedProjectID, "bootstrapped", "owner", "bootstrapped", "worker-host", observation, preparedOwner)
+	if err == nil || !errors.Is(err, coord.ErrUnavailable) {
+		t.Fatalf("expected ErrUnavailable when kill switch disabled, got: %v", err)
+	}
+
+	// Direct raw HTTP verification of 503 status code and kill switch body message
+	certParsed, err := tls.X509KeyPair(clientPEM, clientKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rawClient := &http.Client{
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{
+				MinVersion:   tls.VersionTLS13,
+				RootCAs:      clientPool,
+				Certificates: []tls.Certificate{certParsed},
+			},
+		},
+	}
+	resp, err := rawClient.Post(ts.URL+"/v1/call", "application/json", strings.NewReader(`{"operation":"project.create_prepared"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("expected HTTP 503 from raw bootstrap POST, got %d: %s", resp.StatusCode, string(body))
+	}
+	if !strings.Contains(string(body), "remote coordination is disabled by the local kill switch") {
+		t.Fatalf("expected kill switch text in 503 body, got: %s", string(body))
+	}
+
+	// 2. Enable remote access: bootstrap RPC succeeds
+	if err = s.SetRemoteAccessEnabled(ctx, true); err != nil {
+		t.Fatal(err)
+	}
+	createdProject, createdOwner, createdRepo, createdWorkspace, err := bootstrapRemote.CreatePreparedProjectWithWorkspace(ctx, preparedProjectID, "bootstrapped", "owner", "bootstrapped", "worker-host", observation, preparedOwner)
+	if err != nil || createdProject.Name != "bootstrapped" || createdOwner.Token == "" || createdRepo.Name != "bootstrapped" || createdWorkspace.RepositoryID != createdRepo.ID {
+		t.Fatalf("bootstrap project creation failed after enabling remote access: %v", err)
+	}
+
+	// 3. Disable remote access again: subsequent bootstrap calls immediately return ErrUnavailable / 503
+	if err = s.SetRemoteAccessEnabled(ctx, false); err != nil {
+		t.Fatal(err)
+	}
+	_, _, _, _, err = bootstrapRemote.CreatePreparedProjectWithWorkspace(ctx, preparedProjectID, "bootstrapped", "owner", "bootstrapped", "worker-host", observation, preparedOwner)
+	if err == nil || !errors.Is(err, coord.ErrUnavailable) {
+		t.Fatalf("expected ErrUnavailable after re-disabling kill switch, got: %v", err)
 	}
 }

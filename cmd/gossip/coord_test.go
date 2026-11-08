@@ -538,3 +538,109 @@ func TestCoordAdminViaLocalDaemon(t *testing.T) {
 		t.Fatalf("duplicate principal: %+v %v", principals, err)
 	}
 }
+
+func TestCoordRemoteCLI(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	dbPath := filepath.Join(dir, "coord.db")
+	s, err := coord.Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	// Initially disabled by default
+	enabled, err := s.RemoteAccessEnabled(ctx)
+	if err != nil || enabled {
+		t.Fatalf("expected initial RemoteAccessEnabled to be false: %v %v", enabled, err)
+	}
+
+	// 1. Direct DB access: status check
+	if err = runCoordRemote([]string{"--db", dbPath, "--action", "status"}); err != nil {
+		t.Fatalf("direct DB status check: %v", err)
+	}
+
+	// Direct DB access: enable
+	if err = runCoordRemote([]string{"--db", dbPath, "--action", "enable"}); err != nil {
+		t.Fatalf("direct DB enable: %v", err)
+	}
+	enabled, err = s.RemoteAccessEnabled(ctx)
+	if err != nil || !enabled {
+		t.Fatalf("expected RemoteAccessEnabled=true after enable: %v %v", enabled, err)
+	}
+
+	// Direct DB access: status check while enabled
+	if err = runCoordRemote([]string{"--db", dbPath, "--action", "status"}); err != nil {
+		t.Fatalf("direct DB status check while enabled: %v", err)
+	}
+
+	// Direct DB access: disable
+	if err = runCoordRemote([]string{"--db", dbPath, "--action", "disable"}); err != nil {
+		t.Fatalf("direct DB disable: %v", err)
+	}
+	enabled, err = s.RemoteAccessEnabled(ctx)
+	if err != nil || enabled {
+		t.Fatalf("expected RemoteAccessEnabled=false after disable: %v %v", enabled, err)
+	}
+
+	// Direct DB access: invalid action rejected
+	if err = runCoordRemote([]string{"--db", dbPath, "--action", "invalid"}); err == nil {
+		t.Fatal("direct DB invalid action was accepted")
+	}
+
+	// 2. Local Unix socket access via ServeLocal
+	sock := filepath.Join(dir, "coord.sock")
+	sockCtx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- coord.ServeLocal(sockCtx, s, sock) }()
+	defer func() {
+		cancel()
+		if err := <-done; err != nil {
+			t.Error(err)
+		}
+	}()
+
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if info, e := os.Lstat(sock); e == nil && info.Mode().Perm()&0077 == 0 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	// Unix socket access: status check
+	if err = runCoordRemote([]string{"--socket", sock, "--action", "status"}); err != nil {
+		t.Fatalf("socket status check: %v", err)
+	}
+
+	// Unix socket access: enable
+	if err = runCoordRemote([]string{"--socket", sock, "--action", "enable"}); err != nil {
+		t.Fatalf("socket enable: %v", err)
+	}
+	enabled, err = s.RemoteAccessEnabled(ctx)
+	if err != nil || !enabled {
+		t.Fatalf("expected RemoteAccessEnabled=true after socket enable: %v %v", enabled, err)
+	}
+
+	// Unix socket access: status check while enabled
+	if err = runCoordRemote([]string{"--socket", sock, "--action", "status"}); err != nil {
+		t.Fatalf("socket status check while enabled: %v", err)
+	}
+
+	// Unix socket access: disable
+	if err = runCoordRemote([]string{"--socket", sock, "--action", "disable"}); err != nil {
+		t.Fatalf("socket disable: %v", err)
+	}
+	enabled, err = s.RemoteAccessEnabled(ctx)
+	if err != nil || enabled {
+		t.Fatalf("expected RemoteAccessEnabled=false after socket disable: %v %v", enabled, err)
+	}
+
+	// Unix socket access: invalid action rejected
+	if err = runCoordRemote([]string{"--socket", sock, "--action", "invalid"}); err == nil {
+		t.Fatal("socket invalid action was accepted")
+	}
+}

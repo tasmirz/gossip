@@ -293,7 +293,7 @@ func (s *Store) SetRemoteAccessEnabled(ctx context.Context, enabled bool) error 
 	if enabled {
 		value = 1
 	}
-	_, err := s.db.ExecContext(ctx, `UPDATE remote_access_control SET enabled=?,updated_at=? WHERE id=1`, value, time.Now().Unix())
+	_, err := s.db.ExecContext(ctx, `INSERT INTO remote_access_control(id, enabled, updated_at) VALUES(1, ?, ?) ON CONFLICT(id) DO UPDATE SET enabled=excluded.enabled, updated_at=excluded.updated_at`, value, time.Now().Unix())
 	return err
 }
 

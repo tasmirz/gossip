@@ -7,11 +7,24 @@ import (
 	"time"
 )
 
+// BudgetReservation represents an internal planning token reservation for a task.
+//
+// Execution Truthfulness Notice:
+// Token allocations and attempt holds are internal planning reservations and token
+// accounting recorded in SQLite. They are NOT verified external LLM provider billing,
+// financial spending limits, or provider-enforced account caps.
 type BudgetReservation struct {
 	TaskID string `json:"task_id"`
 	Amount int64  `json:"amount"`
 	Held   int64  `json:"attempt_holds"`
 }
+
+// Budget represents the internal planning budget envelope for a project.
+//
+// Execution Truthfulness Notice:
+// Budget envelopes and token holds are internal planning reservations and token accounting
+// within SQLite, not verified external provider billing or spend limits. Reported usage
+// reflects unverified self-reported telemetry from agents/adapters.
 type Budget struct {
 	Enabled       bool                `json:"enabled"`
 	Revision      int                 `json:"revision"`
@@ -64,6 +77,11 @@ func (s *Store) GetBudget(ctx context.Context, project, token string) (Budget, e
 }
 
 // SetBudget enables an envelope or changes its limit using optimistic revision.
+//
+// Execution Truthfulness Notice:
+// The configured token limit is an internal coordination planning boundary enforced
+// within SQLite to govern task claims. It does not interact with external model provider
+// billing APIs or enforce financial spend caps.
 func (s *Store) SetBudget(ctx context.Context, project, token string, revision int, limit int64) (Budget, error) {
 	if revision < 0 || limit < 1 || limit > 1000000000000 {
 		return Budget{}, errors.New("invalid budget limit or revision")
@@ -111,6 +129,10 @@ func (s *Store) SetBudget(ctx context.Context, project, token string, revision i
 }
 
 // ReserveBudget sets one task's allocation atomically. Zero explicitly releases it.
+//
+// Execution Truthfulness Notice:
+// Reservations and attempt holds are internal coordination planning allowances
+// recorded in SQLite, not external provider token reservations or billing transactions.
 func (s *Store) ReserveBudget(ctx context.Context, project, token, task string, amount int64) (Budget, error) {
 	if task == "" || amount < 0 || amount > 1000000000000 {
 		return Budget{}, errors.New("invalid reservation")

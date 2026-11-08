@@ -44,6 +44,8 @@ Run the home with `coord-serve` on a TLS listener. It requires mutual TLS and a 
 
 Remote access is **disabled by default**. Before exposing the home over a LAN or FRP, enable it locally with `gossip coord-remote --action enable --db /private/path/coord.db`. Check or disable it at any time with `--action status` or `--action disable`. If the local daemon holds the database open, use `--socket /private/path/coord.sock` instead. The switch blocks new RPC and remote dashboard requests immediately; FRP TCP forwarding is covered by the same RPC gate. Only the local database or private Unix socket can change this setting.
 
+The dashboard's **Settings** view shows the current switch state. It is read-only; change the setting with the local CLI or private socket so an unauthenticated localhost HTTP request cannot toggle the host-wide boundary.
+
 For FRP, forward TCP to the TLS listener. Do not expose the legacy HTTP dashboard or use the retired arbitrary-peer registration tools. The remote model is single-home: replicas may cache bounded read snapshots and queue idempotent actions, while the home remains authoritative.
 
 See [LAN, FRP, certificate grants, pairing, and bootstrap instructions](docs/coordination-preview.md) for command examples and details.

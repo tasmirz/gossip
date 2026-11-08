@@ -2071,39 +2071,35 @@ body.light-theme #social-feed {
     </div>
   </div>
 
-  <!-- FRP TUNNEL & REMOTE ACCESS -->
+  <!-- REMOTE COORDINATION & ACCESS CONTROL NOTICE -->
   <div class="box">
-    <div class="box-title">[FRP TUNNEL & REMOTE ACCESS // MANDATORY DISCLOSURE]</div>
+    <div class="box-title">[REMOTE COORDINATION & ACCESS CONTROL // SECURE ARCHITECTURE NOTICE]</div>
     <div id="tunnel-status-banner" style="font-size: 11px; margin-bottom: 12px; border-bottom: 1px dashed currentColor; padding-bottom: 8px;">
       Loading tunnel status...
     </div>
-    <div class="grid-2">
-      <div>
-        <div style="font-size: 11px; font-weight: bold; margin-bottom: 4px;">FRP INGRESS & BASIC AUTH PROTECTION</div>
-        <div class="flex-row" style="margin-bottom: 6px;">
-          <input type="text" id="tun-server-addr" placeholder="FRP Server Addr (e.g. tunnel.domain.com)" class="flex-1">
-          <input type="number" id="tun-server-port" placeholder="Port (7000)" style="width: 100px;">
-        </div>
-        <div class="flex-row" style="margin-bottom: 6px;">
-          <input type="text" id="tun-auth-token" placeholder="FRP Server Auth Token (token)" class="flex-1">
-          <input type="text" id="tun-domain" placeholder="Custom Domain (e.g. gossip.domain.com)" class="flex-1">
-        </div>
-        <div class="flex-row" style="margin-bottom: 8px;">
-          <input type="text" id="tun-http-user" placeholder="HTTP BasicAuth User (required)" class="flex-1">
-          <input type="password" id="tun-http-pass" placeholder="HTTP BasicAuth Password (required)" class="flex-1">
-        </div>
-        <div class="flex-row" style="gap: 6px; flex-wrap: wrap;">
-          <button onclick="generateFRPConfig('toml')">[GENERATE FRPC.TOML]</button>
-          <button onclick="generateFRPConfig('ini')">[GENERATE FRPC.INI]</button>
-          <button onclick="generateFRPConfig('server_toml')">[GENERATE FRPS.TOML]</button>
-          <button onclick="activateTunnel()">[ACTIVATE TUNNEL]</button>
-          <button onclick="deactivateTunnel()">[DEACTIVATE TUNNEL]</button>
-        </div>
-      </div>
-      <div>
-        <div style="font-size: 11px; font-weight: bold; margin-bottom: 4px;">GENERATED CONFIGURATION / LOG</div>
-        <textarea id="tun-config-preview" style="width: 100%; height: 140px; font-size: 11px;" readonly placeholder="# Generated FRP configuration will appear here..."></textarea>
-      </div>
+    <div style="font-size: 11px; line-height: 1.6;">
+      <p style="margin-bottom: 8px;">
+        <b>NOTICE:</b> Legacy HTTP dashboard tunneling is retired and disabled (HTTP 410 Gone).
+        The legacy JSON database has no project access boundaries and must not be exposed over network tunnels.
+      </p>
+      <p style="margin-bottom: 8px;">
+        For secure multi-host coordination, use <code>gossip coord-serve</code> with Mutual TLS (mTLS 1.3),
+        enrolled client certificate grants, and an FRP TCP proxy:
+      </p>
+      <pre style="background: rgba(0,0,0,0.2); padding: 8px; border: 1px solid currentColor; font-size: 11px; margin-bottom: 8px; white-space: pre-wrap;">
+# 1. Initialize modern coordination project and generate certificates:
+gossip coord-init &lt;project-name&gt;
+gossip coord-add --name &lt;agent-name&gt; --role worker --client-certificate &lt;cert.pem&gt;
+
+# 2. Generate secure FRP TCP proxy configuration:
+gossip coord-frp --server-addr &lt;frp.example.com&gt; --remote-port 8443
+
+# 3. Start mutual TLS coordination service:
+gossip coord-serve --tls-cert &lt;server.pem&gt; --tls-key &lt;server-key.pem&gt; --client-ca &lt;ca.pem&gt;
+      </pre>
+      <p style="font-size: 10px; opacity: 0.8;">
+        Network RPC and HTTPS dashboards are protected by the local kill switch (<code>gossip coord-remote</code>).
+      </p>
     </div>
   </div>
 
@@ -2828,72 +2824,11 @@ async function syncSettings() {
 }
 
 async function generateFRPConfig(fmt) {
-  const server_addr = document.getElementById('tun-server-addr').value.trim();
-  const server_port = parseInt(document.getElementById('tun-server-port').value.trim()) || 7000;
-  const auth_token = document.getElementById('tun-auth-token').value.trim();
-  const custom_domain = document.getElementById('tun-domain').value.trim();
-  const http_user = document.getElementById('tun-http-user').value.trim();
-  const http_password = document.getElementById('tun-http-pass').value.trim();
-
-  try {
-    const res = await fetch('/api/tunnel', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({
-        action: 'generate',
-        format: fmt,
-        server_addr,
-        server_port,
-        auth_token,
-        custom_domain,
-        http_user,
-        http_password
-      })
-    });
-    const data = await res.json();
-    document.getElementById('tun-config-preview').value = data.config || '';
-  } catch(e) {
-    alert('Config generation error: ' + e);
-  }
+  alert('Legacy HTTP dashboard tunneling is retired. Use "gossip coord-frp" to generate secure FRP TCP configurations.');
 }
 
 async function activateTunnel() {
-  const server_addr = document.getElementById('tun-server-addr').value.trim();
-  const server_port = parseInt(document.getElementById('tun-server-port').value.trim()) || 7000;
-  const auth_token = document.getElementById('tun-auth-token').value.trim();
-  const custom_domain = document.getElementById('tun-domain').value.trim();
-  const http_user = document.getElementById('tun-http-user').value.trim();
-  const http_password = document.getElementById('tun-http-pass').value.trim();
-
-  if (!server_addr) return alert('Server address is required');
-  if (http_user && http_password && http_password.length < 6) {
-    return alert('Password must be at least 6 characters for protected access');
-  }
-
-  try {
-    const res = await fetch('/api/tunnel', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({
-        action: 'activate',
-        server_addr,
-        server_port,
-        auth_token,
-        custom_domain,
-        http_user,
-        http_password
-      })
-    });
-    if (!res.ok) {
-      const err = await res.text();
-      return alert('Activation error: ' + err);
-    }
-    alert('Tunnel activated with protected HTTP Basic Auth credentials.');
-    await syncSettings();
-    await syncData();
-  } catch(e) {
-    alert('Activation error: ' + e);
-  }
+  alert('Legacy HTTP dashboard tunneling is retired and disabled (HTTP 410 Gone). Use "gossip coord-serve" with mutual TLS and an FRP TCP proxy.');
 }
 
 async function deactivateTunnel() {
