@@ -83,6 +83,7 @@ func (s *Store) createTask(ctx context.Context, project, token, requestID string
 	default:
 		return zero, errors.New("invalid review mode")
 	}
+	contract.ReviewType = strings.TrimSpace(contract.ReviewType)
 	switch contract.ReviewType {
 	case "full_code":
 	case "diagram_report":

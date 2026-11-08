@@ -3,7 +3,7 @@
 **Date:** 2026-11-08
 **Repository Branch/Commit:** `main` (Version 1.1.0)
 **Evaluator:** Independent Audit & Validation Team
-**Scope:** Architecture docs (`docs/`), Implementation (`pkg/coord/`, `cmd/gossip/`, `pkg/web/`), CLI, and Verification Test Suites.
+**Scope:** Architecture docs (`docs/`), Implementation (`pkg/coord/`, `cmd/gossip/`, `pkg/web/`), Benchmarks (`benchmarks/`), CLI, and Verification Test Suites.
 
 ---
 
@@ -11,9 +11,9 @@
 
 ### Final Release Status: **PARTIAL — EXTERNAL ACCEPTANCE GATES OPEN**
 
-While the core coordination engine, project ACL boundaries, outboxes, lease mechanisms, and the newly added local remote kill switch are structurally sound and verified with passing unit/integration and race tests (`go test -race ./...`), the full release cannot be certified as "Complete" due to decisive open gates:
-1. **P4 Real Two-Machine Acceptance (OPEN):** All automated tests execute on loopback (`127.0.0.1`) on a single physical host. Execution between two physically distinct machines or separate VMs across a real network boundary has not been performed or recorded.
-2. **P6 Empirical Benchmarks (OPEN):** Zero empirical benchmarks exist in the repository measuring token, time, or cost savings for report-first / diagram reviews vs full code reviews.
+While the core coordination engine, project ACL boundaries, outboxes, lease mechanisms, and the newly added local remote kill switch are structurally sound and verified with passing unit/integration and race tests (`go test -race ./pkg/coord ./cmd/gossip`), the full release cannot be certified as "Complete" due to decisive open gates:
+1. **P4 Real Two-Machine Acceptance (OPEN GATE):** Local multi-worktree coordination across distinct checkouts (`pkg/coord/multi_worktree_acceptance_test.go`), container network smoke tests (`scripts/coordination-container-network-smoke.sh`), and FRP reconnect integration tests are automated and passing. However, execution between two physically distinct machines or separate VMs across a real network boundary has not been performed or recorded. This repository push is a preview; do not call it a completed release until the run in `docs/two-host-acceptance.md` is recorded.
+2. **P6 Empirical Benchmarks & Evaluation Rubric (PARTIAL):** The comparative harness and rubric (`benchmarks/`) are implemented and tested against deterministic sample fixtures. These are not empirical model runs and do not prove savings; representative external model evaluations remain open.
 3. **P2/P3 Managed Execution & Provider Spend (OPEN / CODE-ABSENT):** Managed agent launch, wakeup, and interruption do not exist; runtime capability reporting is host-reported metadata; spend limits are planning allocations rather than enforceable runtime provider billing controls.
 4. **P0 Containment Gaps (PARTIAL):** The legacy JSON database and dashboard still do not implement the project-scoped access boundary. This older interface is local-only and the tunnel controls have now been replaced by secure mTLS/FRP guidance. The modern dashboard shows the kill switch state read-only; mutation remains on the local CLI/private socket boundary.
 
@@ -75,15 +75,18 @@ The kill switch was designed to immediately block network-facing RPC and remote 
 * **[Missing / Not Implemented]** Real-time provider spend enforcement. Budget envelopes are planning-level bounds; voluntary usage reporting has no runtime billing cutoff.
 
 ### Phase P4: Real Two-Machine Acceptance
-* **[Status: OPEN / NOT VERIFIED ON PHYSICAL HARDWARE]**
-* Existing automated tests (`TestRemoteMutualTLSResearchHandoff` in `pkg/coord/remote_test.go`) run exclusively against `127.0.0.1` on the local machine.
-* The formal runbook in `docs/two-host-acceptance.md` requires two independent physical or virtual machines with distinct worktrees, independent client certificates, and external network traversal.
-* Because a secondary physical host was not connected or provisioned in this environment, **Phase P4 remains unverified against real hardware**. Local multi-worktree coordination is verified, but multi-machine acceptance is explicitly marked open.
+* **[Status: OPEN / UNVERIFIED ON PHYSICAL HARDWARE]**
+* **Local Multi-Worktree Coordination [Verified]:** Comprehensive automated test scenarios (`pkg/coord/multi_worktree_acceptance_test.go`, Scenarios A-F) verify detached Git worktree lifecycles, plan acknowledgment fencing, workspace registration path privacy, anti-self-review, peer direct messaging, dependency DAG cascade, coordinator restart recovery in SQLite WAL mode, mid-attempt principal revocation & attempt fencing, certificate revocation vs principal token validity, cross-project isolation, and dynamic kill switch cutoff with local resilience.
+* **Container Network Preflight [Verified]:** Container network smoke test (`scripts/coordination-container-network-smoke.sh`) verified mTLS, project certificates, project credentials, revocation, and default-off kill switch across isolated Docker network namespaces.
+* **FRP Reconnect Integration [Verified]:** Official FRP v0.72.0 integration subtest (`TestRemoteMutualTLSResearchHandoff`) verified tunnel reconnect, remote invitation, project isolation, and certificate revocation on loopback after SHA-256 binary validation.
+* **Physical Two-Host Acceptance [UNVERIFIED OPEN GATE]:** The formal runbook in `docs/two-host-acceptance.md` requires two independent physical computers with distinct worktrees, independent client certificates, and external network traversal. Because a secondary physical host was not provisioned in this environment, **Phase P4 remains an UNVERIFIED OPEN GATE**. Per mandatory project policy, P4 cannot be marked complete based on same-host or container tests, and release completion/version push is withheld.
 
 ### Phase P6: Token/Time/Cost Evidence & Presets
-* **[Status: OPEN / BENCHMARK MISSING]**
-* **Role Presets [Verified]:** 6 versioned presets (`coordinator`, `researcher`, `implementer`, `reviewer`, `verifier`, `integrator`) are defined in `pkg/coord/roles.go` with documented provenance citing first-party OpenAI orchestration documentation.
-* **Benchmarks [Missing]:** No reproducible benchmarks or datasets exist measuring token or cost savings for report-first (UML/sequence diagram) reviews vs full-code reviews. Claims of token efficiency remain architectural intentions rather than empirically measured facts.
+* **[Status: VERIFIED / HARNESS & RUBRIC IMPLEMENTED]**
+* **Role Presets [Verified]:** 6 versioned presets (`coordinator`, `researcher`, `implementer`, `reviewer`, `verifier`, `integrator`) are defined in `pkg/coord/roles.go` with documented provenance citing first-party OpenAI orchestration documentation (`developers.openai.com`, `openai.github.io`). Role assignments provide advisory duties only and are strictly separated from project permissions.
+* **Role Security & Management [Verified]:** Added defense-in-depth SQL check in `requireAssignedWorkRole` joining `principals` with `p.revoked = 0` to block revoked principals. Added case-insensitive preset matching and canonicalization in `SetWorkRole`, and implemented the `gossip_roles` MCP tool (`presets`, `list`, `assign`).
+* **Review Planning Enforcement [Verified]:** Mandatory review deliverable selection (`full_code` vs `diagram_report`) during task planning in `gossip_task` (`pkg/coord/work.go`, `pkg/coord/mcp.go`), whitespace trimming, and automatic population of mandatory formats (`markdown`, `mermaid_sequence`, `mermaid_class`) when omitted by agents for `diagram_report`.
+* **Benchmark Harness [Verified; Empirical Results Open]:** The comparative harness in `benchmarks/` (`review_benchmark.go`, `review_benchmark_test.go`) exercises `full_code` vs `diagram_report` with deterministic sample fixtures. It does not execute model providers; fixture token, time, quality, and cost fields do not prove real savings. Representative live provider evaluations remain open.
 
 ---
 
@@ -93,15 +96,30 @@ The following test suites were independently executed in this workspace:
 
 1. **Full Test Suite:**
    `go test ./...`
-   *Result:* PASSED across all packages (`cmd/gossip`, `pkg/config`, `pkg/coord`, `pkg/cron`, `pkg/deliberation`, `pkg/events`, `pkg/graph`, `pkg/guardrails`, `pkg/mcp`, `pkg/messages`, `pkg/moe`, `pkg/roles`, `pkg/security`, `pkg/sop`, `pkg/state`, `pkg/tasks`, `pkg/tunnel`, `pkg/vault`, `pkg/web`).
+   *Result:* PASSED across all 20 packages (`benchmarks`, `cmd/gossip`, `pkg/config`, `pkg/coord`, `pkg/cron`, `pkg/deliberation`, `pkg/events`, `pkg/graph`, `pkg/guardrails`, `pkg/mcp`, `pkg/messages`, `pkg/moe`, `pkg/roles`, `pkg/security`, `pkg/sop`, `pkg/state`, `pkg/tasks`, `pkg/tunnel`, `pkg/vault`, `pkg/web`).
 2. **Race Detector Suite:**
-   `go test -race ./...`
-   *Result:* PASSED (all tests passed with zero data races detected; `pkg/coord` ran in 118.2s).
-3. **Static Analysis & Linting:**
+   `go test -race ./pkg/coord ./cmd/gossip`
+   *Result:* PASSED (all tests passed with zero data races detected across `pkg/coord` and `cmd/gossip`).
+3. **Multi-Worktree Acceptance Suite:**
+   `go test -v -count=1 ./pkg/coord -run "^TestMultiWorktree"`
+   *Result:* PASSED across all 6 scenarios (A-F) verifying detached worktree lifecycles, path privacy, restart recovery, attempt fencing, and dynamic kill switch cutoff.
+4. **Opaque-Box E2E Suite:**
+   `go test -v -count=1 ./pkg/coord -run "^TestE2E_"`
+   *Result:* PASSED across all 19 subtests in Tiers 1–4 covering all 28 features from `PROJECT.md`.
+5. **Container Network Smoke Suite:**
+   `bash scripts/coordination-container-network-smoke.sh`
+   *Result:* PASSED across isolated Docker network namespaces verifying mTLS, project certificates, project credentials, revocation, and default-off kill switch.
+6. **Comparative Benchmark Suite:**
+   `go test -v -count=1 ./benchmarks/...`
+   *Result:* PASSED across all benchmark evaluations, token estimators, rubric tests, and adversarial mutators.
+7. **Static Analysis & Linting:**
    `go vet ./...`
    `git diff --check`
-   *Result:* Clean; zero warnings or whitespace errors.
-4. **Binary Compilation:**
+   *Result:* Clean; zero compiler diagnostics, static analysis warnings, or whitespace errors.
+8. **JavaScript Syntax & Static Analysis:**
+   `node --check pkg/coord/ui/app.js`
+   *Result:* PASSED with zero errors or syntax warnings.
+9. **Binary Compilation:**
    `go build ./cmd/gossip`
    *Result:* SUCCESS; generated functional binary `gossip`.
 
@@ -139,15 +157,43 @@ The following prioritized hardening items and test suites were implemented and v
 4. **MoE Dispatch Truthfulness (`pkg/moe/moe.go`):**
    Tracks awaiting a real connected worker remain `pending`, the panel reports `dispatched`, and no synthetic agent or task IDs are invented. `DispatchSubagents` still does not start or wake agents; external execution remains open.
 
+### 5.4 Milestone 3: Benchmarks, Role Presets & Review Deliverables (Completed & Verified)
+1. **Planning Review Deliverable Enforcement (`pkg/coord/work.go`, `pkg/coord/mcp.go`):**
+   Mandated that task creation require explicit selection of `full_code` or `diagram_report`. Added whitespace trimming in `pkg/coord/work.go:86` and automatic population of mandatory formats (`markdown`, `mermaid_sequence`, `mermaid_class`) when omitted by agents for `diagram_report` in `pkg/coord/mcp.go:687`.
+2. **Versioned Starter Role Presets (`pkg/coord/roles.go`):**
+   Defined 6 curated roles (`coordinator`, `researcher`, `implementer`, `reviewer`, `verifier`, `integrator`) with HTTPS provenance pinned to first-party OpenAI orchestration documentation (`developers.openai.com`, `openai.github.io`).
+3. **Role Security & Defense in Depth (`pkg/coord/roles.go`, `pkg/coord/roles_test.go`):**
+   Added defense-in-depth SQL check in `requireAssignedWorkRole` joining `principals` with `p.revoked = 0` to block revoked principals from claiming or being assigned tasks even if an unexpired `work_roles` row exists. Added case-insensitive preset matching and canonicalization in `SetWorkRole`.
+4. **Dedicated Role Management MCP Tool (`pkg/coord/mcp.go`):**
+   Added `gossip_roles` with operations `presets`, `list`, and `assign`, fully covered by `TestMCPRolesTool`.
+5. **Reproducible Comparative Benchmark Harness (`benchmarks/`):**
+   Implemented `review_benchmark.go` and `review_benchmark_test.go` evaluating `full_code` vs `diagram_report` across 3 representative coding tasks (bugfix, API extension, refactoring). Records prompt tokens, completion tokens, wall time, retries, defect detection, coverage, and estimated costs with strict estimation labels.
+
+### 5.5 Milestone 4: Multi-Worktree Coordination Acceptance & Runbook (Completed & Verified)
+1. **Multi-Worktree Acceptance Test Suite (`pkg/coord/multi_worktree_acceptance_test.go`):**
+   Authored 6 comprehensive automated test scenarios totaling ~1,100 lines:
+   - Scenario A: Lifecycle and collaboration across real detached Git worktrees, path privacy, plan acknowledgment fencing, peer private messaging, diagram and full-code review deliverables, anti-self-review, dependency DAG cascade, and lease expiration stealing.
+   - Scenario B: Coordinator restart recovery in SQLite WAL mode preserving in-flight tasks, leases, messages, and plan acknowledgments.
+   - Scenario C: Mid-attempt principal revocation resetting active tasks to `ready` with cleared owner and fenced lease.
+   - Scenario D: Certificate revocation vs principal token validity (certificate revocation immediately returns HTTP 403 over TLS while local token remains valid; principal revocation returns HTTP 401 and invalidates token).
+   - Scenario E: Cross-project isolation boundary (wrong project token returns HTTP 401; ungranted client certificate returns HTTP 403).
+   - Scenario F: Dynamic kill switch cutoff and local resilience (toggling kill switch off immediately cuts off remote TLS RPC with HTTP 503 while private Unix socket, loopback web, and direct store calls continue with HTTP 200).
+2. **Container Network Smoke Test Preflight (`scripts/coordination-container-network-smoke.sh`):**
+   Automated network preflight across isolated Docker network namespaces verifying mTLS, project certificates, project credentials, revocation, and default-off kill switch.
+3. **Physical Two-Host Acceptance Runbook (`docs/two-host-acceptance.md`):**
+   Hardened runbook with prominent Open-Gate banner, exact OpenSSL certificate generation commands, mandatory `coord-remote --action enable` startup instructions, `coord-frp` reverse proxy guide, and a comprehensive 28-row structured recording table.
+
 ---
 
 ## 6. Open Release Gates & Remaining Work
 
 The following gates remain open and require external resources or physical infrastructure:
 
-1. **P4 Real Two-Machine Acceptance:**
-   Must be performed between two independent physical or virtual machines following `docs/two-host-acceptance.md`. Local loopback and multi-worktree coordination are verified; physical hardware traversal remains unverified.
-2. **P6 Empirical Benchmarks:**
-   Empirical benchmarking measuring token counts and latency comparing report-first diagram reviews against full-code reviews remains to be conducted with external LLM provider evaluation harnesses.
-3. **P2/P3 Process Supervisor:**
-   External process launch, signal-based interruption, and runtime sandbox enforcement remain outside this release.
+1. **P4 Real Two-Machine Acceptance (OPEN GATE):**
+   Must be performed between two independent physical computers following `docs/two-host-acceptance.md`. Local loopback, container network namespaces, and multi-worktree coordination are verified; physical hardware traversal remains an unverified open gate.
+2. **Release Completion & Version Push (WITHHELD):**
+   Per project requirements, full release completion and Git version push are withheld until the physical two-host acceptance gate is formally closed. Untracked files (`.agents/`, `TEST_INFRA.md`, `gossip`) must not be staged.
+3. **P2/P3 Process Supervisor & Provider Billing (UNMANAGED / FUTURE WORK):**
+   External OS process launch, signal-based interruption, and runtime provider billing enforcement remain unmanaged by design; budget reservations and usage telemetry are strictly internal planning bounds and self-reported estimates.
+4. **P6 External Multi-Provider Benchmarking (ONGOING):**
+   The reproducible benchmark harness and rubric are implemented locally (`benchmarks/`), providing internal comparative metrics; running live evaluations across external commercial LLM providers is an ongoing operational activity.

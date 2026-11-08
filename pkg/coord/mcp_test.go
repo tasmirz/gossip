@@ -146,12 +146,40 @@ func TestMCPTaskPlanningRequiresReviewTypeBeforeCreation(t *testing.T) {
 	result, err = tool.Handler(context.Background(), mcp.CallToolRequest{Params: mcp.CallToolParams{Name: "gossip_task", Arguments: map[string]any{
 		"operation": "create", "request_id": "diagram-review-missing-formats", "plan_revision": 1,
 		"title": "Review project access", "description": "Return UML class and sequence diagrams", "kind": "review", "review_type": "diagram_report",
+		"formats": []any{"markdown"},
 	}}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !result.IsError || !strings.Contains(result.Content[0].(mcp.TextContent).Text, "diagram_report requires markdown, mermaid_sequence, and mermaid_class formats") {
-		t.Fatalf("diagram review was accepted without both required UML diagrams: %+v", result)
+		t.Fatalf("diagram review with incomplete formats was accepted: %+v", result)
+	}
+	result, err = tool.Handler(context.Background(), mcp.CallToolRequest{Params: mcp.CallToolParams{Name: "gossip_task", Arguments: map[string]any{
+		"operation": "create", "request_id": "diagram-review-auto-formats", "plan_revision": 1,
+		"title": "Review project access", "description": "Return UML class and sequence diagrams", "kind": "review", "review_type": "diagram_report",
+	}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.IsError {
+		t.Fatalf("diagram review with omitted formats failed to auto-populate: %+v", result)
+	}
+	var autoTask coord.Task
+	if err := json.Unmarshal([]byte(result.Content[0].(mcp.TextContent).Text), &autoTask); err != nil {
+		t.Fatal(err)
+	}
+	if len(autoTask.Contract.Formats) != 3 {
+		t.Fatalf("auto-populated formats count = %d, want 3: %+v", len(autoTask.Contract.Formats), autoTask.Contract.Formats)
+	}
+	result, err = tool.Handler(context.Background(), mcp.CallToolRequest{Params: mcp.CallToolParams{Name: "gossip_task", Arguments: map[string]any{
+		"operation": "create", "request_id": "whitespace-review-type", "plan_revision": 1,
+		"title": "Review whitespace", "description": "Whitespace test", "kind": "review", "review_type": "  full_code  ",
+	}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.IsError {
+		t.Fatalf("review_type with surrounding whitespace was rejected: %+v", result)
 	}
 }
 
@@ -468,5 +496,125 @@ func TestMCPSyncCheckpoint(t *testing.T) {
 	}
 	if err := json.Unmarshal([]byte(res.Content[0].(mcp.TextContent).Text), &checkpoint); err != nil || checkpoint.Sequence != last {
 		t.Fatalf("checkpoint: %+v %v", checkpoint, err)
+	}
+}
+
+func TestMCPRolesTool(t *testing.T) {
+	s, _, p, owner, worker := setup(t)
+	ownerSrv := coord.MCPServer(s, p.ID, owner.Token)
+	workerSrv := coord.MCPServer(s, p.ID, worker.Token)
+
+	call := func(isOwner bool, args map[string]any) *mcp.CallToolResult {
+		t.Helper()
+		srv := ownerSrv
+		if !isOwner {
+			srv = workerSrv
+		}
+		tool := srv.GetTool("gossip_roles")
+		if tool == nil {
+			t.Fatal("gossip_roles tool missing")
+		}
+		res, err := tool.Handler(context.Background(), mcp.CallToolRequest{
+			Params: mcp.CallToolParams{Name: "gossip_roles", Arguments: args},
+		})
+		if err != nil {
+			t.Fatalf("handler error: %v", err)
+		}
+		return res
+	}
+
+	// 1. presets operation
+	res := call(true, map[string]any{"operation": "presets"})
+	if res.IsError {
+		t.Fatalf("presets returned error: %+v", res)
+	}
+	var presets []coord.RolePreset
+	if err := json.Unmarshal([]byte(res.Content[0].(mcp.TextContent).Text), &presets); err != nil {
+		t.Fatalf("unmarshal presets: %v", err)
+	}
+	if len(presets) != 6 {
+		t.Fatalf("presets count = %d, want 6", len(presets))
+	}
+
+	// 2. list operation (initially empty)
+	res = call(true, map[string]any{"operation": "list"})
+	if res.IsError {
+		t.Fatalf("list returned error: %+v", res)
+	}
+	var roles []coord.WorkRole
+	if err := json.Unmarshal([]byte(res.Content[0].(mcp.TextContent).Text), &roles); err != nil {
+		t.Fatalf("unmarshal roles: %v", err)
+	}
+	if len(roles) != 0 {
+		t.Fatalf("expected 0 initial roles, got %d", len(roles))
+	}
+
+	// 3. assign operation by owner with preset role (case-insensitive canonicalization)
+	res = call(true, map[string]any{
+		"operation":    "assign",
+		"principal_id": worker.PrincipalID,
+		"name":         "Researcher",
+	})
+	if res.IsError {
+		t.Fatalf("assign preset returned error: %+v", res)
+	}
+	var assigned coord.WorkRole
+	if err := json.Unmarshal([]byte(res.Content[0].(mcp.TextContent).Text), &assigned); err != nil {
+		t.Fatalf("unmarshal assigned role: %v", err)
+	}
+	if assigned.Name != "researcher" || !assigned.Active || assigned.Revision != 1 {
+		t.Fatalf("assigned preset mismatch: %+v", assigned)
+	}
+
+	// 4. list operation after assign
+	res = call(true, map[string]any{"operation": "list"})
+	if res.IsError {
+		t.Fatalf("list returned error: %+v", res)
+	}
+	if err := json.Unmarshal([]byte(res.Content[0].(mcp.TextContent).Text), &roles); err != nil || len(roles) != 1 {
+		t.Fatalf("list after assign failed: %+v", roles)
+	}
+	if roles[0].PrincipalID != worker.PrincipalID || roles[0].Name != "researcher" {
+		t.Fatalf("listed role mismatch: %+v", roles[0])
+	}
+
+	// 5. assign custom role requires duties
+	res = call(true, map[string]any{
+		"operation":    "assign",
+		"principal_id": worker.PrincipalID,
+		"name":         "specialist",
+		"revision":     1,
+	})
+	if !res.IsError || !strings.Contains(res.Content[0].(mcp.TextContent).Text, "custom roles require duties") {
+		t.Fatalf("custom role without duties should be rejected: %+v", res)
+	}
+
+	// 6. assign custom role with duties succeeds
+	res = call(true, map[string]any{
+		"operation":    "assign",
+		"principal_id": worker.PrincipalID,
+		"name":         "specialist",
+		"duties":       "Domain expertise",
+		"revision":     1,
+	})
+	if res.IsError {
+		t.Fatalf("custom role with duties failed: %+v", res)
+	}
+
+	// 7. assign by non-owner fails with unauthorized
+	res = call(false, map[string]any{
+		"operation":    "assign",
+		"principal_id": worker.PrincipalID,
+		"name":         "coordinator",
+		"revision":     2,
+	})
+	if !res.IsError {
+		t.Fatal("non-owner worker was able to assign work role")
+	}
+
+	// 8. unknown operation returns error
+	res = call(true, map[string]any{"operation": "unknown_op"})
+	if !res.IsError || !strings.Contains(res.Content[0].(mcp.TextContent).Text, "unknown role operation") {
+		t.Fatalf("unknown operation did not return expected error: %+v", res)
 	}
 }
