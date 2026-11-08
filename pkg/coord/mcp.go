@@ -112,8 +112,8 @@ func MCPServer(store Backend, project, token string) *server.MCPServer {
 // launched with the private bootstrap API key configured by the MCP client;
 // created project actions use the separately saved owner credential.
 func ProjectBootstrapMCPServer(store interface {
-	CreatePreparedProjectWithWorkspace(context.Context, string, string, string, string, string, GitObservation, Credential) (Project, Credential, Repository, Workspace, error)
-}, credentialDir string) *server.MCPServer {
+	CreatePreparedProjectWithWorkspaceUsingBootstrapKey(context.Context, string, string, string, string, string, string, GitObservation, Credential) (Project, Credential, Repository, Workspace, error)
+}, credentialDir, bootstrapKey string) *server.MCPServer {
 	srv := server.NewMCPServer("Gossip project bootstrap", "0.1.0", server.WithToolCapabilities(true))
 	srv.AddTool(mcp.NewTool("gossip_create_project",
 		mcp.WithDescription("Create a Gossip project from a local Git checkout. The project name defaults to the inferred repository name. Supply a stable request_id and reuse it after an uncertain result; the owner credential is durably saved before creation and never returned in the tool result."),
@@ -160,7 +160,7 @@ func ProjectBootstrapMCPServer(store interface {
 				}
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			project, credential, repository, workspace, err := store.CreatePreparedProjectWithWorkspace(ctx, projectID, name, owner, repoName, node, observation, credential)
+			project, credential, repository, workspace, err := store.CreatePreparedProjectWithWorkspaceUsingBootstrapKey(ctx, bootstrapKey, projectID, name, owner, repoName, node, observation, credential)
 			if err != nil {
 				return mcp.NewToolResultError(fmt.Sprintf("project creation failed or its outcome is uncertain: %v. The owner credential is retained at %s. Retry the same checkout and project name using credential_file with that path.", err, credentialPath)), nil
 			}

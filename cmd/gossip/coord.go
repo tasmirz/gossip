@@ -373,6 +373,7 @@ func runCoordMCP(args []string) error {
 func runCoordBootstrapKey(args []string) error {
 	fs := flag.NewFlagSet("coord-bootstrap-key", flag.ContinueOnError)
 	file := fs.String("key-file", "", "private create-only project bootstrap API key file")
+	db := fs.String("db", "", "local coordination database to authorize this key for project creation")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -393,6 +394,20 @@ func runCoordBootstrapKey(args []string) error {
 	if writeErr != nil || syncErr != nil || closeErr != nil {
 		_ = os.Remove(*file)
 		return errors.New("could not save bootstrap API key securely")
+	}
+	if *db != "" {
+		store, openErr := coord.Open(*db)
+		if openErr == nil {
+			openErr = store.ConfigureLocalBootstrapKey(context.Background(), base64.RawURLEncoding.EncodeToString(key))
+			closeErr = store.Close()
+		}
+		if openErr != nil || closeErr != nil {
+			_ = os.Remove(*file)
+			if openErr != nil {
+				return fmt.Errorf("configure local bootstrap key: %w", openErr)
+			}
+			return fmt.Errorf("close coordination database after key setup: %w", closeErr)
+		}
 	}
 	fmt.Printf("Create-only bootstrap API key saved to %s\n", *file)
 	return nil
@@ -434,7 +449,7 @@ func runCoordMCPBootstrap(args []string) error {
 		return errors.New("bootstrap API key must contain at least 32 characters")
 	}
 	var creator interface {
-		CreatePreparedProjectWithWorkspace(context.Context, string, string, string, string, string, coord.GitObservation, coord.Credential) (coord.Project, coord.Credential, coord.Repository, coord.Workspace, error)
+		CreatePreparedProjectWithWorkspaceUsingBootstrapKey(context.Context, string, string, string, string, string, string, coord.GitObservation, coord.Credential) (coord.Project, coord.Credential, coord.Repository, coord.Workspace, error)
 	}
 	var store *coord.Store
 	if *remoteURL != "" {
@@ -451,7 +466,7 @@ func runCoordMCPBootstrap(args []string) error {
 	if store != nil {
 		defer store.Close()
 	}
-	return server.ServeStdio(coord.ProjectBootstrapMCPServer(creator, *credentialDir))
+	return server.ServeStdio(coord.ProjectBootstrapMCPServer(creator, *credentialDir, apiKey))
 }
 
 func runCoordAccess(args []string) error {

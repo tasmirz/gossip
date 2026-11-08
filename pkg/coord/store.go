@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
@@ -300,6 +301,7 @@ func (s *Store) SetRemoteAccessEnabled(ctx context.Context, enabled bool) error 
 const schema = `
 CREATE TABLE IF NOT EXISTS remote_access_control (id INTEGER PRIMARY KEY CHECK(id=1), enabled INTEGER NOT NULL DEFAULT 0 CHECK(enabled IN (0,1)), updated_at INTEGER NOT NULL DEFAULT 0);
 INSERT OR IGNORE INTO remote_access_control(id,enabled,updated_at) VALUES(1,0,0);
+CREATE TABLE IF NOT EXISTS local_bootstrap_key (id INTEGER PRIMARY KEY CHECK(id=1), key_hash BLOB NOT NULL, updated_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS projects (
   id TEXT PRIMARY KEY, name TEXT NOT NULL, plan_revision INTEGER NOT NULL DEFAULT 0
 );
@@ -685,6 +687,47 @@ func (s *Store) CreateProjectWithWorkspace(ctx context.Context, name, ownerName,
 	projectID, credential, err := PrepareCredential("")
 	if err != nil {
 		return Project{}, Credential{}, Repository{}, Workspace{}, err
+	}
+	return s.CreatePreparedProjectWithWorkspace(ctx, projectID, name, ownerName, repositoryName, node, observation, credential)
+}
+
+// ConfigureLocalBootstrapKey stores only a one-way digest. This operation is
+// intentionally available through local database administration, never RPC.
+func (s *Store) ConfigureLocalBootstrapKey(ctx context.Context, key string) error {
+	key = strings.TrimSpace(key)
+	if len(key) < 32 {
+		return errors.New("bootstrap API key must contain at least 32 characters")
+	}
+	digest := sha256.Sum256([]byte(key))
+	_, err := s.db.ExecContext(ctx, `INSERT INTO local_bootstrap_key(id,key_hash,updated_at) VALUES(1,?,?) ON CONFLICT(id) DO UPDATE SET key_hash=excluded.key_hash,updated_at=excluded.updated_at`, digest[:], time.Now().UnixMilli())
+	return err
+}
+
+func (s *Store) localBootstrapKeyAuthorized(ctx context.Context, key string) (bool, error) {
+	if len(strings.TrimSpace(key)) < 32 {
+		return false, nil
+	}
+	var expected []byte
+	err := s.db.QueryRowContext(ctx, `SELECT key_hash FROM local_bootstrap_key WHERE id=1`).Scan(&expected)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	provided := sha256.Sum256([]byte(strings.TrimSpace(key)))
+	return len(expected) == len(provided) && subtle.ConstantTimeCompare(expected, provided[:]) == 1, nil
+}
+
+// CreatePreparedProjectWithWorkspaceUsingBootstrapKey is the local create-only
+// bootstrap path. A configured key is required before it can create a project.
+func (s *Store) CreatePreparedProjectWithWorkspaceUsingBootstrapKey(ctx context.Context, key, projectID, name, ownerName, repositoryName, node string, observation GitObservation, credential Credential) (Project, Credential, Repository, Workspace, error) {
+	authorized, err := s.localBootstrapKeyAuthorized(ctx, key)
+	if err != nil {
+		return Project{}, Credential{}, Repository{}, Workspace{}, err
+	}
+	if !authorized {
+		return Project{}, Credential{}, Repository{}, Workspace{}, ErrUnauthorized
 	}
 	return s.CreatePreparedProjectWithWorkspace(ctx, projectID, name, ownerName, repositoryName, node, observation, credential)
 }

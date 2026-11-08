@@ -498,7 +498,7 @@ func (h *WebHandler) login(w http.ResponseWriter, r *http.Request) {
 	}
 	pin := webClientPin(r)
 	if !h.clientProjectAllowed(r.Context(), pin, req.ProjectID) {
-		jsonError(w, ErrUnauthorized)
+		http.Error(w, "this client certificate is not authorized for the selected project", http.StatusForbidden)
 		return
 	}
 	sid, existing := h.session(r)

@@ -177,7 +177,7 @@ func TestRemoteMutualTLSResearchHandoff(t *testing.T) {
 		}
 	}
 	credentialDir := filepath.Join(t.TempDir(), "mcp-credentials")
-	bootstrapMCP := coord.ProjectBootstrapMCPServer(bootstrapRemote, credentialDir)
+	bootstrapMCP := coord.ProjectBootstrapMCPServer(bootstrapRemote, credentialDir, bootstrapAPIKey)
 	createdByMCP, callErr := bootstrapMCP.GetTool("gossip_create_project").Handler(ctx, mcp.CallToolRequest{Params: mcp.CallToolParams{Name: "gossip_create_project", Arguments: map[string]any{"local_path": mcpCheckout, "request_id": "remote-mcp-project-create"}}})
 	if callErr != nil || createdByMCP.IsError {
 		t.Fatalf("remote MCP project creation failed: %+v %v", createdByMCP, callErr)

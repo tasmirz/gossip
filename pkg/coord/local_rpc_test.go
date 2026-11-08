@@ -67,6 +67,20 @@ func TestLocalDaemonCredentialIsolationAndConcurrentClaims(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	bootstrapKey := "local socket bootstrap key for integration testing"
+	if err = store.ConfigureLocalBootstrapKey(ctx, bootstrapKey); err != nil {
+		t.Fatal(err)
+	}
+	preparedID, preparedCredential, err := coord.PrepareCredential("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, _, err = a.CreatePreparedProjectWithWorkspaceUsingBootstrapKey(ctx, "incorrect local bootstrap key", preparedID, "denied project", "owner", "repo", "test-host", observation, preparedCredential); !errors.Is(err, coord.ErrUnauthorized) {
+		t.Fatalf("local socket accepted an incorrect bootstrap key: %v", err)
+	}
+	if _, _, _, _, err = a.CreatePreparedProjectWithWorkspaceUsingBootstrapKey(ctx, bootstrapKey, preparedID, "authorized project", "owner", "repo", "test-host", observation, preparedCredential); err != nil {
+		t.Fatalf("local socket rejected the configured bootstrap key: %v", err)
+	}
 	newProject, _, repository, workspace, err := a.CreateProjectWithWorkspace(ctx, "local project", "local owner", "local-project", "test-host", observation)
 	if err != nil || newProject.ID == "" || repository.ID == "" || workspace.RepositoryID != repository.ID || workspace.LocalPath != checkout {
 		t.Fatalf("local socket project setup: project=%+v repository=%+v workspace=%+v err=%v", newProject, repository, workspace, err)

@@ -2,7 +2,10 @@ package coord
 
 import (
 	"context"
+	"crypto/sha256"
+	"crypto/subtle"
 	"errors"
+	"strings"
 	"time"
 )
 
@@ -38,6 +41,26 @@ func (r *Remote) CreatePreparedProjectWithWorkspace(ctx context.Context, project
 		Workspace  Workspace  `json:"workspace"`
 	}](ctx, r, token, rpcRequest{Operation: operation, Project: projectID, Name: name, OwnerName: ownerName, Title: repositoryName, Node: node, Observation: observation, PreparedCredential: credential})
 	return result.Project, result.Credential, result.Repository, result.Workspace, err
+}
+
+// CreatePreparedProjectWithWorkspaceUsingBootstrapKey authenticates the local
+// create-only MCP path against the home database or the configured remote key.
+func (r *Remote) CreatePreparedProjectWithWorkspaceUsingBootstrapKey(ctx context.Context, key, projectID, name, ownerName, repositoryName, node string, observation GitObservation, credential Credential) (Project, Credential, Repository, Workspace, error) {
+	if r.local {
+		result, err := remoteCall[struct {
+			Project    Project    `json:"project"`
+			Credential Credential `json:"credential"`
+			Repository Repository `json:"repository"`
+			Workspace  Workspace  `json:"workspace"`
+		}](ctx, r, key, rpcRequest{Operation: "project.create_workspace_local_bootstrap_prepared", Project: projectID, Name: name, OwnerName: ownerName, Title: repositoryName, Node: node, Observation: observation, PreparedCredential: credential})
+		return result.Project, result.Credential, result.Repository, result.Workspace, err
+	}
+	provided := sha256.Sum256([]byte(strings.TrimSpace(key)))
+	expected := sha256.Sum256([]byte(strings.TrimSpace(r.bootstrapKey)))
+	if r.bootstrapKey == "" || subtle.ConstantTimeCompare(provided[:], expected[:]) != 1 {
+		return Project{}, Credential{}, Repository{}, Workspace{}, ErrUnauthorized
+	}
+	return r.CreatePreparedProjectWithWorkspace(ctx, projectID, name, ownerName, repositoryName, node, observation, credential)
 }
 
 func (r *Remote) GetSettings(c context.Context, p, t string) (Settings, error) {

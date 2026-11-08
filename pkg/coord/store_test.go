@@ -860,3 +860,43 @@ func TestStoreMigrationCreatesRemoteAccessControlTableAndDefaultsDisabled(t *tes
 		t.Fatalf("expected enabled=true after UPSERT recreation, got: %v %v", enabled, err)
 	}
 }
+
+func TestLocalBootstrapKeyMustMatchConfiguredDigest(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "local-bootstrap.db")
+	store, err := coord.Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	projectID, credential, err := coord.PrepareCredential("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	observation := coord.GitObservation{Root: "/private/checkout", Branch: "main"}
+	if _, _, _, _, err = store.CreatePreparedProjectWithWorkspaceUsingBootstrapKey(ctx, strings.Repeat("x", 40), projectID, "unauthorized", "owner", "repo", "host", observation, credential); !errors.Is(err, coord.ErrUnauthorized) {
+		t.Fatalf("unconfigured local bootstrap key was accepted: %v", err)
+	}
+	key := strings.Repeat("local-bootstrap-key-", 3)
+	if err = store.ConfigureLocalBootstrapKey(ctx, key); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, _, err = store.CreatePreparedProjectWithWorkspaceUsingBootstrapKey(ctx, strings.Repeat("y", 40), projectID, "unauthorized", "owner", "repo", "host", observation, credential); !errors.Is(err, coord.ErrUnauthorized) {
+		t.Fatalf("incorrect local bootstrap key was accepted: %v", err)
+	}
+	if _, _, _, _, err = store.CreatePreparedProjectWithWorkspaceUsingBootstrapKey(ctx, key, projectID, "authorized", "owner", "repo", "host", observation, credential); err != nil {
+		t.Fatalf("configured local bootstrap key was rejected: %v", err)
+	}
+	var digest []byte
+	inspect, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer inspect.Close()
+	if err = inspect.QueryRowContext(ctx, `SELECT key_hash FROM local_bootstrap_key WHERE id=1`).Scan(&digest); err != nil {
+		t.Fatal(err)
+	}
+	if string(digest) == key || len(digest) != 32 {
+		t.Fatal("database did not store only the 32-byte bootstrap key digest")
+	}
+}

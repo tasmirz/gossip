@@ -38,7 +38,11 @@ func TestMCPClientConfigsExposeCreateOnlyBootstrapByPrivateKeyPath(t *testing.T)
 			}
 			keyFlag, keyPath := false, ""
 			credentialDir := false
+			bootstrapDB := ""
 			for i, arg := range bootstrap.Args {
+				if arg == "--db" && i+1 < len(bootstrap.Args) {
+					bootstrapDB = bootstrap.Args[i+1]
+				}
 				if arg == "--bootstrap-api-key-file" && i+1 < len(bootstrap.Args) {
 					keyFlag, keyPath = true, bootstrap.Args[i+1]
 				}
@@ -46,8 +50,15 @@ func TestMCPClientConfigsExposeCreateOnlyBootstrapByPrivateKeyPath(t *testing.T)
 					credentialDir = bootstrap.Args[i+1] != ""
 				}
 			}
-			if !keyFlag || keyPath == "" || !credentialDir {
-				t.Fatal("bootstrap config must reference a private API key file and credential output directory")
+			primary, hasPrimary := servers["gossip"]
+			primaryDB := ""
+			for i, arg := range primary.Args {
+				if arg == "--db" && i+1 < len(primary.Args) {
+					primaryDB = primary.Args[i+1]
+				}
+			}
+			if !keyFlag || keyPath == "" || !credentialDir || bootstrapDB == "" || !hasPrimary || primaryDB != bootstrapDB {
+				t.Fatal("bootstrap config must use a private API key, credential directory, and the same explicit database as the project MCP server")
 			}
 		})
 	}
