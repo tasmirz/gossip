@@ -25,7 +25,7 @@ go build -o bin/gossip ./cmd/gossip
 Start the dashboard:
 
 ```sh
-./bin/gossip coord-ui
+./bin/gossip coord-ui --db /private/path/gossip/coord.db
 ```
 
 Open [http://127.0.0.1:8081](http://127.0.0.1:8081), choose **Create local project**, and paste the full path to a Git checkout in **Connect a code folder**. Gossip infers the repository name and current Git state, creates the project and workspace, and downloads the owner credential. Keep that credential outside the repository and private.
