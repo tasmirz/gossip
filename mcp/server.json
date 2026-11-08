@@ -80,10 +80,6 @@
       "description": "Pre-flight inspection checking whether an action or file modification violates project cautions or forbidden rules"
     },
     {
-      "name": "gossip_handshake",
-      "description": "Introduce and register a remote peer agent across the FRP tunnel or LAN into the local mesh, enabling multi-worktree collaboration and remote queries"
-    },
-    {
       "name": "gossip_heartbeat",
       "description": "Send a heartbeat to keep agent session active and update current task or status"
     },
@@ -94,10 +90,6 @@
     {
       "name": "gossip_introduce_agent",
       "description": "Introduce an agent to the Gossip mesh: registers session, broadcasts an announcement to all peers, and returns an instant onboarding briefing (goals, pending tasks, active SOP gates, caution rules, and disclosed peers)"
-    },
-    {
-      "name": "gossip_introduce_remote_peer",
-      "description": "Introduce and register a remote peer agent across the FRP tunnel or LAN into the local mesh, enabling multi-worktree collaboration and remote queries"
     },
     {
       "name": "gossip_list_agents",
@@ -248,10 +240,6 @@
       "description": "Re-identify or resume an agent session across restarts or new context sessions, returning an instant catch-up briefing of assigned tasks, unread inbox messages, active SOP stages, and personal to-dos"
     },
     {
-      "name": "gossip_remote_query",
-      "description": "Query a remote Gossip mesh node across the FRP tunnel or LAN when worktrees differ (e.g. separate repos or branches), querying remote graph, tasks, repomap, or status"
-    },
-    {
       "name": "gossip_render_board",
       "description": "Render and return the live Markdown Kanban board (BOARD.md) representing current multi-agent work state"
     },
@@ -290,10 +278,6 @@
     {
       "name": "gossip_setup_mesh",
       "description": "Bootstrap and setup the Gossip collaboration mesh in the current workspace: initializes state, goals, task DAG, knowledge graph, guardrails, and optional FRP tunnel and cron checking"
-    },
-    {
-      "name": "gossip_setup_tunnel",
-      "description": "Configure, generate, or manage FRP reverse-proxy tunnels for WAN/LAN remote access with mandatory HTTP Basic Auth protection"
     },
     {
       "name": "gossip_sop_advance",
@@ -360,10 +344,6 @@
       "description": "Introduce an agent to the Gossip mesh: registers session, broadcasts an announcement to all peers, and returns an instant onboarding briefing (goals, pending tasks, active SOP gates, caution rules, and disclosed peers)"
     },
     {
-      "name": "gsp_introduce_peer",
-      "description": "Introduce and register a remote peer agent across the FRP tunnel or LAN into the local mesh, enabling multi-worktree collaboration and remote queries"
-    },
-    {
       "name": "gsp_moe_argument",
       "description": "Post a specialist expert domain perspective and technical argument to an active MoE panel"
     },
@@ -392,20 +372,12 @@
       "description": "Re-identify or resume an agent session across restarts or new context sessions, returning an instant catch-up briefing of assigned tasks, unread inbox messages, active SOP stages, and personal to-dos"
     },
     {
-      "name": "gsp_remote_query",
-      "description": "Query a remote Gossip mesh node across the FRP tunnel or LAN when worktrees differ (e.g. separate repos or branches), querying remote graph, tasks, repomap, or status"
-    },
-    {
       "name": "gsp_setup",
       "description": "Bootstrap and setup the Gossip collaboration mesh in the current workspace: initializes state, goals, task DAG, knowledge graph, guardrails, and optional FRP tunnel and cron checking"
     },
     {
       "name": "gsp_setup_cron",
       "description": "Configure periodic health check schedule and execute initial check cycle"
-    },
-    {
-      "name": "gsp_setup_tunnel",
-      "description": "Configure, generate, or manage FRP reverse-proxy tunnels for WAN/LAN remote access with mandatory HTTP Basic Auth protection"
     },
     {
       "name": "gsp_status",

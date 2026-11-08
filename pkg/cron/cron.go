@@ -150,6 +150,8 @@ type Runner struct {
 	agentID  string
 	interval time.Duration
 	cancel   context.CancelFunc
+	done     chan struct{}
+	started  bool
 	lastRes  *CheckResult
 	mu       sync.RWMutex
 }
@@ -168,10 +170,20 @@ func NewRunner(store *state.Store, agentID string, interval time.Duration) *Runn
 
 // Start initiates the periodic ticker in a background goroutine.
 func (r *Runner) Start(ctx context.Context, callback func(*CheckResult)) {
+	r.mu.Lock()
+	if r.started {
+		r.mu.Unlock()
+		return
+	}
+	r.started = true
 	runCtx, cancel := context.WithCancel(ctx)
 	r.cancel = cancel
+	r.done = make(chan struct{})
+	done := r.done
+	r.mu.Unlock()
 
 	go func() {
+		defer close(done)
 		ticker := time.NewTicker(r.interval)
 		defer ticker.Stop()
 
@@ -205,8 +217,14 @@ func (r *Runner) Start(ctx context.Context, callback func(*CheckResult)) {
 
 // Stop terminates the periodic runner.
 func (r *Runner) Stop() {
-	if r.cancel != nil {
-		r.cancel()
+	r.mu.RLock()
+	cancel, done := r.cancel, r.done
+	r.mu.RUnlock()
+	if cancel != nil {
+		cancel()
+	}
+	if done != nil {
+		<-done
 	}
 }
 

@@ -25,14 +25,12 @@
     "gossip": {
       "command": "/home/user/Projects/gossip/bin/gossip-mcp",
       "args": [
-        "serve",
-        "--dir",
-        "/home/user/Projects/gossip/.local/gossip"
+        "coord-mcp",
+        "--credential-file",
+        "/private/path/to/project-credential.json"
       ],
       "cwd": "/home/user/Projects/gossip",
-      "env": {
-        "GOSSIP_DIR": "/home/user/Projects/gossip/.local/gossip"
-      }
+      "env": {}
     }
   },
   "skills": [

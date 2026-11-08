@@ -9,6 +9,87 @@ import (
 	"github.com/tasmirz/gossip/pkg/tasks"
 )
 
+func TestRejectInvalidDependenciesAndStatus(t *testing.T) {
+	store, err := state.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	mgr := tasks.NewManager(store)
+	root, err := mgr.CreateTask("root", "", "", "", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, deps := range [][]string{{"missing"}, {root.ID, "missing"}, {root.ID, root.ID}} {
+		if _, err := mgr.CreateTask("invalid", "", "", "", deps, nil); err == nil {
+			t.Fatalf("accepted invalid dependencies %v", deps)
+		}
+	}
+	if _, err := mgr.UpdateTask(root.ID, "made_up", "", "", ""); err == nil {
+		t.Fatal("accepted invalid status")
+	}
+	duplicate := []string{root.ID, root.ID}
+	other, err := mgr.CreateTask("other", "", "", "", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := mgr.ModifyTask(other.ID, tasks.TaskModifications{BlockedBy: &duplicate}); err == nil {
+		t.Fatal("accepted duplicate dependencies on modification")
+	}
+	stored, err := mgr.GetTask(other.ID)
+	if err != nil || len(stored.BlockedBy) != 0 {
+		t.Fatalf("failed modification changed task: %+v, %v", stored, err)
+	}
+}
+
+func TestDependencyChangesAndReopening(t *testing.T) {
+	store, err := state.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := tasks.NewManager(store)
+	root, err := m.CreateTask("root", "", "", "", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	child, err := m.CreateTask("child", "", "", "", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deps := []string{root.ID}
+	child, err = m.ModifyTask(child.ID, tasks.TaskModifications{BlockedBy: &deps})
+	if err != nil || child.Status != tasks.StatusBlocked {
+		t.Fatalf("dependency edit: %+v %v", child, err)
+	}
+	for _, status := range []string{tasks.StatusTodo, tasks.StatusInProgress, tasks.StatusInReview, tasks.StatusCompleted} {
+		if _, err := m.UpdateTask(child.ID, status, "", "", ""); err == nil {
+			t.Fatalf("accepted %s with incomplete dependency", status)
+		}
+	}
+	if _, err := m.UpdateTask(root.ID, tasks.StatusCompleted, "", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.UpdateTask(root.ID, tasks.StatusTodo, "", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	child, err = m.GetTask(child.ID)
+	if err != nil || child.Status != tasks.StatusBlocked {
+		t.Fatalf("reopen should block child: %+v %v", child, err)
+	}
+	if _, err := m.UpdateTask(root.ID, tasks.StatusCompleted, "", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.UpdateTask(child.ID, tasks.StatusInProgress, "worker", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.UpdateTask(root.ID, tasks.StatusTodo, "", "", ""); err == nil {
+		t.Fatal("reopened prerequisite of active task")
+	}
+	root, err = m.GetTask(root.ID)
+	if err != nil || root.Status != tasks.StatusCompleted {
+		t.Fatalf("failed reopen persisted: %+v %v", root, err)
+	}
+}
+
 func TestTasksLifecycleAndDAG(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "gossip-task-test-*")
 	if err != nil {

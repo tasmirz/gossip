@@ -59,8 +59,8 @@ while [[ $# -gt 0 ]]; do
       echo "Usage: ./scripts/install.sh [options]"
       echo ""
       echo "Options:"
-      echo "  --all                 Configure all detected AI agents (Antigravity, OpenCode, Claude, Cursor, VS Code)"
-      echo "  --client <name>       Configure specific client only (antigravity, opencode, claude, cursor, vscode)"
+      echo "  --all                 Prepare integrations for detected AI agents (Antigravity, OpenCode, Claude, Cursor, VS Code)"
+      echo "  --client <name>       Prepare a specific client (antigravity, opencode, claude, cursor, vscode)"
       echo "  --bin-dir <dir>       Target binary install path (default: ~/.local/bin or /usr/local/bin)"
       echo "  --dry-run             Preview actions without writing configuration files"
       echo "  --with-frp            Initialize protected FRP tunnel credentials"
@@ -98,16 +98,11 @@ if [[ "${DRY_RUN}" = false ]]; then
   
   # Build binaries if in source repo, or link existing binaries
   if [[ -f "${REPO_ROOT}/go.mod" ]] && command -v go >/dev/null 2>&1; then
-    echo "  -> Compiling gossip and gossip-mcp from source..."
+    echo "  -> Compiling gossip from source..."
     (cd "${REPO_ROOT}" && go build -o "${BIN_DIR}/gossip" ./cmd/gossip)
-    (cd "${REPO_ROOT}" && go build -o "${BIN_DIR}/gossip-mcp" ./cmd/gossip)
   elif [[ -f "${REPO_ROOT}/bin/gossip" ]]; then
     cp "${REPO_ROOT}/bin/gossip" "${BIN_DIR}/gossip"
     chmod +x "${BIN_DIR}/gossip"
-    if [[ -f "${REPO_ROOT}/bin/gossip-mcp" ]]; then
-      cp "${REPO_ROOT}/bin/gossip-mcp" "${BIN_DIR}/gossip-mcp"
-      chmod +x "${BIN_DIR}/gossip-mcp"
-    fi
   else
     echo "[WARN] No prebuilt binary found and Go compiler not available in PATH."
   fi
@@ -123,61 +118,20 @@ if [[ ":$PATH:" != *":${BIN_DIR}:"* ]]; then
   echo "         Add it: export PATH=\"${BIN_DIR}:\$PATH\""
 fi
 
-# Helper function to register JSON MCP servers cleanly with python3/node/sed
-register_mcp_json() {
+# Editor MCP setup is delayed until the project-scoped credential exists.
+defer_mcp_json() {
   local cfg_file="$1"
-  local srv_name="$2"
-  local bin_cmd="$3"
-  
-  if [[ "${DRY_RUN}" = true ]]; then
-    echo "  [DRY-RUN] Would register '${srv_name}' in ${cfg_file}"
-    return 0
-  fi
-
-  mkdir -p "$(dirname "${cfg_file}")"
-  
-  if command -v python3 >/dev/null 2>&1; then
-    python3 -c "
-import json, os, sys
-
-p = sys.argv[1]
-srv = sys.argv[2]
-cmd = sys.argv[3]
-
-data = {}
-if os.path.exists(p):
-    try:
-        with open(p, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-    except Exception:
-        data = {}
-
-if 'mcpServers' not in data or not isinstance(data['mcpServers'], dict):
-    data['mcpServers'] = {}
-
-data['mcpServers'][srv] = {
-    'command': cmd,
-    'args': ['mcp']
-}
-
-with open(p, 'w', encoding='utf-8') as f:
-    json.dump(data, f, indent=2)
-" "${cfg_file}" "${srv_name}" "${bin_cmd}"
-    echo "  [OK] Registered MCP in ${cfg_file}"
-  else
-    echo "  [WARN] python3 not found; skipping automatic JSON update for ${cfg_file}"
-  fi
+  echo "  [NOTE] Leaving ${cfg_file} unchanged; configure coord-mcp after creating a project credential."
 }
 
 # 2. Configure Google Antigravity
 if [[ "${TARGET_ALL}" = true ]] || [[ "${TARGET_CLIENT}" == *"antigravity"* ]]; then
-  echo "[2/6] Configuring Antigravity Agent & MCP plugin..."
+  echo "[2/6] Preparing Antigravity integration..."
   AGY_PLUGIN_DIR="${HOME}/.gemini/config/plugins/gossip"
   AGY_MCP_DIR="${HOME}/.gemini/antigravity/mcp/gossip"
   
   if [[ "${DRY_RUN}" = false ]]; then
     mkdir -p "$(dirname "${AGY_PLUGIN_DIR}")"
-    mkdir -p "${AGY_MCP_DIR}"
     
     # Symlink plugin directory to development repo if available
     if [[ -d "${REPO_ROOT}" ]]; then
@@ -185,28 +139,28 @@ if [[ "${TARGET_ALL}" = true ]] || [[ "${TARGET_CLIENT}" == *"antigravity"* ]]; 
       echo "  [OK] Antigravity plugin linked: ${AGY_PLUGIN_DIR} -> ${REPO_ROOT}"
     fi
 
-    # Register in config.json
+    # Do not register an unscoped legacy MCP server before a project exists.
     AGY_CFG="${HOME}/.gemini/config/config.json"
-    register_mcp_json "${AGY_CFG}" "gossip" "${BIN_DIR}/gossip"
+    defer_mcp_json "${AGY_CFG}"
 
     # Register in mcp_config.json
     AGY_MCP_CFG="${HOME}/.gemini/config/mcp_config.json"
-    register_mcp_json "${AGY_MCP_CFG}" "gossip" "${BIN_DIR}/gossip"
+    defer_mcp_json "${AGY_MCP_CFG}"
   else
-    echo "  [DRY-RUN] Would link ${AGY_PLUGIN_DIR} and configure Antigravity MCP"
+    echo "  [DRY-RUN] Would prepare Antigravity; MCP setup needs a project credential"
   fi
 fi
 
 # 3. Configure OpenCode
 if [[ "${TARGET_ALL}" = true ]] || [[ "${TARGET_CLIENT}" == *"opencode"* ]]; then
-  echo "[3/6] Configuring OpenCode MCP & Skill..."
+  echo "[3/6] Preparing OpenCode integration..."
   OC_DIR="${HOME}/.config/opencode"
   OC_CFG="${OC_DIR}/opencode.json"
   OC_SKILLS="${OC_DIR}/skills/gossip"
   
   if [[ "${DRY_RUN}" = false ]]; then
     mkdir -p "${OC_DIR}"
-    register_mcp_json "${OC_CFG}" "gossip" "${BIN_DIR}/gossip"
+    defer_mcp_json "${OC_CFG}"
     
     # Link skills
     mkdir -p "$(dirname "${OC_SKILLS}")"
@@ -221,32 +175,32 @@ fi
 
 # 4. Configure Claude Desktop
 if [[ "${TARGET_ALL}" = true ]] || [[ "${TARGET_CLIENT}" == *"claude"* ]]; then
-  echo "[4/6] Configuring Claude Desktop MCP..."
+  echo "[4/6] Preparing Claude Desktop integration..."
   CLAUDE_CFG=""
   if [[ "$(uname -s)" == "Darwin" ]]; then
     CLAUDE_CFG="${HOME}/Library/Application Support/Claude/claude_desktop_config.json"
   else
     CLAUDE_CFG="${HOME}/.config/Claude/claude_desktop_config.json"
   fi
-  register_mcp_json "${CLAUDE_CFG}" "gossip" "${BIN_DIR}/gossip"
+  defer_mcp_json "${CLAUDE_CFG}"
 fi
 
 # 5. Configure Cursor
 if [[ "${TARGET_ALL}" = true ]] || [[ "${TARGET_CLIENT}" == *"cursor"* ]]; then
-  echo "[5/6] Configuring Cursor MCP..."
+  echo "[5/6] Preparing Cursor integration..."
   CURSOR_GLOBAL="${HOME}/.cursor/mcp.json"
-  register_mcp_json "${CURSOR_GLOBAL}" "gossip" "${BIN_DIR}/gossip"
+  defer_mcp_json "${CURSOR_GLOBAL}"
   if [[ -d ".cursor" ]]; then
-    register_mcp_json ".cursor/mcp.json" "gossip" "${BIN_DIR}/gossip"
+    defer_mcp_json ".cursor/mcp.json"
   fi
 fi
 
 # 6. Configure VS Code
 if [[ "${TARGET_ALL}" = true ]] || [[ "${TARGET_CLIENT}" == *"vscode"* ]]; then
-  echo "[6/6] Configuring VS Code Workspace MCP..."
+  echo "[6/6] Preparing VS Code Workspace integration..."
   VSCODE_CFG=".vscode/mcp.json"
   if [[ -d ".vscode" ]] || [[ "${TARGET_CLIENT}" == *"vscode"* ]]; then
-    register_mcp_json "${VSCODE_CFG}" "gossip" "${BIN_DIR}/gossip"
+    defer_mcp_json "${VSCODE_CFG}"
   else
     echo "  [SKIP] No .vscode directory found in current working directory"
   fi
@@ -255,15 +209,8 @@ fi
 # Optional Protected FRP Tunnel Configuration
 if [[ "${WITH_FRP}" = true ]]; then
   echo ""
-  echo "[TUNNEL] Configuring Protected FRP Reverse-Proxy Tunnel..."
-  if [[ -n "${FRP_SERVER}" ]]; then
-    "${BIN_DIR}/gossip" tunnel init \
-      --server "${FRP_SERVER}" \
-      --user "${FRP_USER:-admin}" \
-      --pass "${FRP_PASS:-SecureMeshPass123}"
-  else
-    echo "  [NOTE] FRP Server not specified. Run 'gossip tunnel init --server <addr> --user <user> --pass <pass>' later."
-  fi
+  echo "[TUNNEL] FRP uses TCP forwarding to a coord-serve mutual-TLS listener."
+  echo "  [NOTE] Configure the home certificate and client grants, then run 'gossip coord-frp'."
 fi
 
 echo ""
@@ -271,8 +218,8 @@ echo "+--------------------------------------------------------+"
 echo "| [SUCCESS] GOSSIP INSTALLATION COMPLETED                |"
 echo "+--------------------------------------------------------+"
 echo "Verify status:          gossip status"
-echo "Start MCP stdio mode:   gossip mcp"
+echo "Connect a project folder, then configure coord-mcp with its private project credential."
 echo "Launch Web Control:     gossip ui --port 8080"
 echo "Periodic cron check:    gossip cron --interval 30s"
-echo "Protected FRP tunnel:   gossip tunnel status"
+echo "FRP transport:          gossip coord-frp (after coord-serve is configured)"
 echo "+--------------------------------------------------------+"

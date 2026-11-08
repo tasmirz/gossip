@@ -79,35 +79,29 @@ func runInstall(args []string) {
 
 	// 2. Configure Antigravity
 	if targetClients["antigravity"] {
-		fmt.Println("[2/6] Configuring Antigravity Agent & MCP plugin...")
-		pluginDir := filepath.Join(home, ".gemini", "config", "plugins", "gossip")
-		mcpDir := filepath.Join(home, ".gemini", "antigravity", "mcp", "gossip")
+		fmt.Println("[2/6] Preparing Antigravity integration...")
 		if !*dryRun {
-			_ = os.MkdirAll(pluginDir, 0755)
-			_ = os.MkdirAll(mcpDir, 0755)
-			fmt.Printf("  ✓ Antigravity plugin linked at %s\n", pluginDir)
+			fmt.Println("  ✓ MCP setup deferred until a project-scoped credential exists")
 		} else {
-			fmt.Printf("  [DRY-RUN] Would configure Antigravity at %s and %s\n", pluginDir, mcpDir)
+			fmt.Println("  [DRY-RUN] MCP setup requires a project-scoped credential")
 		}
 	}
 
 	// 3. Configure OpenCode
 	if targetClients["opencode"] {
-		fmt.Println("[3/6] Configuring OpenCode MCP & Skill...")
+		fmt.Println("[3/6] Preparing OpenCode integration...")
 		ocDir := filepath.Join(home, ".config", "opencode")
 		ocCfgFile := filepath.Join(ocDir, "opencode.json")
 		if !*dryRun {
-			_ = os.MkdirAll(ocDir, 0755)
-			configureJSONMCP(ocCfgFile, "mcpServers", "gossip", "gossip", []string{"mcp"})
-			fmt.Printf("  ✓ OpenCode MCP registered in %s\n", ocCfgFile)
+			fmt.Printf("  ✓ OpenCode config left unchanged: configure coord-mcp after creating a project credential (%s)\n", ocCfgFile)
 		} else {
-			fmt.Printf("  [DRY-RUN] Would register gossip in %s\n", ocCfgFile)
+			fmt.Printf("  [DRY-RUN] Would leave %s unchanged; project credentials are required for coord-mcp\n", ocCfgFile)
 		}
 	}
 
 	// 4. Configure Claude Desktop
 	if targetClients["claude"] {
-		fmt.Println("[4/6] Configuring Claude Desktop MCP...")
+		fmt.Println("[4/6] Preparing Claude Desktop integration...")
 		var claudeCfgFile string
 		if runtime.GOOS == "darwin" {
 			claudeCfgFile = filepath.Join(home, "Library", "Application Support", "Claude", "claude_desktop_config.json")
@@ -117,66 +111,37 @@ func runInstall(args []string) {
 			claudeCfgFile = filepath.Join(home, ".config", "Claude", "claude_desktop_config.json")
 		}
 		if !*dryRun {
-			_ = os.MkdirAll(filepath.Dir(claudeCfgFile), 0755)
-			configureJSONMCP(claudeCfgFile, "mcpServers", "gossip", "gossip", []string{"mcp"})
-			fmt.Printf("  ✓ Claude Desktop MCP registered in %s\n", claudeCfgFile)
+			fmt.Printf("  ✓ Claude Desktop config left unchanged: configure coord-mcp after creating a project credential (%s)\n", claudeCfgFile)
 		} else {
-			fmt.Printf("  [DRY-RUN] Would register gossip in %s\n", claudeCfgFile)
+			fmt.Printf("  [DRY-RUN] Would leave %s unchanged; project credentials are required for coord-mcp\n", claudeCfgFile)
 		}
 	}
 
 	// 5. Configure Cursor
 	if targetClients["cursor"] {
-		fmt.Println("[5/6] Configuring Cursor MCP...")
+		fmt.Println("[5/6] Preparing Cursor integration...")
 		cursorCfgFile := filepath.Join(home, ".cursor", "mcp.json")
 		if !*dryRun {
-			_ = os.MkdirAll(filepath.Dir(cursorCfgFile), 0755)
-			configureJSONMCP(cursorCfgFile, "mcpServers", "gossip", "gossip", []string{"mcp"})
-			fmt.Printf("  ✓ Cursor global MCP registered in %s\n", cursorCfgFile)
+			fmt.Printf("  ✓ Cursor config left unchanged: configure coord-mcp after creating a project credential (%s)\n", cursorCfgFile)
 		} else {
-			fmt.Printf("  [DRY-RUN] Would register gossip in %s\n", cursorCfgFile)
+			fmt.Printf("  [DRY-RUN] Would leave %s unchanged; project credentials are required for coord-mcp\n", cursorCfgFile)
 		}
 	}
 
 	// 6. Configure VS Code
 	if targetClients["vscode"] {
-		fmt.Println("[6/6] Configuring VS Code Workspace MCP...")
+		fmt.Println("[6/6] Preparing VS Code Workspace integration...")
 		vscodeFile := filepath.Join(".vscode", "mcp.json")
 		if !*dryRun {
-			_ = os.MkdirAll(".vscode", 0755)
-			configureJSONMCP(vscodeFile, "mcpServers", "gossip", "gossip", []string{"mcp"})
-			fmt.Printf("  ✓ VS Code workspace MCP registered in %s\n", vscodeFile)
+			fmt.Printf("  ✓ VS Code MCP config left unchanged: configure coord-mcp after creating a project credential (%s)\n", vscodeFile)
 		} else {
-			fmt.Printf("  [DRY-RUN] Would register gossip in %s\n", vscodeFile)
+			fmt.Printf("  [DRY-RUN] Would leave %s unchanged; project credentials are required for coord-mcp\n", vscodeFile)
 		}
 	}
 
 	fmt.Println(strings.Repeat("-", 65))
-	fmt.Println("[SUCCESS] Gossip installation and client configuration complete!")
-	fmt.Println("Test instant connection: 'gossip status' or start UI: 'gossip ui'")
-}
-
-func configureJSONMCP(filePath, rootKey, serverName, command string, args []string) {
-	data := make(map[string]interface{})
-	if b, err := os.ReadFile(filePath); err == nil {
-		_ = json.Unmarshal(b, &data)
-	}
-
-	serversMap, ok := data[rootKey].(map[string]interface{})
-	if !ok || serversMap == nil {
-		serversMap = make(map[string]interface{})
-	}
-
-	serversMap[serverName] = map[string]interface{}{
-		"command": command,
-		"args":    args,
-	}
-	data[rootKey] = serversMap
-
-	out, err := json.MarshalIndent(data, "", "  ")
-	if err == nil {
-		_ = os.WriteFile(filePath, out, 0644)
-	}
+	fmt.Println("[SUCCESS] Gossip installed. Editor MCP setup is deferred until a project credential exists.")
+	fmt.Println("Connect a local folder in the coordination UI, then configure coord-mcp with its private credential file.")
 }
 
 func runTunnel(args []string) {
@@ -320,8 +285,8 @@ func printTunnelHelp() {
 	fmt.Printf("%s\n", BannerArt)
 	fmt.Println("Usage: gossip tunnel <subcommand> [flags]")
 	fmt.Println("Subcommands:")
-	fmt.Println("  init    Initialize and activate protected FRP tunnel with credentials")
-	fmt.Println("  config  Generate frpc.toml, frpc.ini, or frps.toml configurations")
+	fmt.Println("  init    Disabled for the legacy HTTP dashboard; use coord-serve with mutual TLS and FRP TCP")
+	fmt.Println("  config  Disabled for the legacy HTTP dashboard; use coord-serve with mutual TLS and FRP TCP")
 	fmt.Println("  status  Print current tunnel status and mandatory remote disclosure")
 	fmt.Println("  stop    Deactivate tunnel and return to local isolation")
 }
@@ -439,31 +404,8 @@ func runVault(args []string) {
 		}
 
 	case "send", "transfer":
-		fs := flag.NewFlagSet("vault send", flag.ExitOnError)
-		file := fs.String("file", "", "Path to local secret file (required)")
-		to := fs.String("to", "", "Remote endpoint URL (e.g. http://remote.mesh:8080) (required)")
-		token := fs.String("token", "", "Encryption passphrase / auth token (required)")
-		dest := fs.String("dest", "", "Remote destination path (defaults to file basename)")
-		dir := fs.String("dir", "", "Custom storage directory")
-		_ = fs.Parse(args[1:])
-
-		if *file == "" || *to == "" || *token == "" {
-			fmt.Fprintln(os.Stderr, "Error: --file, --to, and --token are required")
-			os.Exit(1)
-		}
-		store, _ := state.NewStore(*dir)
-		vm, err := vault.NewManager(store.Dir())
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
-		}
-		receipt, err := vm.TransferSecretToRemote(*file, *to, *token, *dest)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Transfer failed: %v\n", err)
-			os.Exit(1)
-		}
-		data, _ := json.MarshalIndent(receipt, "", "  ")
-		fmt.Println(string(data))
+		fmt.Fprintln(os.Stderr, "Legacy remote secret transfer is disabled; use an independently secured transfer method")
+		os.Exit(1)
 
 	default:
 		printVaultHelp()
@@ -476,7 +418,7 @@ func printVaultHelp() {
 	fmt.Println("Subcommands:")
 	fmt.Println("  stage   Stage a sensitive secret file in local protected vault (0600)")
 	fmt.Println("  list    List all staged files in the local vault without revealing contents")
-	fmt.Println("  send    Transfer encrypted file across tunnel without exposing to agent context")
+	fmt.Println("  send    Disabled: legacy remote secret transfer is unsafe")
 }
 
 func runRemote(args []string) {

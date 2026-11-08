@@ -148,10 +148,18 @@ func (m *Manager) CreateTask(title, description, role, priority string, blockedB
 
 	status := StatusTodo
 	// If it has dependencies that are not completed, mark as blocked
+	seen := make(map[string]bool, len(blockedBy))
 	for _, depID := range blockedBy {
-		if dep, exists := c.Tasks[depID]; exists && dep.Status != StatusCompleted {
+		dep, exists := c.Tasks[depID]
+		if !exists {
+			return nil, fmt.Errorf("prerequisite task %s does not exist", depID)
+		}
+		if seen[depID] {
+			return nil, fmt.Errorf("duplicate prerequisite task %s", depID)
+		}
+		seen[depID] = true
+		if dep.Status != StatusCompleted {
 			status = StatusBlocked
-			break
 		}
 	}
 
@@ -228,6 +236,7 @@ func (m *Manager) ModifyTask(taskID string, mods TaskModifications) (*Task, erro
 	if !exists {
 		return nil, fmt.Errorf("task %s not found", taskID)
 	}
+	previousStatus := task.Status
 
 	now := time.Now()
 
@@ -268,6 +277,7 @@ func (m *Manager) ModifyTask(taskID string, mods TaskModifications) (*Task, erro
 		}
 
 		// Verify new dependencies exist and no self-blocker
+		seen := make(map[string]bool, len(newBlockedBy))
 		for _, depID := range newBlockedBy {
 			if depID == taskID {
 				return nil, fmt.Errorf("task %s cannot block itself", taskID)
@@ -275,6 +285,10 @@ func (m *Manager) ModifyTask(taskID string, mods TaskModifications) (*Task, erro
 			if _, exists := c.Tasks[depID]; !exists {
 				return nil, fmt.Errorf("prerequisite task %s does not exist", depID)
 			}
+			if seen[depID] {
+				return nil, fmt.Errorf("duplicate prerequisite task %s", depID)
+			}
+			seen[depID] = true
 		}
 
 		// Add taskID to new dependencies' Blocks lists
@@ -305,14 +319,58 @@ func (m *Manager) ModifyTask(taskID string, mods TaskModifications) (*Task, erro
 	// Status transitions
 	if mods.Status != nil && *mods.Status != "" {
 		newStatus := *mods.Status
-		if newStatus == StatusInProgress || newStatus == StatusCompleted {
+		switch newStatus {
+		case StatusBacklog, StatusTodo, StatusInProgress, StatusBlocked, StatusInReview, StatusCompleted, StatusFailed:
+		default:
+			return nil, fmt.Errorf("invalid task status %q", newStatus)
+		}
+		if newStatus == StatusTodo || newStatus == StatusInProgress || newStatus == StatusInReview || newStatus == StatusCompleted {
 			for _, depID := range task.BlockedBy {
-				if dep, ok := c.Tasks[depID]; ok && dep.Status != StatusCompleted {
+				dep, ok := c.Tasks[depID]
+				if !ok {
+					return nil, fmt.Errorf("cannot advance %s: prerequisite task %s does not exist", taskID, depID)
+				}
+				if dep.Status != StatusCompleted {
 					return nil, fmt.Errorf("cannot advance %s: still blocked by incomplete task %s (%s)", taskID, depID, dep.Title)
 				}
 			}
 		}
 		task.Status = newStatus
+	}
+
+	// A dependency edit must not leave a ready or active task behind an
+	// unfinished prerequisite, even when no status was supplied.
+	if mods.BlockedBy != nil {
+		for _, depID := range task.BlockedBy {
+			if c.Tasks[depID].Status == StatusCompleted {
+				continue
+			}
+			switch task.Status {
+			case StatusTodo, StatusBacklog:
+				task.Status = StatusBlocked
+			case StatusInProgress, StatusInReview, StatusCompleted:
+				return nil, fmt.Errorf("cannot add incomplete prerequisite %s to task %s in status %s", depID, taskID, task.Status)
+			}
+		}
+	}
+
+	// Reopening a completed prerequisite invalidates its dependents. Require
+	// active or completed work to be reconciled explicitly before reopening.
+	if previousStatus == StatusCompleted && task.Status != StatusCompleted {
+		for _, downID := range task.Blocks {
+			down, ok := c.Tasks[downID]
+			if !ok {
+				return nil, fmt.Errorf("dependent task %s does not exist", downID)
+			}
+			switch down.Status {
+			case StatusInProgress, StatusInReview, StatusCompleted:
+				return nil, fmt.Errorf("cannot reopen %s while dependent task %s is %s", taskID, downID, down.Status)
+			case StatusTodo:
+				down.Status = StatusBlocked
+				down.UpdatedAt = now
+				c.Tasks[downID] = down
+			}
+		}
 	}
 
 	if mods.ProgressNote != "" {

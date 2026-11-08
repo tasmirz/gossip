@@ -3,11 +3,21 @@
     "gossip": {
       "command": "/home/user/Projects/gossip/bin/gossip-mcp",
       "args": [
-        "serve"
+        "coord-mcp",
+        "--credential-file",
+        "/private/path/to/project-credential.json"
+      ]
+    },
+    "gossip-project-bootstrap": {
+      "command": "/home/user/Projects/gossip/bin/gossip-mcp",
+      "args": [
+        "coord-mcp-bootstrap",
+        "--bootstrap-api-key-file",
+        "/private/path/gossip/bootstrap.key",
+        "--credential-dir",
+        "/private/path/gossip/credentials"
       ],
-      "env": {
-        "GOSSIP_DIR": ".local/gossip"
-      }
+      "cwd": "/home/user/Projects/gossip"
     }
   }
 }

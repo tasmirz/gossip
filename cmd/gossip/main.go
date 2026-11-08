@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -14,7 +15,6 @@ import (
 	"github.com/tasmirz/gossip/pkg/events"
 	"github.com/tasmirz/gossip/pkg/graph"
 	"github.com/tasmirz/gossip/pkg/guardrails"
-	"github.com/tasmirz/gossip/pkg/mcp"
 	"github.com/tasmirz/gossip/pkg/messages"
 	"github.com/tasmirz/gossip/pkg/moe"
 	"github.com/tasmirz/gossip/pkg/roles"
@@ -26,7 +26,7 @@ import (
 )
 
 const (
-	Version   = "1.0.0"
+	Version   = "1.1.0"
 	BannerArt = `
   ____                 _       
  / ___| ___  ___  ___ (_)_ __  
@@ -40,16 +40,49 @@ Multi-Agent Collaboration Mesh & Shared RAG Space (AGPLv3)
 
 func main() {
 	if len(os.Args) < 2 {
-		// Default to MCP stdio mode if no args, perfect for MCP clients
-		runMCPServer("")
-		return
+		fmt.Fprintln(os.Stderr, legacyMCPRetiredError())
+		os.Exit(2)
 	}
 
 	cmd := os.Args[1]
 	switch cmd {
+	case "coord-init", "coord-add", "coord-access", "coord-pair", "coord-frp", "coord-mcp", "coord-mcp-bootstrap", "coord-bootstrap-key", "coord-ui", "coord-serve", "coord-daemon", "coord-migrate", "coord-remote":
+		var err error
+		switch cmd {
+		case "coord-init":
+			err = runCoordInit(os.Args[2:])
+		case "coord-add":
+			err = runCoordAdd(os.Args[2:])
+		case "coord-access":
+			err = runCoordAccess(os.Args[2:])
+		case "coord-pair":
+			err = runCoordPair(os.Args[2:])
+		case "coord-frp":
+			err = runCoordFRP(os.Args[2:])
+		case "coord-mcp":
+			err = runCoordMCP(os.Args[2:])
+		case "coord-mcp-bootstrap":
+			err = runCoordMCPBootstrap(os.Args[2:])
+		case "coord-bootstrap-key":
+			err = runCoordBootstrapKey(os.Args[2:])
+		case "coord-ui":
+			err = runCoordUI(os.Args[2:])
+		case "coord-serve":
+			err = runCoordServe(os.Args[2:])
+		case "coord-daemon":
+			err = runCoordDaemon(os.Args[2:])
+		case "coord-migrate":
+			err = runCoordMigrate(os.Args[2:])
+		case "coord-remote":
+			err = runCoordRemote(os.Args[2:])
+		}
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Coordination error: %v\n", err)
+			os.Exit(1)
+		}
 	case "mcp", "serve":
-		dir := parseDirFlag(os.Args[2:])
-		runMCPServer(dir)
+		fmt.Fprintln(os.Stderr, legacyMCPRetiredError())
+		os.Exit(2)
 
 	case "init":
 		dir := parseDirFlag(os.Args[2:])
@@ -143,6 +176,10 @@ func main() {
 		runInstall(os.Args[2:])
 
 	case "tunnel":
+		if err := legacyTunnelCommandError(os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
 		runTunnel(os.Args[2:])
 
 	case "cron":
@@ -161,7 +198,8 @@ func main() {
 		runMoE(os.Args[2:])
 
 	case "export-mcp", "mcp-export":
-		runExportMCP(os.Args[2:])
+		fmt.Fprintln(os.Stderr, legacyMCPRetiredError())
+		os.Exit(2)
 
 	case "roles":
 		fmt.Println(roles.FormatRoleSummary())
@@ -176,11 +214,11 @@ func main() {
 		printHelp()
 
 	default:
-		// If command starts with "-", maybe flags for mcp
+		// The old MCP stdio profile accepted flags without a subcommand. Keep
+		// that path retired too, so an editor cannot accidentally start it.
 		if strings.HasPrefix(cmd, "-") {
-			dir := parseDirFlag(os.Args[1:])
-			runMCPServer(dir)
-			return
+			fmt.Fprintln(os.Stderr, legacyMCPRetiredError())
+			os.Exit(2)
 		}
 		fmt.Fprintf(os.Stderr, "Unknown command: %s\nRun 'gossip help' for usage.\n", cmd)
 		os.Exit(1)
@@ -194,19 +232,8 @@ func parseDirFlag(args []string) string {
 	return *dir
 }
 
-func runMCPServer(customDir string) {
-	store, err := state.NewStore(customDir)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to initialize storage at %s: %v\n", customDir, err)
-		os.Exit(1)
-	}
-
-	roleSrv, _ := roles.NewService(store.Dir(), "")
-	srv := mcp.NewServer(store, roleSrv)
-	if err := srv.ServeStdio(); err != nil {
-		fmt.Fprintf(os.Stderr, "Gossip MCP server error: %v\n", err)
-		os.Exit(1)
-	}
+func legacyMCPRetiredError() error {
+	return errors.New("the legacy JSON MCP interface is retired because it has no project access-control boundary; configure coord-mcp with a private per-project credential")
 }
 
 func runInit(customDir string) {
@@ -1189,9 +1216,13 @@ func runWebUI(args []string) {
 	user := fs.String("user", "", "Optional HTTP Basic Auth username for web dashboard")
 	pass := fs.String("pass", "", "Optional HTTP Basic Auth password (minimum 6 characters)")
 	frpServer := fs.String("frp-server", "", "Optional FRP server address for automatic tunnel activation")
-	frpToken := fs.String("frp-token", "", "Optional FRP server token")
-	domain := fs.String("domain", "", "Optional custom domain for FRP tunnel")
+	_ = fs.String("frp-token", "", "FRP server token (legacy HTTP tunneling is disabled)")
+	_ = fs.String("domain", "", "Custom domain (legacy HTTP tunneling is disabled)")
 	_ = fs.Parse(args)
+	if err := legacyUIExposureError(*frpServer); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
 
 	store, err := state.NewStore(*dir)
 	if err != nil {
@@ -1202,7 +1233,7 @@ func runWebUI(args []string) {
 	roleProv, _ := roles.NewService(store.Dir(), "")
 	srv := web.NewServer(*port, store, roleProv)
 
-	if *user != "" && *pass != "" {
+	if *user != "" || *pass != "" {
 		if err := tunnel.ValidateCredentials(*user, *pass); err != nil {
 			fmt.Fprintf(os.Stderr, "Credential error: %v\n", err)
 			os.Exit(1)
@@ -1210,36 +1241,24 @@ func runWebUI(args []string) {
 		srv.SetAuth(*user, *pass)
 	}
 
-	if *frpServer != "" {
-		ep := *domain
-		if ep == "" {
-			ep = fmt.Sprintf("frp://%s:7000", *frpServer)
-		}
-		_ = tunnel.SaveTunnelState(store.Dir(), tunnel.TunnelState{
-			Active:         true,
-			Type:           "frp",
-			ServerAddr:     *frpServer,
-			RemoteEndpoint: ep,
-			LocalIP:        "127.0.0.1",
-			LocalPort:      *port,
-			AuthEnabled:    *user != "" && *pass != "",
-			AuthUser:       *user,
-			AuthPassMasked: tunnel.MaskSecret(*pass),
-			StartedAt:      time.Now(),
-		})
-		cfg := tunnel.DefaultClientConfig(*port, *user, *pass)
-		cfg.ServerAddr = *frpServer
-		cfg.AuthToken = *frpToken
-		if *domain != "" {
-			cfg.CustomDomains = []string{*domain}
-		}
-		_ = os.WriteFile(filepath.Join(store.Dir(), "frpc.toml"), []byte(tunnel.GenerateFRPCTOML(cfg)), 0600)
-	}
-
 	if err := srv.Start(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error running web server: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+func legacyUIExposureError(frpServer string) error {
+	if frpServer != "" {
+		return fmt.Errorf("legacy HTTP dashboard tunnels are disabled; use coord-serve with mutual TLS and an FRP TCP proxy")
+	}
+	return nil
+}
+
+func legacyTunnelCommandError(args []string) error {
+	if len(args) > 0 && (args[0] == "init" || args[0] == "start" || args[0] == "activate" || args[0] == "config") {
+		return fmt.Errorf("legacy HTTP dashboard tunneling is disabled; use coord-serve with mutual TLS and an FRP TCP proxy")
+	}
+	return nil
 }
 
 func runMoE(args []string) {
@@ -1328,7 +1347,20 @@ func printHelp() {
   gossip [command] [options]
 
 Commands:
-  mcp             Run as an MCP stdio server (default when invoked with no args)
+  coord-init      Create a local coordination project and owner credential
+  coord-add       Enroll a project principal with a private credential
+  coord-access    List, grant, or revoke project client certificates
+  coord-pair      Create or redeem a short-lived client certificate invitation
+  coord-frp       Write a private FRP TCP config for the mTLS endpoint
+  coord-mcp       Serve project-scoped coordination tools over MCP stdio
+  coord-mcp-bootstrap Serve create-only project bootstrap tool over authenticated MCP stdio
+  coord-bootstrap-key Generate a private create-only project bootstrap API key
+  coord-ui        Start the local coordination dashboard
+  coord-serve     Serve coordination over mutually authenticated TLS
+  coord-daemon    Serve local coordination over a private Unix socket
+  coord-remote    Show or change the local remote-access kill switch (disabled by default)
+  coord-migrate   Audit or import legacy project history (dry run by default)
+  mcp, serve       Retired; use coord-mcp with a private project credential
   init            Initialize .local/gossip in current working directory
   status          Show registered agents, task counts, and knowledge graph metrics
   board           Print the live Markdown Kanban board (BOARD.md)
@@ -1356,11 +1388,11 @@ Commands:
   install         Auto-install and configure all AI agents & editors (Antigravity, OpenCode, Claude, Cursor, VS Code)
   tunnel          Manage protected FRP reverse-proxy tunnels with username/password authentication
   cron            Execute periodic health checks (unread messages, ready DAG tasks, stale heartbeats)
-  vault           Stage and transfer sensitive secret files (.env, keys) with zero agent exposure
+  vault           Stage or list local secret files; remote transfer is disabled
   remote          Query remote mesh nodes across tunnel when worktrees differ
   moe             Convene and inspect Mixture of Experts discussion panels (alias: gsp:moe)
   ui              Launch local monochrome black & white web control panel (alias: web)
-  export-mcp      Export MCP tool schemas (JSON) and instructions.md (alias: mcp-export)
+  export-mcp      Retired legacy MCP schema export; use project-scoped coord-mcp
   roles           Print complete directory of agent roles and directives
   send            Send a message to an agent, role, or broadcast to all
   version         Show Gossip version
@@ -1376,7 +1408,7 @@ Examples:
   gossip system-todos
   gossip todo --agent worker-1
   gossip todo add --agent worker-1 --title "Verify memory alignment" --task task-1
-  gossip mcp
+  gossip coord-mcp --credential-file <private-file>  Start the project-scoped MCP server
   gossip repomap
   gossip pagerank
   gossip report

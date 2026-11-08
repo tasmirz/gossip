@@ -2,12 +2,14 @@ package web
 
 import (
 	"crypto/subtle"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -141,14 +143,65 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/vault/transfer", s.handleAPIVaultTransfer)
 	mux.HandleFunc("/api/vault/receive", s.handleAPIVaultReceive)
 
-	return s.authMiddleware(mux)
+	return localBrowserBoundary(s.authMiddleware(mux))
+}
+
+// localBrowserBoundary prevents DNS-rebinding origins from using the local
+// dashboard as a confused deputy. The server binds to loopback, but browser
+// requests can still reach that socket through an attacker-controlled Host.
+func localBrowserBoundary(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !isLoopbackHost(r.Host) {
+			http.Error(w, "invalid local Host", http.StatusForbidden)
+			return
+		}
+		origin := r.Header.Get("Origin")
+		if origin != "" && !sameRequestOrigin(r, origin) {
+			http.Error(w, "same-origin request required", http.StatusForbidden)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func isLoopbackHost(hostport string) bool {
+	host := hostport
+	if strings.Contains(hostport, ":") {
+		parsedHost, port, err := net.SplitHostPort(hostport)
+		if err != nil {
+			return false
+		}
+		n, err := strconv.Atoi(port)
+		if err != nil || n < 1 || n > 65535 {
+			return false
+		}
+		host = parsedHost
+	}
+	host = strings.Trim(host, "[]")
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+func sameRequestOrigin(r *http.Request, origin string) bool {
+	u, err := url.Parse(origin)
+	if err != nil {
+		return false
+	}
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+	return u.Scheme == scheme && strings.EqualFold(u.Host, r.Host) && u.User == nil && u.Path == "" && u.RawQuery == "" && u.Fragment == ""
 }
 
 // SetAuth configures mandatory HTTP Basic Auth for dashboard and remote mesh access.
 func (s *Server) SetAuth(username, password string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if username != "" && password != "" {
+	if username != "" || password != "" {
 		s.authEnabled = true
 		s.authUser = username
 		s.authPass = password
@@ -168,6 +221,10 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 		s.mu.RUnlock()
 
 		if enabled {
+			if user == "" || pass == "" {
+				http.Error(w, "Incomplete dashboard authentication configuration", http.StatusServiceUnavailable)
+				return
+			}
 			reqUser, reqPass, ok := r.BasicAuth()
 			if !ok || subtle.ConstantTimeCompare([]byte(reqUser), []byte(user)) != 1 ||
 				subtle.ConstantTimeCompare([]byte(reqPass), []byte(pass)) != 1 {
@@ -182,7 +239,7 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 
 // Start runs the HTTP web server.
 func (s *Server) Start() error {
-	addr := fmt.Sprintf(":%d", s.port)
+	addr := fmt.Sprintf("127.0.0.1:%d", s.port)
 	fmt.Printf("\n+--------------------------------------------------------+\n")
 	fmt.Printf("|  GOSSIP MULTI-PROJECT CONTROL PANEL                    |\n")
 	fmt.Printf("|  URL: http://localhost:%d                            |\n", s.port)
@@ -1151,117 +1208,19 @@ func (s *Server) handleAPITunnel(w http.ResponseWriter, r *http.Request) {
 
 	if r.Method == http.MethodPost {
 		var req struct {
-			Action       string `json:"action"` // "generate", "activate", "deactivate"
-			Format       string `json:"format"` // "toml", "ini", "server_toml", "server_ini"
-			ServerAddr   string `json:"server_addr"`
-			ServerPort   int    `json:"server_port"`
-			AuthToken    string `json:"auth_token"`
-			ProxyType    string `json:"proxy_type"`
-			CustomDomain string `json:"custom_domain"`
-			RemotePort   int    `json:"remote_port"`
-			HTTPUser     string `json:"http_user"`
-			HTTPPassword string `json:"http_password"`
+			Action string `json:"action"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, err.Error(), 400)
 			return
 		}
 
-		if req.Action == "generate" {
-			cfg := tunnel.DefaultClientConfig(s.port, req.HTTPUser, req.HTTPPassword)
-			if req.ServerAddr != "" {
-				cfg.ServerAddr = req.ServerAddr
-			}
-			if req.ServerPort > 0 {
-				cfg.ServerPort = req.ServerPort
-			}
-			if req.AuthToken != "" {
-				cfg.AuthToken = req.AuthToken
-			}
-			if req.ProxyType != "" {
-				cfg.ProxyType = req.ProxyType
-			}
-			if req.CustomDomain != "" {
-				cfg.CustomDomains = []string{req.CustomDomain}
-			}
-			if req.RemotePort > 0 {
-				cfg.RemotePort = req.RemotePort
-			}
-
-			var out string
-			switch req.Format {
-			case "ini":
-				out = tunnel.GenerateFRPCINI(cfg)
-			case "server_toml":
-				srvCfg := tunnel.FRPServerConfig{
-					BindPort:      cfg.ServerPort,
-					AuthToken:     cfg.AuthToken,
-					VhostHTTPPort: 80,
-				}
-				out = tunnel.GenerateFRPSTOML(srvCfg)
-			case "server_ini":
-				srvCfg := tunnel.FRPServerConfig{
-					BindPort:      cfg.ServerPort,
-					AuthToken:     cfg.AuthToken,
-					VhostHTTPPort: 80,
-				}
-				out = tunnel.GenerateFRPSINI(srvCfg)
-			default:
-				out = tunnel.GenerateFRPCTOML(cfg)
-			}
-			jsonResponse(w, map[string]string{
-				"config": out,
-				"format": req.Format,
-			})
+		if req.Action != "deactivate" {
+			http.Error(w, "legacy HTTP dashboard tunneling is disabled; use coord-serve with mutual TLS and an FRP TCP proxy", http.StatusGone)
 			return
 		}
-
-		if req.Action == "activate" {
-			if req.HTTPUser != "" && req.HTTPPassword != "" {
-				if err := tunnel.ValidateCredentials(req.HTTPUser, req.HTTPPassword); err != nil {
-					http.Error(w, fmt.Sprintf("invalid credentials: %v", err), 400)
-					return
-				}
-				// Set basic auth on web dashboard
-				s.SetAuth(req.HTTPUser, req.HTTPPassword)
-			}
-
-			ep := req.CustomDomain
-			if ep == "" {
-				ep = fmt.Sprintf("frp://%s:%d", req.ServerAddr, req.ServerPort)
-			}
-			tState := tunnel.TunnelState{
-				Active:         true,
-				Type:           "frp",
-				ServerAddr:     req.ServerAddr,
-				RemoteEndpoint: ep,
-				LocalIP:        "127.0.0.1",
-				LocalPort:      s.port,
-				RemotePort:     req.RemotePort,
-				AuthEnabled:    req.HTTPUser != "" && req.HTTPPassword != "",
-				AuthUser:       req.HTTPUser,
-				AuthPassMasked: tunnel.MaskSecret(req.HTTPPassword),
-				StartedAt:      time.Now(),
-			}
-			if err := tunnel.SaveTunnelState(store.Dir(), tState); err != nil {
-				http.Error(w, err.Error(), 500)
-				return
-			}
-			jsonResponse(w, map[string]interface{}{
-				"status": "activated",
-				"tunnel": tState,
-			})
-			return
-		}
-
-		if req.Action == "deactivate" {
-			s.SetAuth("", "")
-			_ = tunnel.ClearTunnelState(store.Dir())
-			jsonResponse(w, map[string]string{"status": "deactivated"})
-			return
-		}
-
-		http.Error(w, "invalid action", 400)
+		_ = tunnel.ClearTunnelState(store.Dir())
+		jsonResponse(w, map[string]string{"status": "deactivated"})
 		return
 	}
 	http.Error(w, "Method not allowed", 405)
@@ -1360,79 +1319,11 @@ func (s *Server) handleAPIVaultList(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleAPIVaultTransfer(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", 405)
-		return
-	}
-	store, _, err := s.resolveProjectStore(r.URL.Query().Get("project"))
-	if err != nil {
-		http.Error(w, err.Error(), 500)
-		return
-	}
-	vm, err := vault.NewManager(store.Dir())
-	if err != nil {
-		http.Error(w, err.Error(), 500)
-		return
-	}
-
-	var req struct {
-		SourcePath     string `json:"source_path"`
-		RemoteEndpoint string `json:"remote_endpoint"`
-		AuthToken      string `json:"auth_token"`
-		DestRelPath    string `json:"dest_rel_path"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, err.Error(), 400)
-		return
-	}
-	receipt, err := vm.TransferSecretToRemote(req.SourcePath, req.RemoteEndpoint, req.AuthToken, req.DestRelPath)
-	if err != nil {
-		http.Error(w, err.Error(), 500)
-		return
-	}
-	jsonResponse(w, receipt)
+	http.Error(w, "legacy remote secret transfer is disabled", http.StatusGone)
 }
 
 func (s *Server) handleAPIVaultReceive(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", 405)
-		return
-	}
-	store, _, err := s.resolveProjectStore(r.URL.Query().Get("project"))
-	if err != nil {
-		http.Error(w, err.Error(), 500)
-		return
-	}
-	vm, err := vault.NewManager(store.Dir())
-	if err != nil {
-		http.Error(w, err.Error(), 500)
-		return
-	}
-
-	var req struct {
-		TransferID string `json:"transfer_id"`
-		Filename   string `json:"filename"`
-		PayloadB64 string `json:"payload_b64"`
-		SHA256     string `json:"sha256"`
-		AuthToken  string `json:"auth_token"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, err.Error(), 400)
-		return
-	}
-
-	encBytes, err := hex.DecodeString(req.PayloadB64)
-	if err != nil {
-		http.Error(w, "invalid hex payload", 400)
-		return
-	}
-
-	receipt, err := vm.ReceiveSecretPayload(req.Filename, encBytes, req.AuthToken, req.SHA256)
-	if err != nil {
-		http.Error(w, err.Error(), 500)
-		return
-	}
-	jsonResponse(w, receipt)
+	http.Error(w, "legacy remote secret transfer is disabled", http.StatusGone)
 }
 
 const dashboardHTML = `<!DOCTYPE html>
@@ -2216,11 +2107,11 @@ body.light-theme #social-feed {
     </div>
   </div>
 
-  <!-- ZERO-EXPOSURE SECRET VAULT -->
+  <!-- LOCAL SECRET STAGING -->
   <div class="box">
-    <div class="box-title">[ZERO-EXPOSURE SECRET VAULT // SECURE FILE TRANSFER]</div>
+    <div class="box-title">[LOCAL SECRET STAGING]</div>
     <div style="font-size: 11px; margin-bottom: 10px;">
-      Transmit .env files, certificates, and credentials without revealing raw secrets to agent context or LLM history.
+      Local staging stores plaintext. Remote secret transfer is disabled.
     </div>
     <div class="grid-2">
       <div>
@@ -2231,16 +2122,7 @@ body.light-theme #social-feed {
         </div>
         <input type="text" id="vault-src-desc" placeholder="File description (e.g. Production DB secrets)" style="width: 100%; margin-bottom: 8px;">
 
-        <div style="font-size: 11px; font-weight: bold; margin-top: 10px; margin-bottom: 4px;">TRANSFER ENCRYPTED TO REMOTE NODE</div>
-        <div class="flex-row" style="margin-bottom: 6px;">
-          <input type="text" id="vault-xfr-src" placeholder="Source File Path" class="flex-1">
-          <input type="text" id="vault-xfr-ep" placeholder="Remote Endpoint (http://...)" class="flex-1">
-        </div>
-        <div class="flex-row" style="margin-bottom: 6px;">
-          <input type="password" id="vault-xfr-tok" placeholder="Encryption Token / Passphrase" class="flex-1">
-          <input type="text" id="vault-xfr-dest" placeholder="Remote Dest Path (.env)" style="width: 180px;">
-          <button onclick="transferVaultFile()">[SEND ENCRYPTED]</button>
-        </div>
+
       </div>
       <div>
         <div style="font-size: 11px; font-weight: bold; margin-bottom: 4px;">STAGED FILES IN PROTECTED VAULT (0600)</div>
@@ -3052,33 +2934,6 @@ async function stageVaultFile() {
     await loadVaultFiles();
   } catch(e) {
     alert('Vault error: ' + e);
-  }
-}
-
-async function transferVaultFile() {
-  const source_path = document.getElementById('vault-xfr-src').value.trim();
-  const remote_endpoint = document.getElementById('vault-xfr-ep').value.trim();
-  const auth_token = document.getElementById('vault-xfr-tok').value.trim();
-  const dest_rel_path = document.getElementById('vault-xfr-dest').value.trim();
-
-  if (!source_path || !remote_endpoint || !auth_token) {
-    return alert('Source path, remote endpoint, and encryption token required');
-  }
-
-  try {
-    const res = await fetch('/api/vault/transfer', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({source_path, remote_endpoint, auth_token, dest_rel_path})
-    });
-    if (!res.ok) {
-      const err = await res.text();
-      return alert('Transfer error: ' + err);
-    }
-    const receipt = await res.json();
-    showVaultReceipt(receipt);
-  } catch(e) {
-    alert('Transfer error: ' + e);
   }
 }
 

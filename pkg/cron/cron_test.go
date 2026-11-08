@@ -98,14 +98,23 @@ func TestRunnerLifecycle(t *testing.T) {
 	runner := NewRunner(store, "test-agent", 50*time.Millisecond)
 
 	count := 0
-	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	checked := make(chan struct{}, 1)
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	runner.Start(ctx, func(res *CheckResult) {
 		count++
+		select {
+		case checked <- struct{}{}:
+		default:
+		}
 	})
 
-	time.Sleep(120 * time.Millisecond)
+	select {
+	case <-checked:
+	case <-time.After(time.Second):
+		t.Fatal("runner did not execute its initial check")
+	}
 	runner.Stop()
 
 	if count == 0 {
