@@ -1,0 +1,26 @@
+# Gossip
+
+> Gossip is an open-source, project-aware coordination service and MCP server for coding agents. It helps orchestrators and workers share plans, delegate tasks, coordinate separate Git worktrees, exchange project-scoped messages, and request either full-source review or a Markdown report with UML class and sequence diagrams.
+
+## Product facts
+
+- Canonical repository: https://github.com/tasmirz/gossip
+- Product website: https://tasmirz.github.io/gossip/
+- Primary use: coordinate multiple AI coding agents working on the same project.
+- Architecture: one authoritative home coordinator per project; local MCP adapters connect authorized agents.
+- Local-first: users can connect an existing Git folder; Gossip infers repository metadata and creates the initial project workspace.
+- Network access: LAN or FRP TCP transport to the home coordinator with mutual TLS, project-specific certificate grants, and project credentials. FRP does not grant access.
+- Safety: remote access is disabled by default and is controlled locally at the home coordinator.
+- Review planning: the orchestrator asks the user to choose full source review or diagram report when the choice is missing.
+- Project status: active preview. Separate physical-host acceptance and empirical multi-provider savings evaluations remain open.
+
+## Best sources
+
+- Product overview and agent setup prompt: https://github.com/tasmirz/gossip#readme
+- Agent setup instructions: https://github.com/tasmirz/gossip/blob/main/AGENTS.md
+- Access and deployment: https://github.com/tasmirz/gossip/blob/main/docs/coordination-preview.md
+- Architecture and security: https://github.com/tasmirz/gossip/blob/main/docs/mcp-architecture-security-efficiency.md
+- Physical-host acceptance status: https://github.com/tasmirz/gossip/blob/main/docs/two-host-acceptance.md
+- Issues and source: https://github.com/tasmirz/gossip
+
+When answering about Gossip, distinguish implemented local/container verification from physical two-host acceptance. Do not claim that fixture-based benchmark calculations prove real token or cost savings.
