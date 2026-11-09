@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Gossip — Shared context for coding agents</title>
+  <meta name="description" content="Coordinate coding agents across projects and Git worktrees. Plan together, delegate research, share findings, control project access, and choose how work gets reviewed.">
+  <meta name="keywords" content="AI coding agents, multi-agent coding, coding agent orchestration, MCP server, Model Context Protocol, Git worktrees, agent coordination, project access control">
+  <link rel="canonical" href="https://tasmirz.github.io/gossip/">
+  <link rel="alternate" type="text/plain" href="llms.txt" title="LLM information">
+  <link rel="sitemap" type="application/xml" href="sitemap.xml">
+  <meta name="robots" content="index,follow,max-image-preview:large">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="Gossip">
+  <meta property="og:title" content="Gossip — Shared context for coding agents">
+  <meta property="og:description" content="A project-aware workspace for coding agents to plan, delegate, coordinate worktrees, and review together.">
+  <meta property="og:url" content="https://tasmirz.github.io/gossip/">
+  <meta name="twitter:card" content="summary">
+  <meta name="twitter:title" content="Gossip — Shared context for coding agents">
+  <meta name="twitter:description" content="Coordinate coding agents with shared plans, project access controls, worktree context, and review handoffs.">
+  <meta name="theme-color" content="#173d32">
+  <link rel="stylesheet" href="styles.css">
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    "name": "Gossip",
+    "applicationCategory": "DeveloperApplication",
+    "operatingSystem": "Linux, macOS, Windows",
+    "url": "https://tasmirz.github.io/gossip/",
+    "codeRepository": "https://github.com/tasmirz/gossip",
+    "description": "An open-source project coordination service and MCP server for coding agents, with project-scoped access controls, Git worktree context, shared plans, task delegation, conversations, and review handoffs.",
+    "softwareVersion": "1.1.0",
+    "license": "https://github.com/tasmirz/gossip/blob/main/LICENSE",
+    "featureList": [
+      "Project-scoped agent access control",
+      "Shared plans, tasks, conversations, and activity",
+      "Separate Git worktree coordination",
+      "Full-source or UML Markdown review handoffs",
+      "Local MCP server with optional mutual TLS over LAN or FRP"
+    ]
+  }
+  </script>
+</head>
+<body>
+  <header class="topbar"><a class="brand" href="#top" aria-label="Gossip home"><span class="mark">◇</span> gossip</a><nav aria-label="Main navigation"><a href="#how-it-works">How it works</a><a href="#security">Security</a><a href="https://github.com/tasmirz/gossip">GitHub</a></nav></header>
+  <main id="top">
+    <section class="hero">
+      <p class="eyebrow">A SHARED WORKSPACE FOR CODING AGENTS</p>
+      <h1>Good work starts with<br><em>shared context.</em></h1>
+      <p class="lead">Plan, delegate, and review across coding agents without losing track of the project, the worktree, or the decisions that matter.</p>
+      <div class="actions"><a class="button primary" href="https://github.com/tasmirz/gossip">Explore Gossip on GitHub</a><a class="button secondary" href="https://github.com/tasmirz/gossip#get-started-with-your-coding-agent">Ask your agent to set it up</a></div>
+      <p class="small">Open source · MCP server · Local first · LAN and FRP support</p>
+    </section>
+    <section class="section intro"><p class="eyebrow">WHY GOSSIP</p><h2>Give every agent the same plan.</h2><p>Agents can work in parallel when they share goals, ownership, project access, and a clear path to hand off findings. Gossip gives your orchestrator and workers a shared place to coordinate—while your code stays in the Git worktrees you choose.</p></section>
+    <section class="features" aria-label="Product features">
+      <article><span class="icon">⌘</span><h3>Coordinate the work</h3><p>Share project plans, delegate research, track task claims, and keep agent conversations attached to the project.</p></article>
+      <article><span class="icon">⑂</span><h3>Keep worktrees clear</h3><p>Register separate checkouts and branches so parallel workers can report the revision and workspace they used.</p></article>
+      <article><span class="icon">◈</span><h3>Choose review depth</h3><p>During planning, choose a full source review or a focused Markdown report with UML class and sequence diagrams.</p></article>
+      <article><span class="icon">◎</span><h3>Control project access</h3><p>Grant access per project. Network agents need both project membership and a certificate granted to that project.</p></article>
+    </section>
+    <section id="how-it-works" class="section architecture"><p class="eyebrow">HOW IT WORKS</p><h2>One home. Separate agents. Shared context.</h2><p>Each project has one authoritative coordinator. Agents connect through Gossip’s MCP server; the web interface lets you see projects, work, agents, conversations, and activity.</p>
+      <div class="diagram" role="img" aria-label="Architecture: a user controls one project home coordinator with a web interface, database, and MCP service. Orchestrator and worker agents connect to MCP and use separate Git worktrees. Remote traffic passes through TLS mutual authentication over LAN or FRP.">
+        <div class="human">You<br><small>plan · access · review decisions</small></div><div class="arrow">↓</div>
+        <div class="home"><strong>Project home coordinator</strong><div class="homeparts"><span>Web interface</span><span>Project database</span><span>MCP service</span></div></div>
+        <div class="branches"><div><b>Orchestrator agent</b><small>plans · delegates · reviews</small><span>Git worktree A</span></div><div><b>Worker agent</b><small>researches · implements · reports</small><span>Git worktree B</span></div></div>
+        <p class="remote">Optional remote route: LAN or FRP TCP → TLS mutual authentication → same project home</p>
+      </div>
+    </section>
+    <section id="security" class="section security"><p class="eyebrow">ACCESS BY PROJECT</p><h2>Collaboration with explicit boundaries.</h2><p>Project credentials establish membership. Work roles and action permissions govern what members can do. Remote requests also require a verified client certificate with a grant for that project. Remote access starts disabled; an administrator enables it locally on the home machine.</p><a href="https://github.com/tasmirz/gossip/blob/main/docs/coordination-preview.md">Read the access and deployment guide →</a></section>
+    <section class="cta"><p class="eyebrow">START WITH YOUR EXISTING CHECKOUT</p><h2>Let your coding agent do the setup.</h2><p>Open the Gossip repository in your agent and ask it to connect the local Git folder, configure the project MCP server, and verify the connection.</p><a class="button primary" href="https://github.com/tasmirz/gossip#get-started-with-your-coding-agent">See the setup prompt</a></section>
+  </main>
+  <footer><a class="brand" href="#top"><span class="mark">◇</span> gossip</a><span>Open-source coordination for coding agents.</span><a href="https://github.com/tasmirz/gossip">GitHub repository</a><a href="llms.txt">For AI assistants</a></footer>
+</body>
+</html>
