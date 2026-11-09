@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -25,9 +26,9 @@ import (
 	"github.com/tasmirz/gossip/pkg/web"
 )
 
-const (
-	Version   = "1.1.0"
-	BannerArt = `
+var Version = "1.2.0"
+
+const BannerArt = `
   ____                 _       
  / ___| ___  ___  ___ (_)_ __  
 | |  _ / _ \/ __|/ __|| | '_ \ 
@@ -36,7 +37,6 @@ const (
                         |_|    
 Multi-Agent Collaboration Mesh & Shared RAG Space (AGPLv3)
 `
-)
 
 func main() {
 	if len(os.Args) < 2 {
@@ -208,7 +208,7 @@ func main() {
 		runSend(os.Args[2:])
 
 	case "version", "-v", "--version":
-		fmt.Printf("Gossip v%s (linux/amd64, AGPLv3)\n", Version)
+		fmt.Printf("Gossip v%s (%s/%s, AGPLv3)\n", Version, runtime.GOOS, runtime.GOARCH)
 
 	case "help", "-h", "--help":
 		printHelp()

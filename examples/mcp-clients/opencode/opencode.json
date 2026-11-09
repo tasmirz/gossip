@@ -1,0 +1,17 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "servers": {
+      "gossip": {
+        "type": "local",
+        "command": [
+          "/path/to/gossip",
+          "coord-mcp",
+          "--credential-file",
+          "/private/path/to/project-credential.json"
+        ],
+        "enabled": true
+      }
+    }
+  }
+}

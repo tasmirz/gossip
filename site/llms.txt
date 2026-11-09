@@ -7,6 +7,7 @@
 - Canonical repository: https://github.com/tasmirz/gossip
 - Product website: https://tasmirz.github.io/gossip/
 - Primary use: coordinate multiple AI coding agents working on the same project.
+- Installation: users can download precompiled OS/architecture release binaries with the interactive shell or PowerShell setup wizard; no source compilation is required.
 - Architecture: one authoritative home coordinator per project; local MCP adapters connect authorized agents.
 - Local-first: users can connect an existing Git folder; Gossip infers repository metadata and creates the initial project workspace.
 - Network access: LAN or FRP TCP transport to the home coordinator with mutual TLS, project-specific certificate grants, and project credentials. FRP does not grant access.
@@ -18,6 +19,7 @@
 
 - Product overview and agent setup prompt: https://github.com/tasmirz/gossip#readme
 - Agent setup instructions: https://github.com/tasmirz/gossip/blob/main/AGENTS.md
+- Platform and per-agent installation tutorials: https://github.com/tasmirz/gossip/tree/main/docs/installation
 - Access and deployment: https://github.com/tasmirz/gossip/blob/main/docs/coordination-preview.md
 - Architecture and security: https://github.com/tasmirz/gossip/blob/main/docs/mcp-architecture-security-efficiency.md
 - Physical-host acceptance status: https://github.com/tasmirz/gossip/blob/main/docs/two-host-acceptance.md

@@ -18,33 +18,27 @@ When two or more coding agents work toward the same goal, they need more than se
 
 You do not need to hand-configure Gossip. Open this repository in your coding agent and ask:
 
-> Set up Gossip for this project. Read `AGENTS.md`, install or build the local coordinator if needed, help me connect this Git folder as a project, and configure this agent with the project-scoped MCP credential. Explain any step that needs my choice or access.
+> Set up Gossip for this project. Read `AGENTS.md`, use the official prebuilt installer, help me connect this Git folder as a project, and configure this agent with the project-scoped MCP credential. Explain any step that needs my choice or access.
 
 The agent instructions are in [`AGENTS.md`](AGENTS.md); the detailed setup and recovery guide is [`docs/agent-setup.md`](docs/agent-setup.md). The normal first step is connecting a local Git folder: Gossip infers its repository metadata and creates the project and initial workspace together. LAN and remote access are optional.
 
 ### Prefer to install it yourself?
 
-Install the Go version required by Gossip’s [`go.mod`](go.mod) or later from [go.dev/dl](https://go.dev/dl/) first, then run the command for your system. This installs the Gossip CLI only; it does not connect a project, change editor settings, or enable remote access.
+Install the precompiled binary and configure an agent with the [guided installer](docs/installation/README.md). It does not compile source or enable remote access. The installer asks you to choose the agent and the project's private credential file.
 
-**Linux**
-
-```sh
-GOBIN="$HOME/.local/bin" go install github.com/tasmirz/gossip/cmd/gossip@latest
-```
-
-**macOS**
+Linux and macOS:
 
 ```sh
-GOBIN="$HOME/.local/bin" go install github.com/tasmirz/gossip/cmd/gossip@latest
+curl -fsSL https://raw.githubusercontent.com/tasmirz/gossip/main/scripts/setup.sh | bash
 ```
 
 **Windows PowerShell**
 
 ```powershell
-$env:GOBIN="$env:LOCALAPPDATA\Programs\gossip"; go install github.com/tasmirz/gossip/cmd/gossip@latest
+irm https://raw.githubusercontent.com/tasmirz/gossip/main/scripts/setup.ps1 | iex
 ```
 
-Start the local dashboard with `gossip coord-ui` (on Windows, run the installed `gossip.exe coord-ui`), open `http://127.0.0.1:8081`, and choose **Create local project** for your checkout. See the [full setup guide](docs/coordination-preview.md) for credential and MCP configuration.
+The wizard downloads the matching prebuilt release, verifies its SHA-256, installs the skill, and can configure Codex, Claude Code, or Gemini CLI. It guides you to create/connect a local project before attaching its private credential. See [manual per-agent tutorials](docs/installation/README.md).
 
 ## How Gossip works
 
@@ -86,6 +80,7 @@ Gossip is an active preview. Local coordination, project-scoped access controls,
 
 - [Product site](https://tasmirz.github.io/gossip/)
 - [Agent setup instructions](docs/agent-setup.md)
+- [Current architecture overview](docs/architecture-overview.md)
 - [Architecture and security detail](docs/mcp-architecture-security-efficiency.md)
 - [Implementation and contributor guide](docs/implementation-mechanics.md)
 - [Role presets and research](docs/role-skill-research.md)

@@ -1,0 +1,85 @@
+name: Build release installers
+
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release-assets:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+            ext: tar.gz
+          - goos: linux
+            goarch: arm64
+            ext: tar.gz
+          - goos: darwin
+            goarch: amd64
+            ext: tar.gz
+          - goos: darwin
+            goarch: arm64
+            ext: tar.gz
+          - goos: windows
+            goarch: amd64
+            ext: zip
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Build package
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: 0
+          TAG: ${{ github.ref_name }}
+          EXT: ${{ matrix.ext }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist/package/skills/gossip
+          if [ "$GOOS" = windows ]; then
+            go build -trimpath -ldflags "-s -w -X main.Version=${TAG#v}" -o dist/package/gossip.exe ./cmd/gossip
+          else
+            go build -trimpath -ldflags "-s -w -X main.Version=${TAG#v}" -o dist/package/gossip ./cmd/gossip
+            chmod 0755 dist/package/gossip
+          fi
+          cp skills/gossip/SKILL.md dist/package/skills/gossip/SKILL.md
+          cp LICENSE dist/package/LICENSE
+          asset="gossip_${TAG}_${GOOS}_${GOARCH}.${EXT}"
+          if [ "$EXT" = zip ]; then
+            (cd dist/package && zip -qr "../$asset" .)
+          else
+            tar -C dist/package -czf "dist/$asset" .
+          fi
+          sha256sum "dist/$asset" > "dist/$asset.sha256"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gossip-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    needs: release-assets
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: Gossip ${{ github.ref_name }}
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          make_latest: ${{ !contains(github.ref_name, '-') }}
+          generate_release_notes: true
+          files: dist/*

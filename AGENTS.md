@@ -4,7 +4,7 @@ When a user asks to set up Gossip, connect this checkout, or let coding agents c
 
 1. Read [`docs/agent-setup.md`](docs/agent-setup.md) for the setup sequence and security constraints. Use [`README.md`](README.md) to explain Gossip in user terms.
 2. Inspect the repository root, available Gossip binary, Go toolchain, and current MCP configuration. Preserve existing user configuration and unrelated MCP servers.
-3. Build or install the coordinator only when needed. Start with local project setup from the existing Git checkout; let Gossip infer its remote and branch. Do not create an empty project with guessed metadata when the user has a local checkout.
+3. Use the official prebuilt installer at [`docs/installation/README.md`](docs/installation/README.md) unless the user asks to build from source. Start with local project setup from the existing Git checkout; let Gossip infer its remote and branch. Do not create an empty project with guessed metadata when the user has a local checkout.
 4. Help the user connect or create the project using the local dashboard or the separate create-only bootstrap MCP server. Save the owner credential in a private file and verify its permissions. Never print, paste into chat, or commit credentials or private keys.
 5. Configure this coding agent with the regular project-scoped MCP server using the credential file. Bootstrap credentials are create-only; use the project credential for normal reads, tasks, messages, and review workflows.
 6. Verify that the MCP server initializes and can read the selected project. Report the project name, detected repository/branch, connection method, and any remaining user decision. Do not claim agents are connected until their authenticated presence is observed.
