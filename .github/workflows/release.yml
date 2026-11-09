@@ -59,7 +59,7 @@ jobs:
           else
             tar -C dist/package -czf "dist/$asset" .
           fi
-          sha256sum "dist/$asset" > "dist/$asset.sha256"
+          (cd dist && sha256sum "$asset" > "$asset.sha256")
       - uses: actions/upload-artifact@v4
         with:
           name: gossip-${{ matrix.goos }}-${{ matrix.goarch }}
