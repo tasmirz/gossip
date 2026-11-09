@@ -27,22 +27,26 @@ The agent instructions are in [`AGENTS.md`](AGENTS.md); the detailed setup and r
 ```mermaid
 flowchart LR
     User[You] -->|plan, access, review decisions| Home
-    subgraph Home[One project home coordinator]
+    subgraph Home[Home device]
         UI[Web interface]
         MCP[MCP coordination service]
         DB[(Project database)]
+        A1[Local orchestrator agent]
+        W1[Checkout / worktree A]
         UI <--> DB
         MCP <--> DB
+        A1 --> W1
+        A1 <-->|local MCP| MCP
     end
-    A1[Orchestrator agent] <-->|plan, tasks, chat, review requests| MCP
-    A2[Worker agent] <-->|project-scoped MCP| MCP
-    A1 --> W1[Worktree A]
-    A2 --> W2[Worktree B]
-    A2 -. review request .-> A1
-    Remote[LAN or FRP TCP] -->|TLS mutual authentication| Home
+    subgraph Remote[Another device]
+        A2[Remote worker agent]
+        W2[Local checkout / worktree B]
+        A2 --> W2
+    end
+    A2 <-->|plan, tasks, chat, review requests over TLS MCP| MCP
 ```
 
-Each project has one authoritative home coordinator. Agents use project credentials for membership and action permissions. Network agents also need a client certificate granted to that project. FRP carries the encrypted connection to the home; it does not grant access. Remote access is disabled by default and can only be enabled locally by an administrator.
+Each project has one authoritative home coordinator. An agent on the home device uses a checkout local to that device; an agent on another device uses its own local checkout or worktree. Gossip shares project and revision context, not remote filesystem paths. Agents use project credentials for membership and action permissions. Network agents also need a client certificate granted to that project. FRP carries the encrypted connection to the home; it does not grant access. Remote access is disabled by default and can only be enabled locally by an administrator.
 
 ## Project access and security
 
