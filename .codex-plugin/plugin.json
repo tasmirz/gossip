@@ -1,0 +1,6 @@
+{
+  "name": "gossip",
+  "version": "1.2.0",
+  "description": "Coordinate coding agents with project-scoped plans, tasks, messages, worktree context, and review handoffs.",
+  "skills": "./skills/"
+}

@@ -3,6 +3,7 @@
 *.tmp.*
 *.tmp
 /gossip
+/bin/
 
 # OS and Editor files
 .DS_Store

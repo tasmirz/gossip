@@ -1,0 +1,19 @@
+{
+  "name": "gossip",
+  "version": "1.2.0",
+  "description": "Project-aware coordination for coding agents, with shared plans, task handoffs, project-scoped access, and review workflows.",
+  "author": {
+    "name": "tasmirz",
+    "url": "https://github.com/tasmirz"
+  },
+  "repository": "https://github.com/tasmirz/gossip",
+  "license": "AGPL-3.0",
+  "keywords": [
+    "coding-agents",
+    "multi-agent",
+    "mcp",
+    "coordination",
+    "project-access",
+    "git-worktrees"
+  ]
+}

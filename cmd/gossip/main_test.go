@@ -18,7 +18,13 @@ func TestMCPClientConfigsExposeCreateOnlyBootstrapByPrivateKeyPath(t *testing.T)
 		MCPServers map[string]server `json:"mcpServers"`
 		Servers    map[string]server `json:"servers"`
 	}
-	for _, name := range []string{"mcp.json", "mcp_config.json", "claude_desktop_config.json", filepath.Join(".cursor", "mcp.json"), filepath.Join(".vscode", "mcp.json")} {
+	for _, name := range []string{
+		filepath.Join("examples", "mcp-clients", "codex", "mcp.json"),
+		filepath.Join("examples", "mcp-clients", "gemini", "mcp_config.json"),
+		filepath.Join("examples", "mcp-clients", "claude-desktop", "claude_desktop_config.json"),
+		filepath.Join("examples", "mcp-clients", "cursor", "mcp.json"),
+		filepath.Join("examples", "mcp-clients", "vscode", "mcp.json"),
+	} {
 		t.Run(name, func(t *testing.T) {
 			data, err := os.ReadFile(filepath.Join("..", "..", name))
 			if err != nil {
