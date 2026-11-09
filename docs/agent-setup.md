@@ -16,6 +16,24 @@ Use this guide when you want an AI coding agent to connect a repository and coor
 6. Restart or refresh the MCP client, verify a project-scoped read, and tell you the project name, repository, and branch it connected.
 7. To add another agent, create a separate project credential and, for LAN/FRP, grant that machine's client certificate specifically to this project. Use a separate checkout or Git worktree for each worker.
 
+## Install manually
+
+Install the Go version required by [`go.mod`](../go.mod) or later from [go.dev/dl](https://go.dev/dl/). The user can install the CLI with the platform command below. This step does not create a project or alter MCP configuration.
+
+Linux/macOS:
+
+```sh
+GOBIN="$HOME/.local/bin" go install github.com/tasmirz/gossip/cmd/gossip@latest
+```
+
+Windows PowerShell:
+
+```powershell
+$env:GOBIN="$env:LOCALAPPDATA\Programs\gossip"; go install github.com/tasmirz/gossip/cmd/gossip@latest
+```
+
+Run `gossip coord-ui` (or `gossip.exe coord-ui`) and open `http://127.0.0.1:8081`. The user chooses **Create local project** and selects the checkout. The dashboard binds to loopback by default; remote access stays off until an administrator enables it locally.
+
 ## User choices and security
 
 - The owner chooses whether the orchestrator delegates work or lets agents work independently.

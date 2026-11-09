@@ -22,6 +22,30 @@ You do not need to hand-configure Gossip. Open this repository in your coding ag
 
 The agent instructions are in [`AGENTS.md`](AGENTS.md); the detailed setup and recovery guide is [`docs/agent-setup.md`](docs/agent-setup.md). The normal first step is connecting a local Git folder: Gossip infers its repository metadata and creates the project and initial workspace together. LAN and remote access are optional.
 
+### Prefer to install it yourself?
+
+Install the Go version required by Gossip’s [`go.mod`](go.mod) or later from [go.dev/dl](https://go.dev/dl/) first, then run the command for your system. This installs the Gossip CLI only; it does not connect a project, change editor settings, or enable remote access.
+
+**Linux**
+
+```sh
+GOBIN="$HOME/.local/bin" go install github.com/tasmirz/gossip/cmd/gossip@latest
+```
+
+**macOS**
+
+```sh
+GOBIN="$HOME/.local/bin" go install github.com/tasmirz/gossip/cmd/gossip@latest
+```
+
+**Windows PowerShell**
+
+```powershell
+$env:GOBIN="$env:LOCALAPPDATA\Programs\gossip"; go install github.com/tasmirz/gossip/cmd/gossip@latest
+```
+
+Start the local dashboard with `gossip coord-ui` (on Windows, run the installed `gossip.exe coord-ui`), open `http://127.0.0.1:8081`, and choose **Create local project** for your checkout. See the [full setup guide](docs/coordination-preview.md) for credential and MCP configuration.
+
 ## How Gossip works
 
 ```mermaid
