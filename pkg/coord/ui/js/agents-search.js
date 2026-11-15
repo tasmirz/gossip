@@ -44,14 +44,15 @@ function renderAgentTree(agents, matches, selected, list) {
     row.setAttribute('aria-level', String(parent ? Number(parent.dataset.level || 0) + 1 : 1));
     node.dataset.level = row.getAttribute('aria-level');
 
-    const avatar = createEl('span', 'agent-avatar', labelInitial(agent.name));
-    avatar.setAttribute('aria-hidden', 'true');
+    const pres = presenceFor(agent.id);
+    const dot = createEl('span', `presence-dot ${pres?.online ? 'online' : ''}`);
+    dot.setAttribute('aria-hidden', 'true');
     const summary = createEl('span', 'agent-roster-summary');
     summary.append(
       createEl('strong', '', agent.name),
-      createEl('span', 'muted small', (agent.project_role || agent.role) + ' · ' + (presenceFor(agent.id)?.online ? 'Online' : 'Offline'))
+      createEl('span', 'muted small', (agent.project_role || agent.role) + ' · ' + (pres?.online ? 'Online' : 'Offline'))
     );
-    row.append(avatar, summary);
+    row.append(dot, summary);
     row.onclick = () => selectAgent(agent);
     node.appendChild(row);
 
@@ -83,12 +84,11 @@ function renderAgentTree(agents, matches, selected, list) {
     return node;
   };
 
-  if (!matches.length) {
+  const visibleRoots = roots.filter(root => visibleIDs.has(root.id));
+  if (!matches.length || !visibleRoots.length) {
     list.appendChild(createEl('p', 'muted small', state.agentQuery ? 'No agents match this search.' : 'No project members yet.'));
   } else {
-    for (const root of roots) {
-      if (visibleIDs.has(root.id)) tree.appendChild(renderNode(root, null));
-    }
+    appendProgressiveItems(tree, visibleRoots, root => renderNode(root, null), { pageSize: 40, root: list });
     list.appendChild(tree);
   }
 }
@@ -105,7 +105,8 @@ function renderAgentsView() {
     .some(value => value?.toLowerCase().includes(query)));
   const selected = agents.find(agent => agent.id === state.profileAgent) || agents[0];
   layout.dataset.pane = state.agentPane || 'roster';
-  if ($('#agent-roster-count')) $('#agent-roster-count').textContent = matches.length;
+  const onlineMatches = matches.filter(agent => presenceFor(agent.id)?.online).length;
+  if ($('#agent-roster-count')) $('#agent-roster-count').textContent = `${onlineMatches}/${matches.length} online`;
   clearNode(list);
   clearNode(profile);
   if (!selected) {
@@ -272,9 +273,10 @@ function renderAgentsView() {
   if (showTasks) {
     const taskSection = createEl('section', 'agent-profile-section agent-profile-assigned');
     const taskHead = createEl('div', 'card-head');
+    const totalAssigned = state.agentTasksTotal || assignedTasks.length;
     taskHead.append(
       createEl('h3', '', 'Assigned project tasks'),
-      uiBadge(state.agentTasksLoading && state.agentTasksAgentID === selected.id ? '…' : String(assignedTasks.length), 'muted')
+      uiBadge(state.agentTasksLoading && state.agentTasksAgentID === selected.id ? '…' : String(totalAssigned), 'muted')
     );
     taskSection.appendChild(taskHead);
     if (state.agentTasksLoading && state.agentTasksAgentID === selected.id) {
@@ -285,8 +287,7 @@ function renderAgentsView() {
       taskSection.appendChild(createEl('p', 'muted small', 'No project tasks assigned.'));
     } else {
       const taskList = createEl('ul', 'agent-profile-checklist-items');
-      const visibleCount = activeTab === 'tasks' ? assignedTasks.length : 6;
-      for (const task of assignedTasks.slice(0, visibleCount)) {
+      const renderAssignedRow = task => {
         const row = createEl('li', 'agent-profile-task-row');
         const open = uiButton({
           label: task.title || task.id,
@@ -297,11 +298,31 @@ function renderAgentsView() {
         const taskStatus = task.status || 'ready';
         const taskStatusText = taskStatusLabels[taskStatus] || taskStatus.replaceAll('_', ' ');
         row.append(open, uiBadge(taskStatusText, ['done', 'accepted'].includes(taskStatus) ? 'ok' : 'muted'));
-        taskList.appendChild(row);
-      }
-      taskSection.appendChild(taskList);
-      if (assignedTasks.length > visibleCount) {
-        taskSection.appendChild(createEl('p', 'muted small', `${assignedTasks.length - visibleCount} more · open To-dos for the full list.`));
+        return row;
+      };
+      if (activeTab === 'tasks') {
+        appendProgressiveItems(taskList, assignedTasks, renderAssignedRow, {
+          pageSize: 25,
+          key: `agent-tasks:${selected.id}`,
+          hasMore: () => Boolean(state.agentTasksCursor),
+          loadMore: loadMoreAgentTasks
+        });
+        taskSection.appendChild(taskList);
+      } else {
+        for (const task of assignedTasks.slice(0, 6)) {
+          taskList.appendChild(renderAssignedRow(task));
+        }
+        taskSection.appendChild(taskList);
+        if (assignedTasks.length > 6 || state.agentTasksCursor) {
+          taskSection.appendChild(uiButton({
+            label: `Show all ${totalAssigned} in Tasks & to-dos`,
+            cls: 'btn btn-xs btn-ghost',
+            onClick: () => {
+              state.agentsTab = 'tasks';
+              renderAgentsView();
+            }
+          }));
+        }
       }
     }
     profile.appendChild(taskSection);
@@ -316,18 +337,26 @@ function renderAgentsView() {
       checklistSection.appendChild(createEl('p', 'muted small', 'No personal to-dos yet.'));
     } else {
       const items = createEl('ul', 'agent-profile-checklist-items');
-      const visibleChecklist = activeTab === 'tasks' ? checklistItems.length : 8;
-      for (const item of checklistItems.slice(0, visibleChecklist)) {
+      const renderChecklistItem = item => {
         const row = createEl('li', 'agent-profile-checklist-item');
         row.append(
           createEl('span', '', item.title || item.id),
           uiBadge(item.status === 'doing' ? 'Doing' : item.status === 'done' ? 'Done' : 'To do', item.status === 'done' ? 'ok' : 'muted')
         );
-        items.appendChild(row);
-      }
-      checklistSection.appendChild(items);
-      if (checklistItems.length > visibleChecklist) {
-        checklistSection.appendChild(createEl('p', 'muted small', `And ${checklistItems.length - visibleChecklist} more · open To-dos to see the full list.`));
+        return row;
+      };
+      if (activeTab === 'tasks') {
+        appendProgressiveItems(items, checklistItems, renderChecklistItem, {
+          pageSize: 25,
+          key: `agent-checklist:${selected.id}`
+        });
+        checklistSection.appendChild(items);
+      } else {
+        for (const item of checklistItems.slice(0, 8)) items.appendChild(renderChecklistItem(item));
+        checklistSection.appendChild(items);
+        if (checklistItems.length > 8) {
+          checklistSection.appendChild(createEl('p', 'muted small', `And ${checklistItems.length - 8} more · open Tasks & to-dos to see the full list.`));
+        }
       }
     }
     profile.appendChild(checklistSection);
@@ -360,13 +389,44 @@ function renderAgentsView() {
     idWrap.append(idCode, copyBtn);
     addDetail('Principal ID', idWrap);
     addDetail('Project role', uiBadge(selected.project_role || selected.role || 'worker', 'muted'));
-    if (presence?.reported_capabilities?.length) {
+    const toolStats = presence?.tool_stats || { total_calls: 0, error_calls: 0 };
+    const totalCalls = Number(toolStats.total_calls || 0);
+    const errorCalls = Number(toolStats.error_calls || 0);
+    const callParts = [`${totalCalls.toLocaleString()} ${totalCalls === 1 ? 'call' : 'calls'}`];
+    if (errorCalls > 0) callParts.push(`${errorCalls.toLocaleString()} ${errorCalls === 1 ? 'error' : 'errors'}`);
+    if (toolStats.last_tool_name) callParts.push(`last: ${toolStats.last_tool_name}`);
+    addDetail('Total tool calls', createEl('span', '', callParts.join(' · ')));
+    if (toolStats.tools && Object.keys(toolStats.tools).length) {
+      const topTools = Object.entries(toolStats.tools)
+        .sort((a, b) => Number(b[1]) - Number(a[1]) || a[0].localeCompare(b[0]))
+        .slice(0, 6);
+      const toolsWrap = createEl('div', 'btn-row');
+      for (const [toolName, count] of topTools) {
+        toolsWrap.appendChild(uiBadge(`${toolName}: ${Number(count).toLocaleString()}`, 'muted'));
+      }
+      addDetail('Tools called', toolsWrap);
+    }
+    const repUsage = presence?.reported_usage;
+    if (repUsage?.records) {
+      const usageParts = [
+        `${Number(repUsage.total_tokens || 0).toLocaleString()} tokens (${Number(repUsage.input_tokens || 0).toLocaleString()} in / ${Number(repUsage.output_tokens || 0).toLocaleString()} out)`
+      ];
+      if (Array.isArray(repUsage.costs) && repUsage.costs.length) {
+        usageParts.push(repUsage.costs.map(c => `${(Number(c.cost_micros || 0) / 1e6).toFixed(4)} ${c.currency}`).join(', '));
+      }
+      addDetail('Reported usage', createEl('span', '', usageParts.join(' · ')));
+    } else {
+      addDetail('Reported usage', createEl('span', 'muted', '0 reported tokens'));
+    }
+    if (presence?.capabilities?.length) {
       const capsWrap = createEl('div', 'btn-row');
-      for (const cap of presence.reported_capabilities) capsWrap.appendChild(uiBadge(cap, 'muted'));
+      for (const cap of presence.capabilities) {
+        capsWrap.appendChild(uiBadge(typeof cap === 'string' ? cap : cap.name, 'muted'));
+      }
       addDetail('Capabilities', capsWrap);
     }
-    if (presence?.client_name) {
-      addDetail('Client', createEl('span', '', `${presence.client_name} ${presence.client_version || ''}`.trim()));
+    if (presence?.mcp_client_name) {
+      addDetail('Client', createEl('span', '', `${presence.mcp_client_name} ${presence.mcp_client_version || ''}`.trim()));
     }
     details.appendChild(grid);
     appendAgentUsageDetails(details, presence);
@@ -417,19 +477,20 @@ function renderSearchView() {
     gText.textContent = g?.reason || (g?.source_path ? `Loaded ${g.node_count || 0} nodes, ${g.edge_count || 0} edges from ${g.source_path}` : 'No Graphify index detected.');
   }
   if (gList) {
-    clearNode(gList);
     const nodes = g?.matched_nodes || [];
-    if (!nodes.length) {
-      if (g?.status !== 'unavailable' && state.searchQuery) gList.appendChild(createEl('p', 'muted small', 'No matching Graphify nodes.'));
-    } else {
-      for (const n of nodes) {
+    renderList(
+      gList,
+      nodes,
+      (g?.status !== 'unavailable' && state.searchQuery) ? 'No matching Graphify nodes.' : '',
+      n => {
         const row = createEl('div', 'list-item');
         row.appendChild(createEl('div', 'list-item-title', `${n.label || n.id} (${n.type || 'node'})`));
         if (n.source_path) row.appendChild(createEl('div', 'muted small', n.source_path));
         if (n.summary) row.appendChild(createEl('p', 'small', n.summary));
-        gList.appendChild(row);
-      }
-    }
+        return row;
+      },
+      { pageSize: 25 }
+    );
   }
 
   const res = state.searchResults || { tasks: [], plans: [], messages: [], events: [] };
@@ -438,8 +499,7 @@ function renderSearchView() {
     if ($(countId)) $(countId).textContent = String(items.length);
     if (!wrap) return;
     wrap.closest('section').hidden = !items.length;
-    clearNode(wrap);
-    for (const item of items) wrap.appendChild(renderItem(item));
+    renderList(wrap, items, '', renderItem, { pageSize: 25 });
   };
 
   fill('#search-context-list', '#search-context-count', res.context || [], record => {

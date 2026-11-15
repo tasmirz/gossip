@@ -97,17 +97,7 @@ function renderPersonalChecklists(current, scope) {
   clearNode(checklist);
   const board = state.todoLayout === 'kanban';
   checklist.classList.toggle('todo-board', board);
-  const lanes = new Map();
-  if (board) {
-    for (const [key, name] of [['todo', 'To do'], ['doing', 'Doing'], ['done', 'Done']]) {
-      const lane = createEl('section', 'todo-lane');
-      lane.appendChild(createEl('h4', '', name));
-      checklist.appendChild(lane);
-      lanes.set(key, lane);
-    }
-  }
-  if (!items.length && !board) checklist.appendChild(createEl('p', 'muted', 'No personal to-dos yet.'));
-  for (const item of items) {
+  const renderChecklistRow = item => {
     const row = createEl('div', 'list-item');
     const title = createEl('div', 'task-checklist-title');
     const editable = item.agent_id === current && item.source === 'coordinator';
@@ -170,17 +160,42 @@ function renderPersonalChecklists(current, scope) {
     }
     row.appendChild(head);
     if (item.notes) row.appendChild(createEl('p', 'muted small', item.notes));
-    (lanes.get(item.status) || lanes.get('todo') || checklist).appendChild(row);
-  }
+    return row;
+  };
   if (board) {
-    for (const lane of lanes.values()) {
-      if (!lane.querySelector('.list-item')) lane.appendChild(createEl('p', 'kanban-empty muted small', 'No items'));
+    const laneGroups = { todo: [], doing: [], done: [] };
+    for (const item of items) {
+      (laneGroups[item.status] || laneGroups.todo).push(item);
     }
+    for (const [key, name] of [['todo', 'To do'], ['doing', 'Doing'], ['done', 'Done']]) {
+      const lane = createEl('section', 'todo-lane');
+      lane.appendChild(createEl('h4', '', name));
+      checklist.appendChild(lane);
+      const laneItems = laneGroups[key];
+      if (!laneItems.length) lane.appendChild(createEl('p', 'kanban-empty muted small', 'No items'));
+      else appendProgressiveItems(lane, laneItems, renderChecklistRow, { pageSize: 25, key: `personal-kanban:${selected}:${key}` });
+    }
+  } else if (!items.length) {
+    checklist.appendChild(createEl('p', 'muted', 'No personal to-dos yet.'));
+  } else {
+    appendProgressiveItems(checklist, items, renderChecklistRow, { pageSize: 25, key: `personal-list:${selected}` });
   }
 }
 
+function selectedTodoThread() {
+  return state.todoPlanID ? state.planThreads.find(item => item.id === state.todoPlanID) || null : null;
+}
+
+function todoRevisionDefault() {
+  const thread = selectedTodoThread();
+  if (!thread) return 0;
+  return thread.latest_revision || state.planHistory.find(item => item.plan_id === thread.id)?.revision || 0;
+}
+
 function renderTodosView() {
-  const filterCount = Object.values(state.taskFilters).filter(Boolean).length + Number(Boolean(state.todoRevision));
+  const defaultRev = todoRevisionDefault();
+  const hasRevisionFilter = Boolean(state.todoRevision && state.todoRevision !== defaultRev);
+  const filterCount = Object.values(state.taskFilters).filter(Boolean).length + Number(hasRevisionFilter);
   if ($('#todo-filter-count')) {
     $('#todo-filter-count').hidden = !filterCount;
     $('#todo-filter-count').textContent = String(filterCount);
@@ -198,49 +213,81 @@ function renderTodosView() {
 
   const current = state.project?.id || '';
   const scope = state.todoScope;
-  const goalTab = scope === 'project' ? (state.todoGoalTab || 'all') : 'all';
   if ($('#todo-scope')) $('#todo-scope').value = scope;
   $$('#todo-scope-tabs .subtab').forEach(btn => {
-    const btnScope = btn.dataset.todoScope || 'project';
-    const btnGoal = btn.dataset.todoGoal || 'all';
-    const selected = btnScope === scope && (scope !== 'project' || btnGoal === goalTab);
+    const selected = (btn.dataset.todoScope || 'project') === scope;
     btn.classList.toggle('subtab-active', selected);
     btn.setAttribute('aria-selected', String(selected));
   });
-  const visibleTasks = state.tasks.filter(task => {
-    const rev = Number(task.plan_revision || 0);
-    if (goalTab === 'plan') return rev > 0;
-    if (goalTab === 'global') return rev === 0;
-    return true;
-  });
+
+  const planItems = [
+    { id: '', title: 'Project', revision: 0, status: '' },
+    ...state.planThreads.map(item => ({
+      id: item.id,
+      title: item.title,
+      revision: item.latest_revision || state.planHistory.find(p => p.plan_id === item.id)?.revision || 0,
+      status: item.status
+    }))
+  ];
+  const planLinks = $('#todo-plan-links');
+  const planSelect = $('#todo-plan-select');
+  if (planLinks) {
+    clearNode(planLinks);
+    for (const item of planItems) {
+      const btn = createEl('button', 'btn btn-secondary todo-plan-item');
+      btn.type = 'button';
+      btn.setAttribute('aria-pressed', String(item.id === state.todoPlanID));
+      btn.appendChild(createEl('span', 'plan-thread-label', item.title));
+      if (item.status === 'done') btn.appendChild(uiBadge('Done', '', 'plan-thread-status plan-status-done'));
+      btn.addEventListener('click', () => {
+        if (state.todoPlanID === item.id && state.todoRevision === item.revision) return;
+        state.todoPlanID = item.id;
+        state.todoRevision = item.revision;
+        state.todoGoalTab = 'all';
+        syncUrlState();
+        state.generation += 1;
+        loadTaskSearchOnly(state.generation, false)
+          .then(() => { if (state.view === 'todos') renderTodosView(); })
+          .catch(err => showError(err.message));
+      });
+      planLinks.appendChild(btn);
+    }
+  }
+  if (planSelect) {
+    planSelect.replaceChildren(...planItems.map(item => new Option(item.title, item.id)));
+    planSelect.value = state.todoPlanID || '';
+  }
+
+  const visibleTasks = state.tasks;
   const revision = $('#filter-revision');
   if (revision) {
+    const revHistory = state.todoPlanID
+      ? state.planHistory.filter(plan => plan.plan_id === state.todoPlanID)
+      : state.planHistory;
     revision.replaceChildren(
-      new Option('All plan revisions', ''),
-      ...state.planHistory.map(plan => new Option(`${plan.plan_title || 'Plan'} · ${planVersionLabel(plan)}`, plan.revision))
+      ...(state.todoPlanID ? [] : [new Option('All revisions', '')]),
+      ...revHistory.map(plan => new Option(state.todoPlanID ? planVersionLabel(plan) : `${plan.plan_title || 'Plan'} · ${planVersionLabel(plan)}`, plan.revision))
     );
-    if (state.todoRevision && !state.planHistory.some(plan => plan.revision === state.todoRevision)) {
+    if (state.todoRevision && !revHistory.some(plan => plan.revision === state.todoRevision)) {
       revision.append(new Option('Selected plan revision', state.todoRevision));
     }
-    revision.value = state.todoRevision || '';
+    revision.value = state.todoRevision ? String(state.todoRevision) : '';
+    revision.hidden = Boolean(state.todoPlanID && revHistory.length <= 1);
   }
   if ($('#open-task-dialog-btn')) $('#open-task-dialog-btn').hidden = !canDelegateTask();
   if ($('#todo-agent-field')) $('#todo-agent-field').hidden = scope !== 'agent';
   if ($('#filter-assignee')) $('#filter-assignee').hidden = scope !== 'project';
   if ($('#personal-todos-section')) $('#personal-todos-section').hidden = scope === 'project';
   if ($('#shared-todos-title')) {
-    const scopeTitle = scope === 'mine' ? 'My work' : scope === 'agent' ? 'Assigned tasks' : 'Project tasks';
-    $('#shared-todos-title').textContent = goalTab === 'global'
-      ? 'Global goals'
-      : goalTab === 'plan'
-        ? 'Plan goals'
-        : scopeTitle;
+    const thread = selectedTodoThread();
+    const baseTitle = scope === 'mine' ? 'My work' : scope === 'agent' ? 'Assigned tasks' : 'Project tasks';
+    $('#shared-todos-title').textContent = thread ? `${baseTitle} · ${thread.title}` : baseTitle;
   }
   if ($('#quick-task-disclosure')) $('#quick-task-disclosure').hidden = scope !== 'project' || !canDelegateTask();
 
   const projWrap = $('#project-todos-list');
   if ($('#project-todos-count')) {
-    $('#project-todos-count').textContent = goalTab === 'all' ? String(state.taskTotal || visibleTasks.length) : String(visibleTasks.length);
+    $('#project-todos-count').textContent = String(state.taskTotal || visibleTasks.length);
   }
   if (projWrap) {
     clearNode(projWrap);
@@ -268,7 +315,10 @@ function renderTodosView() {
         const lane = createEl('section', 'todo-lane');
         lane.appendChild(createEl('h4', '', label + ' · ' + tasks.length));
         if (!tasks.length) lane.appendChild(createEl('p', 'kanban-empty muted small', 'No tasks'));
-        for (const task of tasks) lane.appendChild(buildTaskCard(task));
+        else appendProgressiveItems(lane, tasks, buildTaskCard, {
+          pageSize: 25,
+          key: `todos-lane:${label}:${scope}:${state.todoPlanID}:${state.todoRevision}`
+        });
         projWrap.appendChild(lane);
       }
     } else {
@@ -280,12 +330,12 @@ function renderTodosView() {
         if (!planGroups.has(planID)) planGroups.set(planID, { plan, rev, tasks: [] });
         planGroups.get(planID).tasks.push(task);
       }
-      if (scope === 'project' && (goalTab === 'all' || goalTab === 'global') && !planGroups.has('global-goals')) {
+      if (scope === 'project' && !state.todoPlanID && !state.todoRevision && !planGroups.has('global-goals')) {
         planGroups.set('global-goals', { plan: null, rev: 0, tasks: [] });
       }
       if (!planGroups.size) {
-        const emptyMsg = goalTab === 'plan'
-          ? 'No plan-based tasks match the current filter.'
+        const emptyMsg = state.todoPlanID
+          ? 'No tasks for this plan match the current filter.'
           : 'No project to-dos match the current filter.';
         projWrap.appendChild(createEl('p', 'muted small', emptyMsg));
       }
@@ -309,7 +359,10 @@ function renderTodosView() {
         if (!tasks.length) {
           list.appendChild(createEl('p', 'muted small todo-group-empty', 'No global project goals yet. Create one with New task → Global goal.'));
         } else {
-          for (const task of tasks) list.appendChild(buildTaskCard(task));
+          appendProgressiveItems(list, tasks, buildTaskCard, {
+            pageSize: 30,
+            key: `todos-plan:${planID}:${scope}:${state.todoRevision}`
+          });
         }
         group.appendChild(list);
         projWrap.appendChild(group);
@@ -318,8 +371,45 @@ function renderTodosView() {
   }
 
   const loadMore = $('#todos-load-more-btn');
-  if (loadMore) loadMore.hidden = !state.taskCursor;
+  if (loadMore) {
+    loadMore.hidden = !state.taskCursor;
+    loadMore.disabled = Boolean(state.tasksLoadingMore);
+    loadMore.textContent = state.tasksLoadingMore ? 'Loading more tasks…' : 'Load more tasks';
+    if (state.taskCursor) {
+      observeAutoLoad(loadMore, loadMoreTodoTasks, { rootMargin: '260px 0px', owner: projWrap || loadMore });
+    } else {
+      disconnectAutoPaginator(loadMore);
+    }
+  }
   renderPersonalChecklists(current, scope);
+}
+
+async function loadMoreTodoTasks() {
+  if (!state.taskCursor || state.tasksLoadingMore || !state.project) return false;
+  const gen = state.generation;
+  state.tasksLoadingMore = true;
+  const loadMore = $('#todos-load-more-btn');
+  if (loadMore) {
+    loadMore.disabled = true;
+    loadMore.textContent = 'Loading more tasks…';
+  }
+  try {
+    await loadTaskSearchOnly(gen, true);
+    if (gen !== state.generation) return false;
+    state.tasksLoadingMore = false;
+    if (state.view === 'todos') renderTodosView();
+    return Boolean(state.taskCursor);
+  } catch (err) {
+    state.tasksLoadingMore = false;
+    if (gen === state.generation) {
+      if (loadMore) {
+        loadMore.disabled = false;
+        loadMore.textContent = 'Load more tasks';
+      }
+      showError(err.message);
+    }
+    return false;
+  }
 }
 
 async function appendReportForm(parent, task, generation) {
@@ -518,7 +608,8 @@ function wireTodoEvents() {
   $('#open-task-dialog-btn')?.addEventListener('click', () => {
     $('#task-form')?.reset();
     if ($('#task-plan-scope')) {
-      $('#task-plan-scope').value = state.todoGoalTab === 'global' || !state.plan?.revision ? 'global' : 'plan';
+      const targetRev = state.todoRevision || state.plan?.revision || 0;
+      $('#task-plan-scope').value = (state.todoPlanID || state.todoRevision) ? 'plan' : (targetRev ? 'plan' : 'global');
     }
     openDialog('task-dialog');
   });
@@ -530,7 +621,8 @@ function wireTodoEvents() {
     $('#task-title').value = title;
     $('#task-kind').value = $('#quick-task-kind').value;
     if ($('#task-plan-scope')) {
-      $('#task-plan-scope').value = state.todoGoalTab === 'global' || !state.plan?.revision ? 'global' : 'plan';
+      const targetRev = state.todoRevision || state.plan?.revision || 0;
+      $('#task-plan-scope').value = (state.todoPlanID || state.todoRevision) ? 'plan' : (targetRev ? 'plan' : 'global');
     }
     openDialog('task-dialog');
     $('#task-description').focus();
@@ -554,7 +646,7 @@ function wireTodoEvents() {
           title: $('#task-title')?.value?.trim() || '',
           kind: $('#task-kind').value,
           description: $('#task-description')?.value || '',
-          revision: goalScope === 'global' ? 0 : (state.plan?.revision || 0),
+          revision: goalScope === 'global' ? 0 : (state.todoRevision || state.plan?.revision || 0),
           dependencies: deps,
           contract: {
             review_type: reviewType,
@@ -604,11 +696,19 @@ function wireTodoEvents() {
     applyTodoFilterChange();
   });
   $('#filter-reset-btn')?.addEventListener('click', () => {
-    state.todoRevision = 0;
+    state.todoRevision = todoRevisionDefault();
     if ($('#filter-status')) $('#filter-status').value = '';
     if ($('#filter-kind')) $('#filter-kind').value = '';
     if ($('#filter-assignee')) $('#filter-assignee').value = '';
     if ($('#filter-query')) $('#filter-query').value = '';
+    applyTodoFilterChange();
+  });
+  $('#todo-plan-select')?.addEventListener('change', e => {
+    const planID = e.target.value || '';
+    const thread = state.planThreads.find(item => item.id === planID);
+    state.todoPlanID = planID;
+    state.todoRevision = thread ? (thread.latest_revision || state.planHistory.find(p => p.plan_id === planID)?.revision || 0) : 0;
+    state.todoGoalTab = 'all';
     applyTodoFilterChange();
   });
 
@@ -690,10 +790,7 @@ function wireTodoEvents() {
       button.disabled = false;
     }
   });
-  $('#todos-load-more-btn')?.addEventListener('click', async () => {
-    if (!state.taskCursor) return;
-    state.generation += 1;
-    await loadTasksRouteData(state.generation, true);
-    render();
+  $('#todos-load-more-btn')?.addEventListener('click', () => {
+    void loadMoreTodoTasks();
   });
 }

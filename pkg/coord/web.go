@@ -1824,10 +1824,32 @@ func (h *WebHandler) project(w http.ResponseWriter, r *http.Request) {
 			}
 
 		case "events":
+			limit := 100
+			if raw := r.URL.Query().Get("limit"); raw != "" {
+				if parsed, e := strconv.Atoi(raw); e != nil {
+					err = errors.New("invalid event limit")
+					break
+				} else {
+					limit = parsed
+				}
+			}
+			if beforeRaw := r.URL.Query().Get("before"); beforeRaw != "" {
+				before, parseErr := strconv.ParseInt(beforeRaw, 10, 64)
+				if parseErr != nil {
+					err = errors.New("invalid event cursor")
+					break
+				}
+				if eventBeforeBackend, ok := backend.(interface {
+					RecentEventsBefore(context.Context, string, string, int64, int) ([]Event, error)
+				}); ok {
+					v, err = eventBeforeBackend.RecentEventsBefore(ctx, project, token, before, limit)
+					break
+				}
+			}
 			if r.URL.Query().Get("recent") == "1" {
-				v, err = backend.RecentEvents(ctx, project, token, 100)
+				v, err = backend.RecentEvents(ctx, project, token, limit)
 			} else {
-				v, err = backend.ReadEvents(ctx, project, token, after, 100)
+				v, err = backend.ReadEvents(ctx, project, token, after, limit)
 			}
 		case "retention":
 			v, err = backend.EventRetentionStatus(ctx, project, token)

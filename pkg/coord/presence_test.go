@@ -9,6 +9,7 @@ import (
 
 	"github.com/mark3labs/mcp-go/client"
 	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/mark3labs/mcp-go/server"
 	"github.com/tasmirz/gossip/pkg/coord"
 )
 
@@ -188,5 +189,71 @@ func TestMCPAdapterHeartbeatEndsOnClose(t *testing.T) {
 		if item.PrincipalID == worker.PrincipalID && item.Online {
 			t.Fatalf("closed adapter still appears online: %+v", item)
 		}
+	}
+}
+
+func TestAgentPresenceTracksToolCallStatsAndReportedUsage(t *testing.T) {
+	store, _, project, owner, worker := setup(t)
+	ctx := context.Background()
+
+	// Both direct MCPServer and RegistryMCPServer must record durable per-principal tool calls.
+	workerSrv := coord.MCPServer(store, project.ID, worker.Token)
+	callReq := mcp.CallToolRequest{}
+	callReq.Params.Name = "gossip_join"
+	callReq.Params.Arguments = map[string]any{}
+	res, err := workerSrv.ListTools()["gossip_join"].Handler(ctx, callReq)
+	if err != nil || res == nil || res.IsError {
+		t.Fatalf("direct MCP call failed: res=%+v err=%v", res, err)
+	}
+
+	regSrv := coord.RegistryMCPServer("default", func(context.Context) (any, error) {
+		return []any{}, nil
+	}, func(_ context.Context, _ string, _ string, _ string) (*server.MCPServer, error) {
+		return workerSrv, nil
+	})
+	errReq := mcp.CallToolRequest{}
+	errReq.Params.Name = "gossip_read"
+	errReq.Params.Arguments = map[string]any{"operation": "invalid_op", "project": project.ID}
+	errRes, err := regSrv.ListTools()["gossip_read"].Handler(ctx, errReq)
+	if err != nil || errRes == nil || !errRes.IsError {
+		t.Fatalf("expected error tool result from invalid operation: res=%+v err=%v", errRes, err)
+	}
+
+	task := create(t, store, project, owner, nil)
+	claim, err := store.ClaimTask(ctx, project.ID, worker.Token, task.ID, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = store.RecordAttemptUsage(ctx, project.ID, worker.Token, task.ID, claim.Attempt, "usage-req-1", coord.UsageReport{
+		Provider: "anthropic", Model: "claude", Source: "provider_reported", InputTokens: 1200, OutputTokens: 300, CostMicros: 5000, Currency: "USD",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err = store.RecordToolCall(ctx, project.ID, "invalid-token", "gossip_join", false); !errors.Is(err, coord.ErrUnauthorized) {
+		t.Fatalf("unauthorized RecordToolCall must fail: %v", err)
+	}
+
+	presence, err := store.ListAgentPresence(ctx, project.ID, owner.Token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byID := map[string]coord.AgentPresence{}
+	for _, item := range presence {
+		byID[item.PrincipalID] = item
+	}
+	workerPresence := byID[worker.PrincipalID]
+	if workerPresence.ToolStats.TotalCalls != 2 || workerPresence.ToolStats.ErrorCalls != 1 {
+		t.Fatalf("unexpected worker tool stats: %+v", workerPresence.ToolStats)
+	}
+	if workerPresence.ToolStats.Tools["gossip_join"] != 1 || workerPresence.ToolStats.Tools["gossip_read"] != 1 {
+		t.Fatalf("unexpected worker per-tool breakdown: %+v", workerPresence.ToolStats.Tools)
+	}
+	if workerPresence.ReportedUsage == nil || workerPresence.ReportedUsage.TotalTokens != 1500 || workerPresence.ReportedUsage.Records != 1 {
+		t.Fatalf("unexpected worker reported usage: %+v", workerPresence.ReportedUsage)
+	}
+	ownerPresence := byID[owner.PrincipalID]
+	if ownerPresence.ToolStats.TotalCalls != 0 || ownerPresence.ReportedUsage != nil {
+		t.Fatalf("owner stats should remain zero without owner tool calls/usage: %+v", ownerPresence)
 	}
 }

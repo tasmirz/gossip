@@ -29,6 +29,17 @@ type AgentPresence struct {
 	Capabilities     []AgentCapability `json:"capabilities,omitempty"`
 	MCPClientName    string            `json:"mcp_client_name,omitempty"`
 	MCPClientVersion string            `json:"mcp_client_version,omitempty"`
+	ToolStats        AgentToolStats    `json:"tool_stats"`
+	ReportedUsage    *UsageSummary     `json:"reported_usage,omitempty"`
+}
+
+// AgentToolStats summarizes recorded MCP tool invocations attributed to a principal.
+type AgentToolStats struct {
+	TotalCalls   int64            `json:"total_calls"`
+	ErrorCalls   int64            `json:"error_calls"`
+	LastToolName string           `json:"last_tool_name,omitempty"`
+	LastCalledAt int64            `json:"last_called_at,omitempty"`
+	Tools        map[string]int64 `json:"tools,omitempty"`
 }
 
 // MCPClientInfo is client-provided descriptive metadata, never an identity or capability proof.
@@ -281,6 +292,70 @@ func (s *Store) EndAgentSession(ctx context.Context, project, token, instanceID 
 	return tx.Commit()
 }
 
+// RecordToolCall increments durable per-principal MCP tool call counters for the authenticated actor.
+func (s *Store) RecordToolCall(ctx context.Context, project, token, toolName string, isError bool) error {
+	toolName = strings.TrimSpace(toolName)
+	if toolName == "" || len(toolName) > 128 {
+		return errors.New("invalid MCP tool name")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	actor, err := authenticate(ctx, tx, project, token, "owner", "worker", "reviewer")
+	if err != nil {
+		return err
+	}
+	errDelta := int64(0)
+	if isError {
+		errDelta = 1
+	}
+	now := time.Now().UnixMilli()
+	if _, err = tx.ExecContext(ctx, `INSERT INTO principal_tool_calls(project_id,principal_id,tool_name,total_calls,error_calls,last_called_at)
+		VALUES(?,?,?,1,?,?)
+		ON CONFLICT(project_id,principal_id,tool_name) DO UPDATE SET
+			total_calls=principal_tool_calls.total_calls+1,
+			error_calls=principal_tool_calls.error_calls+excluded.error_calls,
+			last_called_at=MAX(principal_tool_calls.last_called_at,excluded.last_called_at)`,
+		project, actor.ID, toolName, errDelta, now); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func readPrincipalToolStats(ctx context.Context, tx *sql.Tx, project string) (map[string]AgentToolStats, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT principal_id,tool_name,total_calls,error_calls,last_called_at FROM principal_tool_calls WHERE project_id=? ORDER BY principal_id,tool_name`, project)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]AgentToolStats{}
+	for rows.Next() {
+		var principalID, toolName string
+		var totalCalls, errorCalls, lastCalledAt int64
+		if err = rows.Scan(&principalID, &toolName, &totalCalls, &errorCalls, &lastCalledAt); err != nil {
+			return nil, err
+		}
+		stats := out[principalID]
+		if stats.Tools == nil {
+			stats.Tools = map[string]int64{}
+		}
+		stats.TotalCalls += totalCalls
+		stats.ErrorCalls += errorCalls
+		stats.Tools[toolName] = totalCalls
+		if lastCalledAt > stats.LastCalledAt {
+			stats.LastCalledAt = lastCalledAt
+			stats.LastToolName = toolName
+		}
+		out[principalID] = stats
+	}
+	if err = rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // ListAgentPresence returns current project members with their freshest adapter session.
 // An agent is considered online if an authenticated adapter session submitted a heartbeat
 // within the last 45 seconds (agentPresenceTTL).
@@ -350,8 +425,21 @@ func (s *Store) ListAgentPresence(ctx context.Context, project, token string) ([
 			return nil, queryErr
 		}
 	}
-	if err = rows.Err(); err != nil {
+	toolStatsByPrincipal, err := readPrincipalToolStats(ctx, tx, project)
+	if err != nil {
 		return nil, err
+	}
+	usageByPrincipal, err := readPrincipalReportedUsage(ctx, tx, project)
+	if err != nil {
+		return nil, err
+	}
+	for i := range out {
+		if stats, ok := toolStatsByPrincipal[out[i].PrincipalID]; ok {
+			out[i].ToolStats = stats
+		}
+		if usage := usageByPrincipal[out[i].PrincipalID]; usage != nil {
+			out[i].ReportedUsage = usage
+		}
 	}
 	return out, nil
 }

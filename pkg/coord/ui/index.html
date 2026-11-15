@@ -10,6 +10,7 @@
   <link rel="stylesheet" href="/css/views.css">
   <link rel="stylesheet" href="/css/responsive.css">
   <script src="/app.js" defer></script>
+  <script src="/js/select.js" defer></script>
   <script src="/js/projects.js" defer></script>
   <script src="/js/chat.js" defer></script>
   <script src="/js/plans.js" defer></script>
@@ -255,21 +256,22 @@
 
         <!-- VIEW: CHAT -->
         <section id="view-chat" class="route-view" hidden>
-          <div id="chat-layout" class="chat-shell" data-mobile-pane="thread">
-            <aside id="chat-channels-pane" class="chat-sidebar card" aria-label="Conversations">
-              <div class="chat-sidebar-head">
-                <h3>Conversations</h3>
-                <span id="chat-agent-count" class="badge badge-muted">0 online</span>
-              </div>
+          <div class="view-header">
+            <div id="chat-view-tabs" class="subtabs" role="tablist" aria-label="Chat categories">
+              <button id="chat-tab-channels" class="subtab subtab-active" type="button" role="tab" data-chat-tab="channels" aria-selected="true"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-chat"></use></svg><span>Channels</span><span class="unread-indicator" hidden><span class="visually-hidden">Unread messages</span></span></button>
+              <button id="chat-tab-dms" class="subtab" type="button" role="tab" data-chat-tab="dms" aria-selected="false"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-agents"></use></svg><span>Direct messages</span><span class="unread-indicator" hidden><span class="visually-hidden">Unread messages</span></span></button>
+              <button id="chat-tab-agent-dms" class="subtab" type="button" role="tab" data-chat-tab="agent-dms" aria-selected="false" hidden><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-lock"></use></svg><span>Agent chats</span></button>
+            </div>
+            <div class="btn-row">
+              <span id="chat-agent-count" class="badge badge-muted">0 online</span>
+              <button id="open-channel-dialog-btn" class="btn btn-primary icon-only-control" type="button" aria-label="New group chat" title="New group chat"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-add"></use></svg><span>New group</span></button>
+            </div>
+          </div>
+
+          <div id="chat-layout" class="chat-layout" data-mobile-pane="thread">
+            <nav id="chat-channels-pane" class="chat-nav" aria-label="Conversations">
               <div id="chat-channels" class="chat-channel-list"></div>
-              <div id="agent-dm-inspect-bar" class="agent-dm-inspect-bar" hidden>
-                <div class="channel-section-head">
-                  <span class="channel-section-label">Agent chats</span>
-                  <button id="inspect-agent-dms" class="btn btn-xs icon-btn btn-secondary" type="button" aria-label="Browse all agent conversations" title="Browse all agent conversations"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-history"></use></svg><span>View all</span></button>
-                </div>
-                <div id="agent-dm-quick-list" class="chat-channel-list"></div>
-              </div>
-            </aside>
+            </nav>
 
             <section id="chat-thread-pane" class="chat-main card" aria-label="Message timeline">
               <header class="chat-thread-head">
@@ -326,36 +328,43 @@
             </div>
           </div>
 
-          <div id="plan-reader-layout" class="plans-grid" data-pane="list">
-            <aside id="plan-thread-list" class="card plan-thread-list" aria-label="Independent plans"></aside>
-            <article class="card plan-reader-card">
-              <div class="card-head">
-                <div>
-                  <button id="plan-reader-back" class="btn btn-sm btn-ghost plan-reader-back" type="button" aria-label="Back to plans" title="Back to plans"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-back"></use></svg><span>Back to plans</span></button>
-                  <h3 id="plan-active-heading">Plan</h3>
+          <div id="plan-reader-layout" class="plans-grid">
+            <nav id="plan-thread-list" class="access-section-links plan-thread-list" aria-label="Plans"></nav>
+            <label class="plan-thread-select-wrap">
+              <span class="visually-hidden">Select plan</span>
+              <select id="plan-thread-select" class="input" aria-label="Select plan"></select>
+            </label>
+            <article id="plan-reader-card" class="card plan-reader-card">
+              <header class="plan-reader-header">
+                <div class="plan-reader-title-block">
+                  <div class="plan-reader-title-row">
+                    <h3 id="plan-active-heading">Plan</h3>
+                    <span id="plan-status-badge" class="badge" hidden></span>
+                  </div>
                   <div id="plan-meta-line" class="muted small"></div>
                 </div>
-              </div>
-              <div class="plan-action-bar">
-                <div class="plan-action-meta">
-                  <label id="plan-version-control" class="plan-select-control" for="plan-version-select">
-                    <span class="visually-hidden">Version</span><select id="plan-version-select" class="input select-compact" aria-label="Revision in selected plan"></select>
-                  </label>
-                  <span id="plan-status-badge" class="badge" hidden></span>
-                  <select id="plan-compare-select" class="input select-compact" aria-label="Compare against revision" hidden></select>
-                  <button id="plan-ack-btn" class="btn btn-sm btn-secondary" type="button" hidden>Acknowledge</button>
-                </div>
-                <div id="plan-action-icons" class="icon-bar" role="toolbar" aria-label="Plan actions">
-                  <div id="plan-related-actions" class="icon-bar-group" hidden>
-                    <button id="plan-open-tasks" class="btn btn-sm icon-btn btn-ghost" type="button" aria-label="View revision tasks" title="View revision tasks"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-todos"></use></svg><span>View revision tasks</span></button>
-                    <button id="plan-open-walkthrough" class="btn btn-sm icon-btn btn-ghost" type="button" aria-label="Walkthrough" title="Walkthrough"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-plans"></use></svg><span>Walkthrough</span></button>
+                <div class="plan-action-bar">
+                  <div class="plan-action-meta">
+                    <label id="plan-version-control" class="plan-select-control" for="plan-version-select">
+                      <span class="visually-hidden">Version</span><select id="plan-version-select" class="input select-compact" aria-label="Revision in selected plan"></select>
+                    </label>
+                    <select id="plan-compare-select" class="input select-compact" aria-label="Compare against revision" hidden></select>
+                    <button id="plan-ack-btn" class="btn btn-sm btn-secondary" type="button" hidden>Acknowledge</button>
                   </div>
-                  <div id="plan-reader-actions" class="icon-bar-group" hidden>
-                    <button id="plan-complete-btn" class="btn btn-sm icon-btn btn-ghost" type="button" aria-label="Mark plan done" title="Mark plan done" hidden><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-check"></use></svg><span>Mark plan done</span></button>
-                    <button id="plan-delete-btn" class="btn btn-sm icon-btn btn-ghost icon-btn-danger" type="button" aria-label="Delete plan" title="Delete plan" hidden><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-trash"></use></svg><span>Delete plan</span></button>
+                  <div id="plan-action-icons" class="icon-bar" role="toolbar" aria-label="Plan actions">
+                    <div id="plan-related-actions" class="icon-bar-group" hidden>
+                      <button id="plan-open-tasks" class="btn btn-sm icon-btn btn-ghost" type="button" aria-label="View revision tasks" title="View revision tasks"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-todos"></use></svg><span>View revision tasks</span></button>
+                      <button id="plan-open-walkthrough" class="btn btn-sm icon-btn btn-ghost" type="button" aria-label="Walkthrough" title="Walkthrough"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-plans"></use></svg><span>Walkthrough</span></button>
+                    </div>
+                    <div id="plan-reader-actions" class="icon-bar-group" hidden>
+                      <button id="plan-complete-btn" class="btn btn-sm icon-btn btn-ghost" type="button" aria-label="Mark plan done" title="Mark plan done" hidden><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-check"></use></svg><span>Mark plan done</span></button>
+                      <button id="plan-delete-btn" class="btn btn-sm icon-btn btn-ghost icon-btn-danger" type="button" aria-label="Delete plan" title="Delete plan" hidden><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-trash"></use></svg><span>Delete plan</span></button>
+                    </div>
                   </div>
                 </div>
-              </div>
+              </header>
+              <div id="plan-diff-panel" class="diff-panel" hidden></div>
+              <div id="plan-view-content" class="markdown-body"></div>
               <section id="plan-variants" class="stack-list" hidden>
                 <details><summary><span>Variants</span> <span id="plan-variants-count" class="count-pill">0</span></summary>
                   <div id="plan-variant-list" class="stack-list"></div>
@@ -369,9 +378,7 @@
                   </details>
                 </details>
               </section>
-              <div id="plan-view-content" class="markdown-body"></div>
               <div id="plan-context-links"></div>
-              <div id="plan-diff-panel" class="diff-panel" hidden></div>
             </article>
           </div>
           <section id="plan-empty-state" class="plan-empty-state" aria-labelledby="plan-empty-title" hidden>
@@ -380,28 +387,50 @@
             <p>Start a plan to capture the workstream. Add its task list and walkthrough as the plan takes shape.</p>
             <button id="plan-empty-create" class="btn btn-primary" type="button"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-add"></use></svg><span>Create first plan</span></button>
           </section>
-          <section id="plan-project-context" class="card" aria-labelledby="project-context-title" hidden>
-            <div class="card-head"><h3 id="project-context-title">Project context</h3><button id="context-add" class="btn btn-primary" type="button" hidden><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-add"></use></svg><span>New record</span></button></div>
-            <div id="context-list" class="stack-list" aria-live="polite"></div>
-          </section>
+          <div id="plan-project-context" class="plans-grid" aria-labelledby="project-context-title" hidden>
+            <nav id="context-section-links" class="access-section-links plan-thread-list" aria-label="Context categories">
+              <button class="btn btn-secondary" type="button" data-context-filter="all" aria-pressed="true">All records</button>
+              <button class="btn btn-secondary" type="button" data-context-filter="story" aria-pressed="false">User stories</button>
+              <button class="btn btn-secondary" type="button" data-context-filter="invariant" aria-pressed="false">Invariants</button>
+              <button class="btn btn-secondary" type="button" data-context-filter="decision" aria-pressed="false">Decisions</button>
+            </nav>
+            <label class="plan-thread-select-wrap">
+              <span class="visually-hidden">Context category</span>
+              <select id="context-filter-select" class="input" aria-label="Context category">
+                <option value="all">All records</option>
+                <option value="story">User stories</option>
+                <option value="invariant">Invariants</option>
+                <option value="decision">Decisions</option>
+              </select>
+            </label>
+            <section class="card">
+              <div class="card-head"><h3 id="project-context-title">Project context</h3><button id="context-add" class="btn btn-primary" type="button" hidden><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-add"></use></svg><span>New record</span></button></div>
+              <div id="context-list" class="stack-list" aria-live="polite"></div>
+            </section>
+          </div>
         </section>
 
         <!-- VIEW: TO-DOS -->
         <section id="view-todos" class="route-view" hidden>
           <div class="view-header todo-top-bar">
             <div id="todo-scope-tabs" class="subtabs" role="tablist" aria-label="Tasks view">
-              <button id="todo-scope-project" class="subtab subtab-active" type="button" role="tab" data-todo-scope="project" data-todo-goal="all" aria-selected="true"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-todos"></use></svg><span>All tasks</span></button>
-              <button id="todo-goal-plan" class="subtab" type="button" role="tab" data-todo-scope="project" data-todo-goal="plan" aria-selected="false"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-plans"></use></svg><span>Plan goals</span></button>
-              <button id="todo-goal-global" class="subtab" type="button" role="tab" data-todo-scope="project" data-todo-goal="global" aria-selected="false"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-globe"></use></svg><span>Global goals</span></button>
-              <button id="todo-scope-mine" class="subtab" type="button" role="tab" data-todo-scope="mine" data-todo-goal="all" aria-selected="false"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-check"></use></svg><span>My work</span></button>
-              <button id="todo-scope-agent" class="subtab" type="button" role="tab" data-todo-scope="agent" data-todo-goal="all" aria-selected="false"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-agents"></use></svg><span>Browse agent</span></button>
+              <button id="todo-scope-project" class="subtab subtab-active" type="button" role="tab" data-todo-scope="project" aria-selected="true"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-todos"></use></svg><span>Project tasks</span></button>
+              <button id="todo-scope-mine" class="subtab" type="button" role="tab" data-todo-scope="mine" aria-selected="false"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-check"></use></svg><span>My work</span></button>
+              <button id="todo-scope-agent" class="subtab" type="button" role="tab" data-todo-scope="agent" aria-selected="false"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-agents"></use></svg><span>Browse agent</span></button>
             </div>
             <div class="btn-row">
               <button id="open-task-dialog-btn" class="btn btn-primary icon-only-control" type="button" aria-label="New task" title="New task"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-add"></use></svg><span>New task</span></button>
             </div>
           </div>
 
-          <section class="card">
+          <div id="todo-workspace-grid" class="todo-workspace-grid">
+            <nav id="todo-plan-links" class="access-section-links todo-plan-links" aria-label="Task scope"></nav>
+            <label class="todo-plan-select-wrap">
+              <span class="visually-hidden">Task scope</span>
+              <select id="todo-plan-select" class="input" aria-label="Task scope"></select>
+            </label>
+            <div class="todo-workspace-main">
+              <section id="shared-todos-section" class="card">
             <div class="card-head todo-card-head">
               <div class="todo-card-title-row">
                 <h3 id="shared-todos-title">Project tasks</h3>
@@ -421,10 +450,10 @@
                 <option value="mine">My work</option>
                 <option value="agent">Browse agent</option>
               </select>
-              <details class="todo-filters-panel">
+              <details id="todo-filters-panel" class="todo-filters-panel">
                 <summary><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-filter"></use></svg><span>Filters</span><span id="todo-filter-count" class="badge badge-muted" hidden></span></summary>
-                <label class="field revision-filter"><span>Plan revision</span><select id="filter-revision" class="input"><option value="">All revisions</option></select></label>
                 <form id="todo-filters" class="filter-bar">
+                <select id="filter-revision" class="input select-compact" aria-label="Filter by plan revision"><option value="">All revisions</option></select>
                 <select id="filter-status" class="input select-compact" aria-label="Filter by status">
                   <option value="">All statuses</option>
                   <option value="ready">Ready</option>
@@ -448,7 +477,7 @@
                   <option value="">All agents</option>
                 </select>
                 <input id="filter-query" class="input select-compact" type="search" placeholder="Filter tasks by title or ID…">
-                <button id="filter-reset-btn" class="btn btn-xs btn-ghost" type="button">Reset</button>
+                <button id="filter-reset-btn" class="btn btn-sm btn-secondary" type="button">Reset</button>
               </form>
               </details>
               <details id="quick-task-disclosure" class="todo-quick-add">
@@ -487,6 +516,8 @@
             </form>
             <div id="personal-checklists-list" class="stack-list"></div>
           </section>
+            </div>
+          </div>
         </section>
 
         <!-- VIEW: AGENTS -->
@@ -500,8 +531,8 @@
             </div>
           </div>
           <div id="agent-layout" class="agent-layout" data-pane="roster">
-            <aside class="card">
-              <div class="card-head"><h2>Roster</h2><span id="agent-roster-count" class="badge"></span></div>
+            <aside class="agent-roster-nav" aria-label="Agent roster">
+              <div class="agent-roster-head"><span class="agent-roster-title">Roster</span><span id="agent-roster-count" class="muted small"></span></div>
               <div id="agents-list" class="stack-list"></div>
             </aside>
             <section id="agent-profile" class="card" aria-label="Agent profile"></section>
@@ -653,7 +684,6 @@
               <button class="btn btn-secondary" type="button" data-access-section="project-roles-card" hidden>Roles</button>
               <button class="btn btn-secondary" type="button" data-access-section="access-requests-card" hidden>Requests</button>
               <button class="btn btn-secondary" type="button" data-access-section="access-devices">Devices</button>
-              <button class="btn btn-secondary" type="button" data-access-section="access-permissions">Permissions</button>
               <button class="btn btn-secondary" type="button" data-access-section="access-limits">Limits</button>
               <button class="btn btn-secondary" type="button" data-access-section="recovery-card">Recovery</button>
             </nav>
@@ -861,22 +891,31 @@
 
           <!-- SETTINGS: CONNECTIONS -->
           <div id="settings-panel-connections" class="settings-panel" data-settings-panel="connections" role="tabpanel" aria-labelledby="settings-tab-connections" hidden>
+            <nav class="access-section-links" aria-label="Connections sections">
+              <button class="btn btn-secondary" type="button" data-connections-section="remote-access-card">Remote access</button>
+              <button class="btn btn-secondary" type="button" data-connections-section="connections-replicas-card">Sync replicas</button>
+              <button class="btn btn-secondary" type="button" data-connections-section="connections-peers-card">Joined peers</button>
+            </nav>
+            <label class="access-section-select-wrap">
+              <span class="visually-hidden">Connections section</span>
+              <select id="connections-section-select" class="input" aria-label="Connections section"></select>
+            </label>
             <div class="settings-stack">
-              <section id="remote-access-card" class="card">
+              <section id="remote-access-card" class="card" tabindex="-1">
                 <div class="card-head">
                   <h3>Host Remote Access &amp; Sync</h3>
                 </div>
                 <div id="remote-access-status" class="muted"></div>
               </section>
 
-              <section class="card">
+              <section id="connections-replicas-card" class="card" tabindex="-1" hidden>
                 <div class="card-head">
                   <h3>Known Sync Replicas</h3>
                 </div>
                 <div id="replicas-list" class="stack-list"></div>
               </section>
 
-              <section class="card">
+              <section id="connections-peers-card" class="card" tabindex="-1" hidden>
                 <div class="card-head">
                   <h3>Joined Remote Peers</h3>
                 </div>
@@ -887,8 +926,18 @@
 
           <!-- SETTINGS: WORKSPACES -->
           <div id="settings-panel-workspaces" class="settings-panel" data-settings-panel="workspaces" role="tabpanel" aria-labelledby="settings-tab-workspaces" hidden>
+            <nav class="access-section-links" aria-label="Workspaces sections">
+              <button class="btn btn-secondary" type="button" data-workspaces-section="workspaces-repos-card">Repositories</button>
+              <button class="btn btn-secondary" type="button" data-workspaces-section="workspaces-checkouts-card">Checkouts</button>
+              <button class="btn btn-secondary" type="button" data-workspaces-section="workspaces-reservations-card">Reservations</button>
+              <button class="btn btn-secondary" type="button" data-workspaces-section="workspaces-integrations-card">Integrations</button>
+            </nav>
+            <label class="access-section-select-wrap">
+              <span class="visually-hidden">Workspaces section</span>
+              <select id="workspaces-section-select" class="input" aria-label="Workspaces section"></select>
+            </label>
             <div class="settings-stack">
-              <section class="card">
+              <section id="workspaces-repos-card" class="card" tabindex="-1">
                 <div class="card-head">
                   <div>
                     <h3>Repositories &amp; Remote Hints</h3>
@@ -927,7 +976,7 @@
                 <div id="repositories-list" class="stack-list"></div>
               </section>
 
-              <section class="card">
+              <section id="workspaces-checkouts-card" class="card" tabindex="-1" hidden>
                 <div class="card-head">
                   <div>
                     <h3>Registered Workspace Checkouts</h3>
@@ -937,7 +986,7 @@
                 <div id="workspaces-list" class="stack-list"></div>
               </section>
 
-              <section class="card">
+              <section id="workspaces-reservations-card" class="card" tabindex="-1" hidden>
                 <div class="card-head">
                   <div>
                     <h3>Active File Reservations</h3>
@@ -947,7 +996,7 @@
                 <div id="reservations-list" class="stack-list"></div>
               </section>
 
-              <section class="card">
+              <section id="workspaces-integrations-card" class="card" tabindex="-1" hidden>
                 <div class="card-head">
                   <h3>Recorded Integrations</h3>
                 </div>
@@ -958,8 +1007,16 @@
 
           <!-- SETTINGS: HISTORY -->
           <div id="settings-panel-history" class="settings-panel" data-settings-panel="history" role="tabpanel" aria-labelledby="settings-tab-history" hidden>
+            <nav class="access-section-links" aria-label="History sections">
+              <button class="btn btn-secondary" type="button" data-history-section="history-audit-card">Audit history</button>
+              <button class="btn btn-secondary" type="button" data-history-section="history-legacy-card">Legacy archives</button>
+            </nav>
+            <label class="access-section-select-wrap">
+              <span class="visually-hidden">History section</span>
+              <select id="history-section-select" class="input" aria-label="History section"></select>
+            </label>
             <div class="settings-stack">
-              <section class="card">
+              <section id="history-audit-card" class="card" tabindex="-1">
                 <div class="card-head">
                   <h3>Audit history</h3><button id="open-audit-btn" class="btn btn-secondary" type="button" hidden>Browse events</button>
                 </div>
@@ -976,7 +1033,7 @@
                 <div id="history-events-list" class="stack-list" aria-live="polite"></div>
               </section>
 
-              <section class="card">
+              <section id="history-legacy-card" class="card" tabindex="-1" hidden>
                 <div class="card-head">
                   <h3>Legacy Imported Archives</h3>
                 </div>

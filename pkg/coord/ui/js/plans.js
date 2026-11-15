@@ -49,10 +49,23 @@ function renderProjectContext() {
     $('#context-add').hidden = !edit;
     $('#context-add').onclick = () => openContextEditor();
   }
+  const filter = state.contextFilter || 'all';
+  $$('[data-context-filter]').forEach(btn => {
+    btn.setAttribute('aria-pressed', String((btn.dataset.contextFilter || 'all') === filter));
+  });
+  if ($('#context-filter-select')) $('#context-filter-select').value = filter;
+  const records = filter === 'all'
+    ? (state.contextRecords || [])
+    : (state.contextRecords || []).filter(r => r.kind === filter);
+  const emptyLabels = {
+    story: 'No user stories yet.',
+    invariant: 'No invariants yet.',
+    decision: 'No decisions yet.'
+  };
   renderList(
     list,
-    state.contextRecords,
-    state.contextError || 'No user stories, invariants, or decisions yet.',
+    records,
+    state.contextError || emptyLabels[filter] || 'No user stories, invariants, or decisions yet.',
     record => {
       const row = createEl('article', 'list-item');
       const head = createEl('div', 'list-item-row');
@@ -88,7 +101,9 @@ function renderProjectContext() {
             const section = createEl('details', 'list-item');
             section.appendChild(createEl('summary', '', 'v' + version.revision + ' · ' + principalLabel(version.author)));
             section.appendChild(createEl('strong', '', version.title));
-            section.appendChild(createEl('p', 'agent-dm-body', version.body));
+            const vBody = createEl('div', 'markdown-body');
+            renderSafeMarkdown(vBody, version.body || '');
+            section.appendChild(vBody);
             if (version.verification) section.appendChild(createEl('p', 'agent-dm-body', version.verification));
             history.appendChild(section);
           }
@@ -264,7 +279,7 @@ async function openPlanWalkthrough(plan) {
       ? `${done} of ${tasks.length} tasks complete · ${percent}%`
       : 'No tasks are linked to this plan revision yet.';
     const list = $('#walkthrough-task-list');
-    for (const task of tasks.slice(0, 8)) {
+    renderList(list, tasks, '', task => {
       const row = createEl('div', 'walkthrough-task');
       const open = uiButton({
         label: task.title || task.id,
@@ -272,11 +287,8 @@ async function openPlanWalkthrough(plan) {
         onClick: () => openTaskDetail(task.id)
       });
       row.append(open, uiBadge(taskStatusLabels[task.status] || task.status));
-      list.appendChild(row);
-    }
-    if (tasks.length > 8) {
-      list.appendChild(createEl('p', 'muted small', `${tasks.length - 8} more tasks in this plan revision.`));
-    }
+      return row;
+    }, { pageSize: 12, root: list?.closest('.modal-card') || null });
   } catch (error) {
     if (project !== state.project || generation !== state.generation) return;
     $('#walkthrough-progress-summary').textContent = 'Task progress could not be loaded.';
@@ -389,34 +401,32 @@ function renderPlansView() {
   const threads = state.planThreads;
   const thread = threads.find(item => item.id === state.selectedPlanID);
   const threadList = $('#plan-thread-list');
+  const threadSelect = $('#plan-thread-select');
   clearNode(threadList);
   threadList.hidden = contextVisible || !hasPlans;
-  layout.dataset.pane = state.planPane || 'list';
-  threadList.appendChild(createEl('h2', '', 'Plans'));
-  threadList.appendChild(createEl('p', 'muted small', 'Independent workstreams. Revisions stay within each plan.'));
-  for (const item of threads) {
+  appendProgressiveItems(threadList, threads, item => {
     const revisions = state.planHistory.filter(plan => plan.plan_id === item.id);
-    const button = createEl('button', 'plan-thread-item' + (item.id === state.selectedPlanID ? ' is-selected' : ''));
+    const selected = item.id === state.selectedPlanID;
+    const button = createEl('button', 'btn btn-secondary plan-thread-item');
     button.type = 'button';
-    button.setAttribute('aria-pressed', String(item.id === state.selectedPlanID));
+    button.setAttribute('aria-pressed', String(selected));
     const statusText = item.status === 'done' ? 'Done' : item.status === 'active' ? 'Active' : 'Archived';
     button.setAttribute('aria-label', `${item.title}, ${statusText}, ${revisions.length} ${revisions.length === 1 ? 'revision' : 'revisions'}`);
-    button.appendChild(createEl('div', 'plan-thread-item-top', item.title));
-    const meta = createEl('div', 'plan-thread-item-meta');
-    meta.append(
-      uiBadge(statusText, '', `plan-thread-status plan-status-${item.status === 'done' ? 'done' : item.status === 'active' ? 'active' : 'archived'}`),
-      createEl('span', 'muted small', `${revisions.length} ${revisions.length === 1 ? 'revision' : 'revisions'}`)
-    );
-    button.appendChild(meta);
+    button.appendChild(createEl('span', 'plan-thread-label', item.title));
+    if (item.status === 'done') button.appendChild(uiBadge('Done', '', 'plan-thread-status plan-status-done'));
     button.addEventListener('click', () => {
       state.selectedPlanID = item.id;
       state.selectedPlanRev = item.latest_revision || revisions[0]?.revision || 0;
       state.comparePlanRev = 0;
-      state.planPane = 'reader';
       syncUrlState();
       renderPlansView();
     });
-    threadList.appendChild(button);
+    return button;
+  }, { pageSize: 35, root: threadList });
+  if (threadSelect) {
+    threadSelect.replaceChildren(...threads.map(item => new Option(item.title, item.id)));
+    threadSelect.value = state.selectedPlanID;
+    threadSelect.hidden = contextVisible || !hasPlans;
   }
   $('#new-plan-btn').hidden = !canEditPlan() || !hasPlans;
   $('#plan-empty-create').hidden = !canEditPlan();
@@ -453,7 +463,7 @@ function renderPlansView() {
   $('#plan-reader-actions').hidden = done.hidden && remove.hidden;
   if ($('#plan-action-icons')) $('#plan-action-icons').hidden = $('#plan-related-actions').hidden && $('#plan-reader-actions').hidden;
 
-  $('#plan-active-heading').textContent = plan ? `${thread?.title || plan.plan_title || 'Plan'} · ${planVersionLabel(plan)}` : 'No plan published';
+  $('#plan-active-heading').textContent = plan ? (thread?.title || plan.plan_title || 'Plan') : 'No plan published';
   $('#plan-meta-line').textContent = plan
     ? principalLabel(plan.author) + ' · ' + formatTime(plan.created_at) + (current ? '' : ' · Read only')
     : 'Create a plan to share the work and its requirements.';
@@ -495,6 +505,14 @@ function wirePlanEvents() {
       renderPlansView();
     });
   }
+  const setContextFilter = next => {
+    state.contextFilter = next || 'all';
+    renderProjectContext();
+  };
+  $$('[data-context-filter]').forEach(btn => {
+    btn.addEventListener('click', () => setContextFilter(btn.dataset.contextFilter));
+  });
+  $('#context-filter-select')?.addEventListener('change', e => setContextFilter(e.target.value));
   $('#plan-version-select')?.addEventListener('change', e => {
     state.selectedPlanRev = Number(e.target.value) || 0;
     state.planVariant = '';
@@ -539,10 +557,14 @@ function wirePlanEvents() {
     state.comparePlanRev = Number(e.target.value) || 0;
     renderPlansView();
   });
-  $('#plan-reader-back')?.addEventListener('click', () => {
-    state.planPane = 'list';
+  $('#plan-thread-select')?.addEventListener('change', e => {
+    const item = state.planThreads.find(t => t.id === e.target.value);
+    if (!item) return;
+    state.selectedPlanID = item.id;
+    state.selectedPlanRev = item.latest_revision || state.planHistory.find(p => p.plan_id === item.id)?.revision || 0;
+    state.comparePlanRev = 0;
+    syncUrlState();
     renderPlansView();
-    $('#plan-thread-list .plan-thread-item[aria-pressed="true"]')?.focus();
   });
   $('#plan-ack-btn')?.addEventListener('click', async () => {
     if (!state.plan?.revision) return;

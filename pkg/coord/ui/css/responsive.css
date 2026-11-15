@@ -9,13 +9,8 @@
   }
 }
 
-@media (min-width: 681px) {
-  .mobile-chat-back {
-    display: none;
-  }
-}
-
 @media (min-width: 701px) {
+  .mobile-chat-back,
   .plan-reader-back {
     display: none;
   }
@@ -109,37 +104,53 @@
     min-height: 2.35rem;
   }
 
-  /* Plans single-pane & header */
-  .plans-grid {
+  /* Plans & To-dos responsive selector */
+  .plans-grid,
+  .todo-workspace-grid {
     grid-template-columns: minmax(0, 1fr);
+    gap: 0.6rem;
   }
 
-  .plans-grid[data-pane="list"] .plan-reader-card,
-  .plans-grid[data-pane="reader"] .plan-thread-list {
+  .plan-thread-list,
+  .todo-plan-links {
     display: none;
   }
 
-  .plan-reader-back {
-    display: inline-flex;
-    margin-bottom: 0.35rem;
+  .plan-thread-select-wrap,
+  .todo-plan-select-wrap {
+    display: block;
+    width: 100%;
+  }
+
+  #plan-thread-select,
+  #context-filter-select,
+  #todo-plan-select,
+  [data-select-id="plan-thread-select"],
+  [data-select-id="context-filter-select"],
+  [data-select-id="todo-plan-select"] {
+    width: 100%;
   }
 
   .plan-reader-card {
     padding: 1rem;
   }
 
-  .plan-reader-card .card-head {
-    flex-direction: column;
-    align-items: stretch;
-    gap: 0.65rem;
-  }
-
-  #plan-version-select {
+  #plan-version-select,
+  [data-select-id="plan-version-select"] {
     max-width: 100%;
   }
 
-  .plan-action-bar #plan-compare-select {
+  .plan-action-bar #plan-compare-select,
+  .plan-action-bar [data-select-id="plan-compare-select"] {
     max-width: min(9rem, 42vw);
+  }
+
+  #view-todos .filter-bar {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  #filter-reset-btn {
+    justify-self: start;
   }
 
   .plan-editor-switch {
@@ -160,7 +171,20 @@
     height: min(20rem, 45dvh);
   }
 
-  /* Agents single-pane */
+  /* Agents & Chat single-pane mobile switch */
+  .chat-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .chat-layout[data-mobile-pane="conversations"] .chat-main,
+  .chat-layout[data-mobile-pane="thread"] .chat-nav {
+    display: none;
+  }
+
+  .mobile-chat-back {
+    display: inline-flex;
+  }
+
   .agent-layout {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -230,7 +254,7 @@
     max-width: 100%;
   }
 
-  #settings-panel-access {
+  .settings-panel {
     grid-template-columns: minmax(0, 1fr);
     gap: 0.6rem;
   }
@@ -244,7 +268,14 @@
     width: 100%;
   }
 
-  #access-section-select {
+  #access-section-select,
+  #connections-section-select,
+  #workspaces-section-select,
+  #history-section-select,
+  [data-select-id="access-section-select"],
+  [data-select-id="connections-section-select"],
+  [data-select-id="workspaces-section-select"],
+  [data-select-id="history-section-select"] {
     width: 100%;
   }
 
@@ -272,27 +303,10 @@
   }
 }
 
-/* <= 680px: Single-pane chat & stacked projects columns */
+/* <= 680px: Stacked projects columns */
 @media (max-width: 680px) {
   .main-viewport {
-    padding: 0.85rem;
-  }
-
-  .chat-shell {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .chat-sidebar {
-    border-right: 0 !important;
-  }
-
-  .chat-shell[data-mobile-pane="conversations"] .chat-main,
-  .chat-shell[data-mobile-pane="thread"] .chat-sidebar {
-    display: none;
-  }
-
-  .mobile-chat-back {
-    display: inline-flex;
+    padding: 0.85rem 0.75rem;
   }
 
   .projects-columns {
@@ -370,7 +384,7 @@
 }
 
 @media (max-height: 450px) {
-  .chat-shell {
+  .chat-layout {
     min-height: 20rem;
   }
 }

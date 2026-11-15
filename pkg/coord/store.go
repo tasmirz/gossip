@@ -650,6 +650,16 @@ CREATE TABLE IF NOT EXISTS attempt_usage (
   FOREIGN KEY(task_id,attempt) REFERENCES attempts(task_id,number)
 );
 CREATE INDEX IF NOT EXISTS attempt_usage_project ON attempt_usage(project_id,recorded_at);
+CREATE TABLE IF NOT EXISTS principal_tool_calls (
+  project_id TEXT NOT NULL REFERENCES projects(id),
+  principal_id TEXT NOT NULL REFERENCES principals(id),
+  tool_name TEXT NOT NULL,
+  total_calls INTEGER NOT NULL DEFAULT 0,
+  error_calls INTEGER NOT NULL DEFAULT 0,
+  last_called_at INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY(project_id,principal_id,tool_name)
+);
+CREATE INDEX IF NOT EXISTS principal_tool_calls_project ON principal_tool_calls(project_id,principal_id);
 CREATE TABLE IF NOT EXISTS report_requests (
   project_id TEXT NOT NULL REFERENCES projects(id), principal_id TEXT NOT NULL REFERENCES principals(id),
   request_id TEXT NOT NULL, payload_digest TEXT NOT NULL, report_id TEXT NOT NULL REFERENCES reports(id),

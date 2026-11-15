@@ -452,7 +452,12 @@
   box-shadow: none;
 }
 
-.topbar-search .input:focus {
+.topbar-search .input:focus,
+.topbar-search .input:focus-visible,
+:root[data-theme="dark"] .topbar-search .input:focus,
+:root[data-theme="dark"] .topbar-search .input:focus-visible {
+  border: 0;
+  outline: none;
   box-shadow: none;
 }
 
@@ -481,7 +486,7 @@
 
 /* --- Main Viewport & Route View Containers --- */
 .main-viewport {
-  padding: clamp(1rem, 2.5vw, 2rem);
+  padding: 1rem clamp(0.85rem, 2.5vw, 2rem) clamp(1.25rem, 2.5vw, 2rem);
   display: flex;
   flex-direction: column;
   gap: 1rem;
@@ -492,10 +497,8 @@
 .route-view {
   display: flex;
   flex-direction: column;
-  gap: 1.25rem;
+  gap: 1rem;
   width: 100%;
-  max-width: 1450px;
-  margin-inline: auto;
   min-width: 0;
 }
 

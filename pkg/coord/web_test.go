@@ -1561,3 +1561,60 @@ func TestWebDistinct401Vs403StatusReturnsOnAccessLoss(t *testing.T) {
 		t.Fatalf("expected missing credential message, got: %s", rec401Missing.Body.String())
 	}
 }
+
+func TestWebEventsBeforeCursorPagination(t *testing.T) {
+	s, _, project, owner, _ := setup(t)
+	ctx := context.Background()
+	h := coord.NewWebHandler(s)
+
+	contract := coord.ReportContract{ReviewType: "diagram_report", ReviewMode: "report_first", Formats: []string{"markdown", "mermaid_class", "mermaid_sequence"}}
+	for i := 0; i < 5; i++ {
+		if _, err := s.CreateTask(ctx, project.ID, owner.Token, 1, "Event pagination seed "+strconv.Itoa(i), "Trace pagination seed", "review", contract, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	loginReq := httptest.NewRequest(http.MethodPost, "http://localhost:8081/api/login", strings.NewReader(`{"project_id":"`+project.ID+`","token":"`+owner.Token+`"}`))
+	loginReq.RemoteAddr = "127.0.0.1:12345"
+	loginReq.Header.Set("Content-Type", "application/json")
+	loginReq.Header.Set("Origin", "http://localhost:8081")
+	loginRec := httptest.NewRecorder()
+	h.ServeHTTP(loginRec, loginReq)
+	if loginRec.Code != http.StatusOK || len(loginRec.Result().Cookies()) != 1 {
+		t.Fatalf("login failed: %d %s", loginRec.Code, loginRec.Body.String())
+	}
+	cookie := loginRec.Result().Cookies()[0]
+
+	fetchEvents := func(query string) []coord.Event {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, "http://localhost:8081/api/projects/"+project.ID+"/events?"+query, nil)
+		req.RemoteAddr = "127.0.0.1:12345"
+		req.AddCookie(cookie)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("events(%s) failed: %d %s", query, rec.Code, rec.Body.String())
+		}
+		var out []coord.Event
+		if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+
+	latest := fetchEvents("recent=1&limit=3")
+	if len(latest) != 3 {
+		t.Fatalf("expected 3 recent events, got %d", len(latest))
+	}
+	if !(latest[0].Sequence < latest[1].Sequence && latest[1].Sequence < latest[2].Sequence) {
+		t.Fatalf("expected chronological event order, got %+v", latest)
+	}
+
+	older := fetchEvents("before=" + strconv.FormatInt(latest[0].Sequence, 10) + "&limit=3")
+	if len(older) == 0 {
+		t.Fatal("expected older events before cursor")
+	}
+	if older[len(older)-1].Sequence >= latest[0].Sequence {
+		t.Fatalf("expected all older events before seq %d, got %d", latest[0].Sequence, older[len(older)-1].Sequence)
+	}
+}

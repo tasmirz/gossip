@@ -16,8 +16,30 @@ const createEl = (tag, cls, text) => {
   return node;
 };
 
+const autoPaginatorCleanups = typeof WeakMap === 'function' ? new WeakMap() : null;
+const progressiveCapMemory = new Map();
+
+function disconnectAutoPaginator(node) {
+  if (!node || !autoPaginatorCleanups) return;
+  const cleanups = autoPaginatorCleanups.get(node);
+  if (Array.isArray(cleanups)) {
+    for (const fn of cleanups) {
+      try { fn(); } catch {}
+    }
+  }
+  autoPaginatorCleanups.delete(node);
+}
+
+function registerAutoPaginatorCleanup(node, fn) {
+  if (!node || !autoPaginatorCleanups || typeof fn !== 'function') return;
+  const existing = autoPaginatorCleanups.get(node) || [];
+  existing.push(fn);
+  autoPaginatorCleanups.set(node, existing);
+}
+
 function clearNode(node) {
   if (!node) return;
+  disconnectAutoPaginator(node);
   if (typeof node.replaceChildren === 'function') node.replaceChildren();
   else node.innerHTML = '';
 }
@@ -101,17 +123,175 @@ function uiButton({
   return btn;
 }
 
-function renderList(container, items, emptyMessage, renderItem, emptyClass = 'muted small') {
+function observeAutoLoad(target, onTrigger, options = {}) {
+  if (!target || typeof onTrigger !== 'function') return () => {};
+  const { root = null, rootMargin = '220px 0px', threshold = 0, owner = null } = options;
+  disconnectAutoPaginator(target);
+  if (typeof IntersectionObserver !== 'function') return () => {};
+  let busy = false;
+  let disposed = false;
+  let timer = null;
+  const scheduleReobserve = () => {
+    if (disposed || !target.isConnected) return;
+    const raf = typeof requestAnimationFrame === 'function'
+      ? requestAnimationFrame
+      : fn => setTimeout(fn, 16);
+    timer = raf(() => {
+      if (disposed || !target.isConnected) return;
+      observer.unobserve(target);
+      observer.observe(target);
+    });
+  };
+  const runTrigger = async () => {
+    if (disposed || busy || target.hidden || target.disabled) return;
+    if (target.isConnected === false || target.closest?.('[hidden]')) return;
+    busy = true;
+    try {
+      const keepGoing = await onTrigger();
+      if (!disposed && keepGoing !== false && !target.hidden) scheduleReobserve();
+    } catch {
+      // Errors are surfaced by caller; stop automatic retry loop until next scroll.
+    } finally {
+      busy = false;
+    }
+  };
+  const observer = new IntersectionObserver(entries => {
+    if (entries.some(entry => entry.isIntersecting)) void runTrigger();
+  }, { root, rootMargin, threshold });
+  observer.observe(target);
+  const cleanup = () => {
+    disposed = true;
+    if (timer && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(timer);
+    observer.disconnect();
+  };
+  registerAutoPaginatorCleanup(target, cleanup);
+  if (owner && owner !== target) registerAutoPaginatorCleanup(owner, cleanup);
+  return cleanup;
+}
+
+function appendProgressiveItems(container, items, renderItem, options = {}) {
+  if (!container) return;
+  const {
+    pageSize = 25,
+    root = null,
+    rootMargin = '240px 0px',
+    key = '',
+    hasMore = false,
+    loadMore = null,
+    moreLabel = null,
+    loadingText = 'Loading more…'
+  } = options || {};
+  const list = Array.isArray(items) ? [...items] : [];
+  const checkHasServerMore = () => (typeof hasMore === 'function' ? Boolean(hasMore()) : Boolean(hasMore));
+  if (!list.length && !checkHasServerMore()) return;
+
+  const cap = pageSize > 0 ? pageSize : list.length || 25;
+  const savedCap = key ? (progressiveCapMemory.get(key) || 0) : 0;
+  const initialCount = Math.min(list.length, Math.max(cap, savedCap));
+  for (let i = 0; i < initialCount; i += 1) {
+    const node = renderItem(list[i], i);
+    if (node) container.appendChild(node);
+  }
+  let rendered = initialCount;
+  if (key && rendered > 0) progressiveCapMemory.set(key, rendered);
+
+  const hasRemaining = () => rendered < list.length || (typeof loadMore === 'function' && checkHasServerMore());
+  if (!hasRemaining()) return;
+
+  const sentinel = createEl('div', 'auto-page-sentinel');
+  const btn = createEl('button', 'btn btn-sm btn-secondary auto-page-btn');
+  btn.type = 'button';
+  sentinel.appendChild(btn);
+  container.appendChild(sentinel);
+
+  let serverExhausted = false;
+  const updateButton = (busy = false) => {
+    const rem = Math.max(0, list.length - rendered);
+    const moreServer = !serverExhausted && typeof loadMore === 'function' && checkHasServerMore();
+    if (!rem && !moreServer) {
+      disconnectAutoPaginator(sentinel);
+      sentinel.remove();
+      return false;
+    }
+    btn.disabled = busy;
+    if (busy) {
+      btn.textContent = loadingText;
+    } else if (typeof moreLabel === 'function') {
+      btn.textContent = moreLabel(rem, moreServer);
+    } else if (rem > 0) {
+      const nextCount = Math.min(cap, rem);
+      btn.textContent = `Show ${nextCount} more (${rem}${moreServer ? '+' : ''} remaining)`;
+    } else {
+      btn.textContent = 'Load more';
+    }
+    return true;
+  };
+
+  let inFlight = false;
+  const advance = async () => {
+    if (inFlight || !sentinel.isConnected) return false;
+    inFlight = true;
+    try {
+      if (rendered < list.length) {
+        const nextEnd = Math.min(list.length, rendered + cap);
+        for (let i = rendered; i < nextEnd; i += 1) {
+          const node = renderItem(list[i], i);
+          if (node) container.insertBefore(node, sentinel);
+        }
+        rendered = nextEnd;
+        if (key) progressiveCapMemory.set(key, rendered);
+        return updateButton(false);
+      }
+      if (!serverExhausted && typeof loadMore === 'function' && checkHasServerMore()) {
+        updateButton(true);
+        const result = await loadMore();
+        if (!sentinel.isConnected) return false;
+        const appended = Array.isArray(result)
+          ? result
+          : (Array.isArray(result?.appended) ? result.appended : null);
+        if (result && typeof result === 'object' && 'hasMore' in result && !result.hasMore) {
+          serverExhausted = true;
+        }
+        if (appended) {
+          if (!appended.length) {
+            serverExhausted = true;
+          } else {
+            list.push(...appended);
+            const nextEnd = Math.min(list.length, rendered + cap);
+            for (let i = rendered; i < nextEnd; i += 1) {
+              const node = renderItem(list[i], i);
+              if (node) container.insertBefore(node, sentinel);
+            }
+            rendered = nextEnd;
+            if (key) progressiveCapMemory.set(key, rendered);
+          }
+        }
+        return updateButton(false);
+      }
+      return updateButton(false);
+    } finally {
+      inFlight = false;
+    }
+  };
+
+  updateButton(false);
+  btn.addEventListener('click', () => { void advance(); });
+  observeAutoLoad(sentinel, advance, { root, rootMargin, owner: container });
+}
+
+function renderList(container, items, emptyMessage, renderItem, optionsOrEmptyClass = 'muted small') {
   if (!container) return;
   clearNode(container);
-  if (!items || !items.length) {
+  const opts = typeof optionsOrEmptyClass === 'string'
+    ? { emptyClass: optionsOrEmptyClass }
+    : (optionsOrEmptyClass || {});
+  const emptyClass = opts.emptyClass || 'muted small';
+  const hasServerMore = typeof opts.hasMore === 'function' ? Boolean(opts.hasMore()) : Boolean(opts.hasMore);
+  if ((!items || !items.length) && !hasServerMore) {
     if (emptyMessage) container.appendChild(createEl('p', emptyClass, emptyMessage));
     return;
   }
-  for (const item of items) {
-    const node = renderItem(item);
-    if (node) container.appendChild(node);
-  }
+  appendProgressiveItems(container, items || [], renderItem, opts);
 }
 
 function populateSelect(selectEl, items, {
@@ -134,6 +314,7 @@ function populateSelect(selectEl, items, {
     selectEl.appendChild(opt);
   }
   if (selectedValue !== undefined) selectEl.value = String(selectedValue);
+  if (typeof syncCustomSelect === 'function') syncCustomSelect(selectEl);
 }
 
 async function runGuardedAction(control, fn, { onError = err => showError(err.message), onFinally = null } = {}) {
@@ -166,7 +347,7 @@ function bindProjectForm(selector, { action, getBody, onSuccess = null, refreshA
 /* ROUTING & APPLICATION STATE */
 const ACCESS_SECTIONS = [
   'access-members', 'project-roles-card', 'access-requests-card', 'access-devices',
-  'access-permissions', 'access-limits', 'recovery-card'
+  'access-limits', 'recovery-card'
 ];
 
 const ROUTES = ['projects', 'chat', 'plans', 'todos', 'agents', 'search', 'settings'];
@@ -191,6 +372,7 @@ const state = {
   view: 'projects',
   previousView: 'chat',
   settingsTab: 'access',
+  chatTab: 'channels',
   mobilePane: 'thread',
   recipient: '',
   channelId: '',
@@ -202,28 +384,36 @@ const state = {
   planPane: 'list',
   contextRecords: [],
   contextError: '',
+  contextFilter: 'all',
   selectedPlanRev: 0,
   comparePlanRev: 0,
   tasks: [],
   taskCounts: {},
   taskTotal: 0,
   taskCursor: '',
+  tasksLoadingMore: false,
   taskFilters: { status: '', kind: '', assignee: '', query: '' },
   todoLayout: 'checklist',
   todoScope: 'project',
   todoGoalTab: 'all',
+  todoPlanID: '',
   todoAgent: '',
   projectsTab: 'local',
   agentsTab: 'all',
   agentDMs: [],
+  agentDMsHasMore: false,
+  agentDMsLoadingMore: false,
   agents: [],
   collapsedAgentIDs: new Set(),
   presence: [],
   permissions: [],
   roles: [],
   agentTasks: [],
+  agentTasksCursor: '',
+  agentTasksTotal: 0,
   agentTasksAgentID: '',
   agentTasksLoading: false,
+  agentTasksLoadingMore: false,
   agentTasksError: '',
   rolePresets: [],
   repositories: [],
@@ -236,7 +426,13 @@ const state = {
   integrations: [],
   legacyImports: [],
   legacyRecords: [],
+  legacyRecordsHasMore: false,
+  legacyRecordsLoadingMore: false,
+  legacyRecordsImportID: '',
   events: [],
+  eventsHasMore: false,
+  eventsLoadingMore: false,
+  eventsOldestSeq: 0,
   retention: null,
   messages: [],
   messagesHasOlder: false,
@@ -254,6 +450,9 @@ const state = {
   searchQuery: '',
   chatSearch: '',
   accessSection: 'access-members',
+  connectionsSection: 'remote-access-card',
+  workspacesSection: 'workspaces-repos-card',
+  historySection: 'history-audit-card',
   todoRevision: 0,
   searchTab: 'results',
   agentQuery: '',
@@ -383,8 +582,11 @@ function syncUrlState(replace = false) {
     }
   }
   if (state.view && (state.view !== 'projects' || state.project)) params.set('view', state.view);
-  if (state.view === 'chat' && state.channelId) params.set('channel', state.channelId);
-  else if (state.view === 'chat' && state.recipient) params.set('recipient', state.recipient);
+  if (state.view === 'chat') {
+    if (state.chatTab && state.chatTab !== 'channels') params.set('chat_tab', state.chatTab);
+    if (state.channelId) params.set('channel', state.channelId);
+    else if (state.recipient) params.set('recipient', state.recipient);
+  }
   if (state.view === 'settings') {
     if (state.settingsTab !== 'access') params.set('sub', state.settingsTab);
     else if (state.accessSection !== ACCESS_SECTIONS[0]) params.set('section', state.accessSection);
@@ -400,6 +602,7 @@ function syncUrlState(replace = false) {
     else if (state.planVariant) params.set('variant', state.planVariant);
   }
   if (state.view === 'todos') {
+    if (state.todoPlanID) params.set('plan', state.todoPlanID);
     if (state.todoRevision) params.set('revision', state.todoRevision);
     if (state.todoScope !== 'project') params.set('scope', state.todoScope);
     if (state.todoGoalTab !== 'all') params.set('goal', state.todoGoalTab);
@@ -425,6 +628,7 @@ function readUrlState() {
   const goal = params.get('goal');
   state.todoGoalTab = ['plan', 'global'].includes(goal) ? goal : 'all';
   state.todoAgent = state.todoScope === 'agent' ? params.get('agent') || '' : '';
+  state.todoPlanID = view === 'todos' ? (params.get('plan') || '') : '';
   state.todoRevision = view === 'todos' ? Number(params.get('revision')) || 0 : 0;
   state.todoLayout = params.get('layout') === 'kanban' ? 'kanban' : 'checklist';
   if (ROUTES.includes(view)) state.view = view;
@@ -437,10 +641,12 @@ function readUrlState() {
   state.planVariant = view === 'plans' && /^variant_[a-f0-9]{32}$/.test(variant) ? variant : '';
   state.channelId = params.get('channel') || '';
   state.recipient = state.channelId ? '' : (params.get('recipient') || '');
+  const chatTab = params.get('chat_tab');
+  state.chatTab = state.recipient ? 'dms' : (chatTab === 'dms' || chatTab === 'agent-dms' ? chatTab : 'channels');
   state.searchQuery = params.get('q') || '';
   state.searchTab = view === 'search' && params.get('search_tab') === 'graph' ? 'graph' : 'results';
   state.selectedPlanRev = Number(params.get('revision')) || 0;
-  state.selectedPlanID = params.get('plan') || '';
+  state.selectedPlanID = view === 'plans' ? (params.get('plan') || '') : '';
   state.planPane = state.selectedPlanID || state.selectedPlanRev ? 'reader' : 'list';
   state.taskFilters = {
     status: params.get('status') || '',
@@ -485,8 +691,16 @@ function selectProject(project, opts = {}) {
     $('#load-project-roles').disabled = false;
   }
   state.generation += 1;
+  progressiveCapMemory.clear();
   state.project=project;state.projectReadDenied=false;state.replicas=[];
   state.agentDMs = [];
+  state.agentDMsHasMore = false;
+  state.events = [];
+  state.eventsHasMore = false;
+  state.eventsOldestSeq = 0;
+  state.legacyRecords = [];
+  state.legacyRecordsHasMore = false;
+  state.legacyRecordsImportID = '';
   if ($('#copy-project-status')) $('#copy-project-status').textContent = '';
   state.plan = null;
   state.planHistory = [];
@@ -505,6 +719,7 @@ function selectProject(project, opts = {}) {
   state.taskTotal = 0;
   state.taskCursor = '';
   state.todoScope = opts.todoScope || 'project';
+  state.todoPlanID = opts.todoPlanID || '';
   state.todoRevision = opts.todoRevision || 0;
   state.accessSection = opts.accessSection || state.accessSection;
   if (typeof closeAgentDMs === 'function') closeAgentDMs();
@@ -565,6 +780,7 @@ function selectProject(project, opts = {}) {
   state.channels = [];
   state.channelId = opts.channelId !== undefined ? opts.channelId : '';
   state.recipient = state.channelId ? '' : (opts.recipient !== undefined ? opts.recipient : '');
+  state.chatTab = opts.chatTab || (state.recipient ? 'dms' : 'channels');
   state.mobilePane = 'thread';
   if (opts.view && ROUTES.includes(opts.view)) {
     state.view = opts.view;
@@ -630,9 +846,8 @@ function formatBudgetStatus(budget) {
 }
 
 function appendAgentUsageDetails(details, presence) {
-  if (presence?.reported_usage) {
-    details.appendChild(createEl('p', 'muted small', 'Reported usage · ' + JSON.stringify(presence.reported_usage)));
-    details.appendChild(createEl('p', 'muted small', 'Usage comes from the client. Independent provider billing is unavailable.'));
+  if (presence?.reported_usage?.records) {
+    details.appendChild(createEl('p', 'muted small', 'Usage comes from agent reports. Independent provider billing is unavailable.'));
   }
 }
 
@@ -720,27 +935,168 @@ function askConfirmation(title, message, quote = null) {
   });
 }
 
-function appendInlineFormatted(parent, text) {
-  const parts = String(text || '').split(/(`[^`]+`|\*\*[^*]+\*\*|\[Source message\]\(gossip:message:msg_[0-9a-f]{32}\))/g);
-  for (const part of parts) {
-    if (!part) continue;
-    const source = /^\[Source message\]\(gossip:message:(msg_[0-9a-f]{32})\)$/.exec(part);
-    if (source) {
-      parent.appendChild(uiButton({
-        label: 'Open source message',
-        cls: 'btn btn-xs btn-secondary',
-        onClick: () => openSourceMessage(source[1])
-      }));
-      continue;
+function appendInlineText(parent, text) {
+  if (!text) return;
+  parent.appendChild(document.createTextNode ? document.createTextNode(text) : createEl('span', '', text));
+}
+
+function findClosingInlineDelimiter(src, start, delim, { allowInsideCode = false } = {}) {
+  let pos = start;
+  while (pos < src.length) {
+    if (!allowInsideCode && src[pos] === '`') {
+      const tickEnd = src.indexOf('`', pos + 1);
+      if (tickEnd !== -1) {
+        pos = tickEnd + 1;
+        continue;
+      }
     }
-    if (part.startsWith('`') && part.endsWith('`') && part.length >= 2) {
-      parent.appendChild(createEl('code', '', part.slice(1, -1)));
-    } else if (part.startsWith('**') && part.endsWith('**') && part.length >= 4) {
-      parent.appendChild(createEl('strong', '', part.slice(2, -2)));
-    } else {
-      parent.appendChild(document.createTextNode ? document.createTextNode(part) : createEl('span', '', part));
-    }
+    if (src.startsWith(delim, pos)) return pos;
+    pos += 1;
   }
+  return -1;
+}
+
+function appendInlineFormatted(parent, text) {
+  const src = String(text || '');
+  let cursor = 0;
+  let plain = '';
+  const flushPlain = () => {
+    if (plain) {
+      appendInlineText(parent, plain);
+      plain = '';
+    }
+  };
+
+  while (cursor < src.length) {
+    if (src[cursor] === '`') {
+      const end = src.indexOf('`', cursor + 1);
+      if (end > cursor + 1) {
+        flushPlain();
+        parent.appendChild(createEl('code', '', src.slice(cursor + 1, end)));
+        cursor = end + 1;
+        continue;
+      }
+    }
+
+    if (src[cursor] === '[') {
+      const source = /^\[Source message\]\(gossip:message:(msg_[0-9a-f]{32})\)/.exec(src.slice(cursor));
+      if (source) {
+        flushPlain();
+        parent.appendChild(uiButton({
+          label: 'Open source message',
+          cls: 'btn btn-xs btn-secondary',
+          onClick: () => openSourceMessage(source[1])
+        }));
+        cursor += source[0].length;
+        continue;
+      }
+      const link = /^\[([^\]]+)\]\((https?:\/\/[^\s)]+|mailto:[^\s)]+)\)/i.exec(src.slice(cursor));
+      if (link) {
+        flushPlain();
+        const a = createEl('a', '');
+        a.href = link[2];
+        a.target = '_blank';
+        a.rel = 'noopener noreferrer';
+        appendInlineFormatted(a, link[1]);
+        parent.appendChild(a);
+        cursor += link[0].length;
+        continue;
+      }
+    }
+
+    if (src.startsWith('**', cursor) || src.startsWith('__', cursor)) {
+      const delim = src.slice(cursor, cursor + 2);
+      const nextChar = src[cursor + 2];
+      if (nextChar && !/\s/.test(nextChar)) {
+        const end = findClosingInlineDelimiter(src, cursor + 2, delim);
+        if (end > cursor + 2 && !/\s/.test(src[end - 1])) {
+          flushPlain();
+          const strong = createEl('strong', '');
+          appendInlineFormatted(strong, src.slice(cursor + 2, end));
+          parent.appendChild(strong);
+          cursor = end + 2;
+          continue;
+        }
+      }
+    }
+
+    if (src.startsWith('~~', cursor)) {
+      const nextChar = src[cursor + 2];
+      if (nextChar && !/\s/.test(nextChar)) {
+        const end = findClosingInlineDelimiter(src, cursor + 2, '~~');
+        if (end > cursor + 2 && !/\s/.test(src[end - 1])) {
+          flushPlain();
+          const del = createEl('del', '');
+          appendInlineFormatted(del, src.slice(cursor + 2, end));
+          parent.appendChild(del);
+          cursor = end + 2;
+          continue;
+        }
+      }
+    }
+
+    if (src[cursor] === '*' && !src.startsWith('**', cursor)) {
+      const nextChar = src[cursor + 1];
+      if (nextChar && !/\s/.test(nextChar)) {
+        let pos = cursor + 1;
+        let end = -1;
+        while (pos < src.length) {
+          if (src[pos] === '`') {
+            const tickEnd = src.indexOf('`', pos + 1);
+            if (tickEnd !== -1) { pos = tickEnd + 1; continue; }
+          }
+          if (src[pos] === '*' && !src.startsWith('**', pos) && src[pos - 1] !== '*') {
+            if (!/\s/.test(src[pos - 1])) { end = pos; break; }
+          }
+          pos += 1;
+        }
+        if (end > cursor + 1) {
+          flushPlain();
+          const em = createEl('em', '');
+          appendInlineFormatted(em, src.slice(cursor + 1, end));
+          parent.appendChild(em);
+          cursor = end + 1;
+          continue;
+        }
+      }
+    }
+
+    if (src[cursor] === '_' && !src.startsWith('__', cursor)) {
+      const prevChar = cursor > 0 ? src[cursor - 1] : '';
+      const nextChar = src[cursor + 1];
+      const leftOk = !prevChar || /[\s(>[\]]/.test(prevChar);
+      if (leftOk && nextChar && !/\s/.test(nextChar)) {
+        let pos = cursor + 1;
+        let end = -1;
+        while (pos < src.length) {
+          if (src[pos] === '`') {
+            const tickEnd = src.indexOf('`', pos + 1);
+            if (tickEnd !== -1) { pos = tickEnd + 1; continue; }
+          }
+          if (src[pos] === '_' && !src.startsWith('__', pos) && src[pos - 1] !== '_') {
+            const after = src[pos + 1] || '';
+            if (!/\s/.test(src[pos - 1]) && (!after || /[\s.,;:!?)]/.test(after))) {
+              end = pos;
+              break;
+            }
+          }
+          pos += 1;
+        }
+        if (end > cursor + 1) {
+          flushPlain();
+          const em = createEl('em', '');
+          appendInlineFormatted(em, src.slice(cursor + 1, end));
+          parent.appendChild(em);
+          cursor = end + 1;
+          continue;
+        }
+      }
+    }
+
+    plain += src[cursor];
+    cursor += 1;
+  }
+  flushPlain();
 }
 
 function createSandboxedDiagramPreview(mermaidSource) {
@@ -771,10 +1127,83 @@ function createSandboxedDiagramPreview(mermaidSource) {
   return wrap;
 }
 
+function splitMarkdownTableRow(line) {
+  let trimmed = String(line || '').trim();
+  if (trimmed.startsWith('|')) trimmed = trimmed.slice(1);
+  if (trimmed.endsWith('|')) trimmed = trimmed.slice(0, -1);
+  return trimmed.split('|').map(cell => cell.trim());
+}
+
+function isMarkdownTableSeparator(line) {
+  const trimmed = String(line || '').trim();
+  if (!trimmed.includes('|') && !/^:?-{3,}:?$/.test(trimmed)) return false;
+  const cells = splitMarkdownTableRow(trimmed);
+  return cells.length > 0 && cells.every(cell => /^:?-{3,}:?$/.test(cell));
+}
+
+function isMarkdownBlockStart(lines, index) {
+  const line = lines[index] ?? '';
+  if (/^\s*```/.test(line)) return true;
+  if (/^\s*#{1,6}\s+/.test(line)) return true;
+  if (/^\s*(?:-{3,}|\*{3,}|_{3,})\s*$/.test(line)) return true;
+  if (/^\s*>/.test(line)) return true;
+  if (/^\s*(?:[-*+]\s+|\d+\.\s+)/.test(line)) return true;
+  if (index + 1 < lines.length && line.includes('|') && isMarkdownTableSeparator(lines[index + 1])) return true;
+  return false;
+}
+
+function renderMarkdownList(lines, startIndex) {
+  const firstMatch = lines[startIndex].match(/^(\s*)(?:([-*+])|(\d+)\.)\s+(.*)$/);
+  const baseIndent = firstMatch[1].length;
+  const ordered = Boolean(firstMatch[3]);
+  const listEl = createEl(ordered ? 'ol' : 'ul');
+  if (ordered && firstMatch[3] !== '1') {
+    const startNum = Number(firstMatch[3]);
+    if (Number.isFinite(startNum) && startNum > 1) listEl.start = startNum;
+  }
+
+  let i = startIndex;
+  while (i < lines.length) {
+    const match = lines[i].match(/^(\s*)(?:([-*+])|(\d+)\.)\s+(.*)$/);
+    if (!match) break;
+    const indent = match[1].length;
+    const isOrd = Boolean(match[3]);
+    if (indent < baseIndent || (indent === baseIndent && isOrd !== ordered)) break;
+
+    const li = createEl('li');
+    appendInlineFormatted(li, match[4]);
+    i += 1;
+
+    while (i < lines.length) {
+      const nextLine = lines[i];
+      if (!nextLine.trim()) break;
+      const nextMatch = nextLine.match(/^(\s*)(?:([-*+])|(\d+)\.)\s+(.*)$/);
+      if (nextMatch) {
+        if (nextMatch[1].length > indent) {
+          const nested = renderMarkdownList(lines, i);
+          li.appendChild(nested.element);
+          i = nested.nextIndex;
+          continue;
+        }
+        break;
+      }
+      if (/^\s+/.test(nextLine) && !/^\s*(?:```|>|#{1,6}\s+)/.test(nextLine)) {
+        li.appendChild(createEl('br'));
+        appendInlineFormatted(li, nextLine.trim());
+        i += 1;
+        continue;
+      }
+      break;
+    }
+    listEl.appendChild(li);
+  }
+  return { element: listEl, nextIndex: i };
+}
+
 function renderSafeMarkdown(container, markdownText) {
   clearNode(container);
   if (!container) return;
-  const src = String(markdownText || '').trim();
+  const src = String(markdownText || '').replace(/\r\n?/g, '\n').trim();
   if (!src) {
     container.appendChild(createEl('p', 'muted', 'No content yet.'));
     return;
@@ -783,72 +1212,104 @@ function renderSafeMarkdown(container, markdownText) {
   let i = 0;
   while (i < lines.length) {
     const line = lines[i];
-    const fence = line.match(/^```([\w-]*)\s*$/);
+    if (!line.trim()) {
+      i += 1;
+      continue;
+    }
+
+    const fence = line.match(/^\s*```([\w-]*)\s*$/);
     if (fence) {
       const lang = (fence[1] || '').toLowerCase();
       const buf = [];
       i += 1;
-      while (i < lines.length && !lines[i].startsWith('```')) {
+      while (i < lines.length && !/^\s*```\s*$/.test(lines[i])) {
         buf.push(lines[i]);
         i += 1;
       }
-      i += 1;
+      if (i < lines.length) i += 1;
       const codeText = buf.join('\n');
       container.appendChild(createEl('pre', 'code-block', codeText));
       if (lang === 'mermaid') container.appendChild(createSandboxedDiagramPreview(codeText));
       continue;
     }
-    if (line.startsWith('### ')) {
-      const h = createEl('h3');
-      appendInlineFormatted(h, line.slice(4));
+
+    const heading = line.match(/^\s*(#{1,6})\s+(.+?)\s*#*\s*$/);
+    if (heading) {
+      const h = createEl(`h${heading[1].length}`);
+      appendInlineFormatted(h, heading[2]);
       container.appendChild(h);
       i += 1;
       continue;
     }
-    if (line.startsWith('## ')) {
-      const h = createEl('h2');
-      appendInlineFormatted(h, line.slice(3));
-      container.appendChild(h);
+
+    if (/^\s*(?:-{3,}|\*{3,}|_{3,})\s*$/.test(line)) {
+      container.appendChild(createEl('hr', 'divider'));
       i += 1;
       continue;
     }
-    if (line.startsWith('# ')) {
-      const h = createEl('h1');
-      appendInlineFormatted(h, line.slice(2));
-      container.appendChild(h);
-      i += 1;
-      continue;
-    }
-    if (/^\s*[-*]\s+/.test(line)) {
-      const ul = createEl('ul');
-      while (i < lines.length && /^\s*[-*]\s+/.test(lines[i])) {
-        const li = createEl('li');
-        appendInlineFormatted(li, lines[i].replace(/^\s*[-*]\s+/, ''));
-        ul.appendChild(li);
+
+    if (/^\s*>/.test(line)) {
+      const quoteLines = [];
+      while (i < lines.length && /^\s*>/.test(lines[i])) {
+        quoteLines.push(lines[i].replace(/^\s*>\s?/, ''));
         i += 1;
       }
-      container.appendChild(ul);
+      const bq = createEl('blockquote');
+      renderSafeMarkdown(bq, quoteLines.join('\n'));
+      container.appendChild(bq);
       continue;
     }
-    if (/^\s*\d+\.\s+/.test(line)) {
-      const ol = createEl('ol');
-      while (i < lines.length && /^\s*\d+\.\s+/.test(lines[i])) {
-        const li = createEl('li');
-        appendInlineFormatted(li, lines[i].replace(/^\s*\d+\.\s+/, ''));
-        ol.appendChild(li);
+
+    if (i + 1 < lines.length && line.includes('|') && isMarkdownTableSeparator(lines[i + 1])) {
+      const headers = splitMarkdownTableRow(line);
+      i += 2;
+      const wrap = createEl('div', 'md-table-wrap');
+      const table = createEl('table');
+      const thead = createEl('thead');
+      const headRow = createEl('tr');
+      for (const hText of headers) {
+        const th = createEl('th');
+        appendInlineFormatted(th, hText);
+        headRow.appendChild(th);
+      }
+      thead.appendChild(headRow);
+      table.appendChild(thead);
+
+      const tbody = createEl('tbody');
+      while (i < lines.length && lines[i].trim() && lines[i].includes('|')) {
+        const rowCells = splitMarkdownTableRow(lines[i]);
+        const tr = createEl('tr');
+        const colCount = Math.max(headers.length, rowCells.length);
+        for (let c = 0; c < colCount; c += 1) {
+          const td = createEl('td');
+          appendInlineFormatted(td, rowCells[c] || '');
+          tr.appendChild(td);
+        }
+        tbody.appendChild(tr);
         i += 1;
       }
-      container.appendChild(ol);
+      table.appendChild(tbody);
+      wrap.appendChild(table);
+      container.appendChild(wrap);
       continue;
     }
-    if (!line.trim()) {
-      i += 1;
+
+    if (/^\s*(?:[-*+]\s+|\d+\.\s+)/.test(line)) {
+      const parsedList = renderMarkdownList(lines, i);
+      container.appendChild(parsedList.element);
+      i = parsedList.nextIndex;
       continue;
     }
+
     const p = createEl('p');
-    appendInlineFormatted(p, line);
+    let firstLine = true;
+    while (i < lines.length && lines[i].trim() && !isMarkdownBlockStart(lines, i)) {
+      if (!firstLine) p.appendChild(createEl('br'));
+      appendInlineFormatted(p, lines[i]);
+      firstLine = false;
+      i += 1;
+    }
     container.appendChild(p);
-    i += 1;
   }
 }
 
@@ -1012,8 +1473,26 @@ async function loadConversationActivity(generation) {
   }
 }
 
+function syncTodoPlanRevision() {
+  if (state.todoPlanID) {
+    const thread = state.planThreads.find(item => item.id === state.todoPlanID);
+    if (!thread) {
+      state.todoPlanID = '';
+      state.todoRevision = 0;
+    } else if (!state.todoRevision) {
+      state.todoRevision = thread.latest_revision || 0;
+    }
+    return;
+  }
+  if (state.todoRevision > 0) {
+    const matched = state.planHistory.find(item => item.revision === state.todoRevision);
+    if (matched?.plan_id) state.todoPlanID = matched.plan_id;
+  }
+}
+
 async function loadTasksRouteData(gen, append = false) {
   if (!state.project) return;
+  syncTodoPlanRevision();
   const query = {
     revision: state.todoRevision || '',
     status: state.taskFilters.status,
@@ -1031,7 +1510,12 @@ async function loadTasksRouteData(gen, append = false) {
   if (searchRes.status === 'rejected') throw searchRes.reason;
   const payload = searchRes.value || {};
   const pageTasks = Array.isArray(payload.tasks) ? payload.tasks : (Array.isArray(payload) ? payload : []);
-  state.tasks = append ? [...state.tasks, ...pageTasks] : pageTasks;
+  if (append) {
+    const seen = new Set(state.tasks.map(t => t.id));
+    state.tasks = [...state.tasks, ...pageTasks.filter(t => !seen.has(t.id))];
+  } else {
+    state.tasks = pageTasks;
+  }
   state.taskTotal = typeof payload.total === 'number' ? payload.total : state.tasks.length;
   state.taskCursor = payload.next_cursor || '';
   state.taskCounts = countsRes.status === 'fulfilled' && countsRes.value ? countsRes.value : {};
@@ -1040,6 +1524,7 @@ async function loadTasksRouteData(gen, append = false) {
 
 async function loadTaskSearchOnly(gen, append = false, isCurrent = () => true) {
   if (!state.project) return;
+  syncTodoPlanRevision();
   const payload = await request(projectApi('task-search', {
     revision: state.todoRevision || '',
     status: state.taskFilters.status,
@@ -1050,7 +1535,12 @@ async function loadTaskSearchOnly(gen, append = false, isCurrent = () => true) {
   }));
   if (gen !== state.generation || !isCurrent()) return;
   const pageTasks = Array.isArray(payload?.tasks) ? payload.tasks : (Array.isArray(payload) ? payload : []);
-  state.tasks = append ? [...state.tasks, ...pageTasks] : pageTasks;
+  if (append) {
+    const seen = new Set(state.tasks.map(t => t.id));
+    state.tasks = [...state.tasks, ...pageTasks.filter(t => !seen.has(t.id))];
+  } else {
+    state.tasks = pageTasks;
+  }
   state.taskTotal = typeof payload?.total === 'number' ? payload.total : state.tasks.length;
   state.taskCursor = payload?.next_cursor || '';
 }
@@ -1077,7 +1567,10 @@ async function loadAgentsRouteData(gen) {
   const selectedID = state.profileAgent || state.agents.find(agent => agent.id !== state.project?.id)?.id || state.agents[0]?.id || '';
   if (!state.profileAgent && selectedID) state.profileAgent = selectedID;
   state.agentTasksAgentID = selectedID;
+  state.agentTasksCursor = '';
+  state.agentTasksTotal = 0;
   state.agentTasksLoading = Boolean(selectedID);
+  state.agentTasksLoadingMore = false;
   state.agentTasksError = '';
   const [presetsRes, checklistsRes, tasksRes] = await Promise.allSettled([
     request(projectApi('role-presets')),
@@ -1087,21 +1580,29 @@ async function loadAgentsRouteData(gen) {
   if (gen !== state.generation) return;
   state.rolePresets = presetsRes.status === 'fulfilled' && Array.isArray(presetsRes.value) ? presetsRes.value : [];
   state.checklists = checklistsRes.status === 'fulfilled' && checklistsRes.value ? checklistsRes.value : { available: false, reason: '', items: [] };
-  state.agentTasks = tasksRes.status === 'fulfilled' ? (Array.isArray(tasksRes.value?.tasks) ? tasksRes.value.tasks : []) : [];
+  const payload = tasksRes.status === 'fulfilled' ? (tasksRes.value || {}) : {};
+  state.agentTasks = Array.isArray(payload.tasks) ? payload.tasks : [];
+  state.agentTasksCursor = payload.next_cursor || '';
+  state.agentTasksTotal = typeof payload.total === 'number' ? payload.total : state.agentTasks.length;
   state.agentTasksError = tasksRes.status === 'rejected' ? tasksRes.reason.message : '';
   state.agentTasksLoading = false;
 }
 
 async function loadAgentTaskPreview(agentID, gen = state.generation) {
   state.agentTasks = [];
+  state.agentTasksCursor = '';
+  state.agentTasksTotal = 0;
   state.agentTasksAgentID = agentID;
   state.agentTasksLoading = true;
+  state.agentTasksLoadingMore = false;
   state.agentTasksError = '';
   if (typeof renderAgentsView === 'function') renderAgentsView();
   try {
     const result = await request(projectApi('task-search', { assignee: agentID }));
     if (gen !== state.generation || state.profileAgent !== agentID) return;
     state.agentTasks = Array.isArray(result?.tasks) ? result.tasks : [];
+    state.agentTasksCursor = result?.next_cursor || '';
+    state.agentTasksTotal = typeof result?.total === 'number' ? result.total : state.agentTasks.length;
   } catch (error) {
     if (gen === state.generation && state.profileAgent === agentID) state.agentTasksError = error.message;
   } finally {
@@ -1109,6 +1610,30 @@ async function loadAgentTaskPreview(agentID, gen = state.generation) {
       state.agentTasksLoading = false;
       if (typeof renderAgentsView === 'function') renderAgentsView();
     }
+  }
+}
+
+async function loadMoreAgentTasks() {
+  if (!state.project || !state.agentTasksAgentID || !state.agentTasksCursor || state.agentTasksLoadingMore) {
+    return { appended: [], hasMore: false };
+  }
+  const gen = state.generation;
+  const agentID = state.agentTasksAgentID;
+  state.agentTasksLoadingMore = true;
+  try {
+    const result = await request(projectApi('task-search', { assignee: agentID, cursor: state.agentTasksCursor }));
+    if (gen !== state.generation || state.profileAgent !== agentID) return { appended: [], hasMore: false };
+    const existingIDs = new Set(state.agentTasks.map(t => t.id));
+    const pageTasks = (Array.isArray(result?.tasks) ? result.tasks : []).filter(t => !existingIDs.has(t.id));
+    state.agentTasks.push(...pageTasks);
+    state.agentTasksCursor = result?.next_cursor || '';
+    if (typeof result?.total === 'number') state.agentTasksTotal = result.total;
+    return { appended: pageTasks, hasMore: Boolean(state.agentTasksCursor) };
+  } catch (error) {
+    if (gen === state.generation) showError(error.message);
+    return { appended: [], hasMore: Boolean(state.agentTasksCursor) };
+  } finally {
+    state.agentTasksLoadingMore = false;
   }
 }
 
@@ -1163,17 +1688,30 @@ async function loadSettingsRouteData(gen) {
       state.remoteAccessEnabled = Boolean(value?.enabled);
     } else if (['budget', 'settings', 'retention'].includes(resource)) {
       state[resource] = value;
+    } else if (resource === 'events') {
+      const rawEvents = Array.isArray(value) ? value : [];
+      state.events = [...rawEvents].reverse();
+      state.eventsOldestSeq = rawEvents[0]?.sequence || 0;
+      state.eventsHasMore = rawEvents.length >= 100 && state.eventsOldestSeq > 1;
+      state.eventsLoadingMore = false;
     } else {
       state[fields[resource] || resource] = Array.isArray(value) ? value : [];
     }
   });
   if (tab === 'history') {
     state.legacyRecords = [];
+    state.legacyRecordsHasMore = false;
+    state.legacyRecordsLoadingMore = false;
+    state.legacyRecordsImportID = '';
     const first = state.legacyImports[0];
     if (first) {
       try {
-        const records = await request(projectApi('legacy-records', { import_id: first.id }));
-        if (current() && Array.isArray(records)) state.legacyRecords = records;
+        const records = await request(projectApi('legacy-records', { import_id: first.id, limit: 25 }));
+        if (current() && Array.isArray(records)) {
+          state.legacyRecords = records;
+          state.legacyRecordsImportID = first.id;
+          state.legacyRecordsHasMore = records.length >= 25;
+        }
       } catch {}
     }
   }
@@ -1184,6 +1722,59 @@ async function loadSettingsRouteData(gen) {
       status.textContent = failures.length ? 'Some settings could not be loaded. Refresh to try again.' : '';
     }
     if (typeof renderSettingsView === 'function') renderSettingsView();
+  }
+}
+
+async function loadMoreProjectEvents() {
+  if (!state.project || !state.eventsHasMore || !state.eventsOldestSeq || state.eventsLoadingMore) {
+    return { appended: [], hasMore: false };
+  }
+  const gen = state.generation;
+  const project = state.project;
+  state.eventsLoadingMore = true;
+  try {
+    const raw = await request(projectApi('events', { before: state.eventsOldestSeq, limit: 50 }));
+    if (gen !== state.generation || state.project !== project) return { appended: [], hasMore: false };
+    const list = Array.isArray(raw) ? raw : [];
+    const seen = new Set(state.events.map(ev => ev.sequence));
+    const desc = [...list].reverse().filter(ev => !seen.has(ev.sequence));
+    state.events.push(...desc);
+    if (list.length) state.eventsOldestSeq = list[0].sequence || state.eventsOldestSeq;
+    state.eventsHasMore = list.length >= 50 && state.eventsOldestSeq > 1;
+    return { appended: desc, hasMore: state.eventsHasMore };
+  } catch (error) {
+    if (gen === state.generation) showError(error.message);
+    return { appended: [], hasMore: state.eventsHasMore };
+  } finally {
+    state.eventsLoadingMore = false;
+  }
+}
+
+async function loadMoreLegacyRecords() {
+  if (!state.project || !state.legacyRecordsHasMore || !state.legacyRecordsImportID || state.legacyRecordsLoadingMore) {
+    return { appended: [], hasMore: false };
+  }
+  const gen = state.generation;
+  const project = state.project;
+  const after = state.legacyRecords.at(-1)?.id || '';
+  if (!after) {
+    state.legacyRecordsHasMore = false;
+    return { appended: [], hasMore: false };
+  }
+  state.legacyRecordsLoadingMore = true;
+  try {
+    const raw = await request(projectApi('legacy-records', { import_id: state.legacyRecordsImportID, after, limit: 25 }));
+    if (gen !== state.generation || state.project !== project) return { appended: [], hasMore: false };
+    const seen = new Set(state.legacyRecords.map(r => `${r.kind || ''}:${r.id}`));
+    const appended = (Array.isArray(raw) ? raw : []).filter(r => !seen.has(`${r.kind || ''}:${r.id}`));
+    state.legacyRecords.push(...appended);
+    state.legacyRecordsHasMore = Array.isArray(raw) && raw.length >= 25 && appended.length > 0;
+    return { appended, hasMore: state.legacyRecordsHasMore };
+  } catch (error) {
+    if (gen === state.generation) showError(error.message);
+    return { appended: [], hasMore: state.legacyRecordsHasMore };
+  } finally {
+    state.legacyRecordsLoadingMore = false;
   }
 }
 
@@ -1268,10 +1859,17 @@ function setView(viewName, opts = {}) {
   }
   if (opts.revision !== undefined && viewName === 'todos') {
     state.todoRevision = opts.revision;
+    const matched = state.planHistory.find(item => item.revision === opts.revision);
+    state.todoPlanID = matched?.plan_id || '';
     if (opts.revision > 0) {
       state.todoScope = 'project';
-      state.todoGoalTab = 'plan';
+      state.todoGoalTab = 'all';
     }
+  }
+  if (opts.planID !== undefined && viewName === 'todos') {
+    state.todoPlanID = opts.planID;
+    const thread = state.planThreads.find(item => item.id === opts.planID);
+    state.todoRevision = opts.revision !== undefined ? opts.revision : (thread?.latest_revision || 0);
   }
   if (opts.todoAgent) {
     state.todoScope = opts.todoAgent === state.project?.id ? 'mine' : 'agent';
@@ -1285,12 +1883,19 @@ function setView(viewName, opts = {}) {
   }
   if (opts.channelId !== undefined) {
     state.channelId = opts.channelId;
-    if (opts.channelId) state.recipient = '';
+    if (opts.channelId) {
+      state.recipient = '';
+      state.chatTab = 'channels';
+    }
   }
   if (opts.recipient !== undefined) {
     state.recipient = opts.recipient;
-    if (opts.recipient) state.channelId = '';
+    if (opts.recipient) {
+      state.channelId = '';
+      state.chatTab = 'dms';
+    }
   }
+  if (opts.chatTab) state.chatTab = opts.chatTab;
   if (opts.mobilePane) state.mobilePane = opts.mobilePane;
   setMobileRailOpen(false);
   syncUrlState(Boolean(opts.replaceUrl));
@@ -1520,6 +2125,7 @@ function render() {
     settings: typeof renderSettingsView === 'function' ? renderSettingsView : null
   };
   renderers[state.view]?.();
+  if (typeof initCustomSelects === 'function') initCustomSelects();
 }
 
 function wireShellEvents() {
@@ -1569,6 +2175,7 @@ function wireShellEvents() {
   switcherBtn?.addEventListener('click', () => {
     if (!switcherMenu) return;
     const willOpen = switcherMenu.hidden;
+    if (willOpen && typeof closeAllCustomSelects === 'function') closeAllCustomSelects();
     switcherMenu.hidden = !willOpen;
     switcherBtn.setAttribute('aria-expanded', String(willOpen));
   });
@@ -1602,7 +2209,7 @@ function wireShellEvents() {
     const target = state.previousView && state.previousView !== 'search' ? state.previousView : 'chat';
     setView(target);
   });
-  ['#projects-tabs', '#plan-view-tabs', '#todo-scope-tabs', '#agents-view-tabs', '#search-mode-tabs', '#settings-tabs']
+  ['#projects-tabs', '#chat-view-tabs', '#plan-view-tabs', '#todo-scope-tabs', '#agents-view-tabs', '#search-mode-tabs', '#settings-tabs']
     .forEach(selector => {
       const tablist = $(selector);
       if (!tablist) return;
@@ -1715,9 +2322,39 @@ function wireShellEvents() {
 
   $('#open-audit-btn')?.addEventListener('click', async () => {
     if (!state.project) return;
+    const project = state.project;
     try {
-      const events = await request(projectApi('events', { recent: 1 }));
-      renderList($('#audit-list'), events || [], 'No recent events recorded.', renderAuditEventRow);
+      const raw = await request(projectApi('events', { recent: 1, limit: 50 }));
+      if (state.project !== project) return;
+      const list = Array.isArray(raw) ? raw : [];
+      const auditEvents = [...list].reverse();
+      let oldestSeq = list[0]?.sequence || 0;
+      let hasMore = list.length >= 50 && oldestSeq > 1;
+      let loading = false;
+      const loadOlderAuditEvents = async () => {
+        if (!hasMore || !oldestSeq || loading || state.project !== project) return { appended: [], hasMore: false };
+        loading = true;
+        try {
+          const older = await request(projectApi('events', { before: oldestSeq, limit: 50 }));
+          if (state.project !== project) return { appended: [], hasMore: false };
+          const olderList = Array.isArray(older) ? older : [];
+          const seen = new Set(auditEvents.map(ev => ev.sequence));
+          const desc = [...olderList].reverse().filter(ev => !seen.has(ev.sequence));
+          auditEvents.push(...desc);
+          if (olderList.length) oldestSeq = olderList[0].sequence || oldestSeq;
+          hasMore = olderList.length >= 50 && oldestSeq > 1;
+          return { appended: desc, hasMore };
+        } finally {
+          loading = false;
+        }
+      };
+      const auditList = $('#audit-list');
+      renderList(auditList, auditEvents, 'No recent events recorded.', renderAuditEventRow, {
+        pageSize: 25,
+        root: auditList?.closest('.modal-card') || null,
+        hasMore: () => hasMore,
+        loadMore: loadOlderAuditEvents
+      });
       openDialog('audit-dialog');
     } catch (err) {
       showError(err.message);
@@ -1828,6 +2465,7 @@ function wireShellEvents() {
 }
 
 function wireEvents() {
+  if (typeof initCustomSelects === 'function') initCustomSelects();
   wireShellEvents();
   if (typeof wireProjectDialogEvents === 'function') wireProjectDialogEvents();
   if (typeof wireChatEvents === 'function') wireChatEvents();
@@ -1874,7 +2512,7 @@ async function boot() {
       const previousQuery = state.searchQuery;
       const previousSettings = state.settingsTab + '/' + state.accessSection;
       const previousRoom = typeof activeChatDraftKey === 'function' ? activeChatDraftKey() : '';
-      const previousTaskQuery = JSON.stringify([state.todoScope, state.todoAgent, state.todoRevision, state.taskFilters]);
+      const previousTaskQuery = JSON.stringify([state.todoScope, state.todoPlanID, state.todoAgent, state.todoRevision, state.taskFilters]);
       const next = readUrlState();
       if ($('#header-search-input')) $('#header-search-input').value = next.searchQuery;
       const nextSelected = typeof projectFromLocation === 'function' ? projectFromLocation(next) : null;
@@ -1892,7 +2530,7 @@ async function boot() {
         if (typeof closeAgentDMs === 'function') closeAgentDMs();
         if (typeof closeChatSearch === 'function') closeChatSearch();
       }
-      const tasksChanged = view === 'todos' && previousTaskQuery !== JSON.stringify([state.todoScope, state.todoAgent, state.todoRevision, state.taskFilters]);
+      const tasksChanged = view === 'todos' && previousTaskQuery !== JSON.stringify([state.todoScope, state.todoPlanID, state.todoAgent, state.todoRevision, state.taskFilters]);
       const searchChanged = state.view === 'search' && previousQuery !== next.searchQuery;
       const roomChanged = state.view === 'chat' && typeof activeChatDraftKey === 'function' && previousRoom !== activeChatDraftKey();
       if (searchChanged) {

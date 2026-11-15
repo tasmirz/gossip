@@ -79,6 +79,7 @@ type rpcRequest struct {
 	ExpectedFingerprint string                 `json:"expected_fingerprint,omitempty"`
 	Fingerprint         string                 `json:"fingerprint,omitempty"`
 	Enabled             bool                   `json:"enabled,omitempty"`
+	IsError             bool                   `json:"is_error,omitempty"`
 }
 
 // Remote speaks to an explicitly configured home node. It never follows
@@ -471,6 +472,9 @@ func rpcHandler(s *Store, requireTLS bool, pins map[[32]byte]map[string]bool, ce
 			v = map[string]bool{"ended": err == nil}
 		case "agent.presence":
 			v, err = s.ListAgentPresence(ctx, q.Project, token)
+		case "agent.tool_call":
+			err = s.RecordToolCall(ctx, q.Project, token, q.Name, q.IsError)
+			v = map[string]bool{"recorded": err == nil}
 		case "principal.revoke":
 			err = s.RevokePrincipal(ctx, q.Project, token, q.ID)
 			v = map[string]bool{"revoked": err == nil}

@@ -11,8 +11,14 @@ import (
 
 // RecentEvents returns the latest project events in chronological order.
 func (s *Store) RecentEvents(ctx context.Context, project, token string, limit int) ([]Event, error) {
-	if limit < 1 || limit > 200 {
-		return nil, errors.New("invalid limit")
+	return s.RecentEventsBefore(ctx, project, token, 0, limit)
+}
+
+// RecentEventsBefore returns up to limit project events with sequence < before
+// (or the latest events when before == 0) in chronological order.
+func (s *Store) RecentEventsBefore(ctx context.Context, project, token string, before int64, limit int) ([]Event, error) {
+	if before < 0 || limit < 1 || limit > 200 {
+		return nil, errors.New("invalid cursor or limit")
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -24,11 +30,12 @@ func (s *Store) RecentEvents(ctx context.Context, project, token string, limit i
 		return nil, err
 	}
 	rows, err := tx.QueryContext(ctx, `SELECT e.seq,e.actor,e.kind,e.entity_id,e.payload,e.created_at FROM events e WHERE e.project_id=?
+		AND (?=0 OR e.seq<?)
 		AND (?='owner' OR (e.kind NOT LIKE 'certificate.%' AND e.kind<>'dm.inspected'))
 		AND (e.kind NOT IN ('message.sent','message.acknowledged') OR EXISTS (
 			SELECT 1 FROM messages m WHERE m.id=e.entity_id AND m.project_id=e.project_id
 			AND (m.recipient IS NULL OR m.recipient=? OR m.sender=?)))
-		ORDER BY e.seq DESC LIMIT ?`, project, actor.Role, actor.ID, actor.ID, limit)
+		ORDER BY e.seq DESC LIMIT ?`, project, before, before, actor.Role, actor.ID, actor.ID, limit)
 	if err != nil {
 		return nil, err
 	}

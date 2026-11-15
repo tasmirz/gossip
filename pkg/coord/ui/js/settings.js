@@ -178,8 +178,7 @@ function renderSettingsAccessPanels(canManageMembers, canEditSettings) {
 
   const membersWrap = $('#members-list');
   if (membersWrap) {
-    clearNode(membersWrap);
-    for (const a of state.agents) {
+    renderList(membersWrap, state.agents, '', a => {
       const row = createEl('div', 'list-item');
       const top = createEl('div', 'list-item-row');
       const main = createEl('div', 'member-row-main');
@@ -249,8 +248,8 @@ function renderSettingsAccessPanels(canManageMembers, canEditSettings) {
           }
         }));
       }
-      membersWrap.appendChild(row);
-    }
+      return row;
+    }, { pageSize: 25 });
   }
 
   const activePerms = (state.permissions || []).filter(p => !p.revoked);
@@ -310,15 +309,14 @@ function renderSettingsAccessPanels(canManageMembers, canEditSettings) {
 
   const invWrap = $('#cert-invitations-list');
   if (invWrap) {
-    clearNode(invWrap);
-    for (const inv of state.certInvitations) {
+    renderList(invWrap, state.certInvitations, '', inv => {
       const row = createEl('div', 'list-item');
       row.append(
         createEl('div', 'list-item-title', `Invitation ${inv.id}`),
         createEl('div', 'muted small', `Status: ${inv.status || (inv.revoked ? 'revoked' : 'active')}`)
       );
-      invWrap.appendChild(row);
-    }
+      return row;
+    }, { pageSize: 25 });
   }
 
   if (state.settings) {
@@ -449,17 +447,24 @@ function renderSettingsOtherPanels() {
 
   const recWrap = $('#legacy-records-list');
   if (recWrap) {
-    clearNode(recWrap);
-    for (const rec of state.legacyRecords) {
+    renderList(recWrap, state.legacyRecords, '', rec => {
       const row = createEl('div', 'list-item');
       row.appendChild(createEl('div', 'list-item-title', `${rec.kind || 'record'} · ${rec.id}`));
-      recWrap.appendChild(row);
-    }
+      return row;
+    }, {
+      pageSize: 25,
+      hasMore: () => state.legacyRecordsHasMore,
+      loadMore: loadMoreLegacyRecords
+    });
   }
 
   const eventsList = $('#history-events-list');
   if (eventsList) {
-    renderList(eventsList, (state.events || []).slice(0, 25), 'No recent audit events recorded.', renderAuditEventRow);
+    renderList(eventsList, state.events || [], 'No recent audit events recorded.', renderAuditEventRow, {
+      pageSize: 25,
+      hasMore: () => state.eventsHasMore,
+      loadMore: loadMoreProjectEvents
+    });
   }
 }
 
@@ -478,17 +483,14 @@ function renderSettingsView() {
     await openShareProject('requests');
     $('#share-requests-heading')?.focus();
   };
-  for (const button of $$('[data-access-section]')) {
-    const active = button.dataset.accessSection === state.accessSection;
-    const panel = document.getElementById(button.dataset.accessSection);
-    if (panel) panel.hidden = !active;
-    button.setAttribute('aria-pressed', String(active));
-  }
-  const accessSectionSelect = $('#access-section-select');
-  if (accessSectionSelect) {
-    accessSectionSelect.replaceChildren(...$$('[data-access-section]:not([hidden])').map(button =>
-      new Option(button.textContent.trim(), button.dataset.accessSection)));
-    accessSectionSelect.value = state.accessSection;
+  for (const [selector, stateKey, datasetKey] of [
+    ['#access-section-select', 'accessSection', 'accessSection'],
+    ['#connections-section-select', 'connectionsSection', 'connectionsSection'],
+    ['#workspaces-section-select', 'workspacesSection', 'workspacesSection'],
+    ['#history-section-select', 'historySection', 'historySection']
+  ]) {
+    const buttons = $$(`[data-${datasetKey.replace(/[A-Z]/g, m => '-' + m.toLowerCase())}]`);
+    syncSettingsSectionNav(buttons, $(selector), stateKey, datasetKey);
   }
   if ($('#load-project-roles')) $('#load-project-roles').onclick = () => loadProjectRoleEditor(false);
   if ($('#new-project-role-btn')) $('#new-project-role-btn').onclick = () => loadProjectRoleEditor(true);
@@ -509,9 +511,31 @@ function renderSettingsView() {
   $$('.settings-panel').forEach(panel => {
     panel.hidden = panel.getAttribute('data-settings-panel') !== state.settingsTab;
   });
+  if ($('#access-project-scope')) $('#access-project-scope').hidden = state.settingsTab !== 'access';
 
   renderSettingsAccessPanels(canManageMembers(), canEditSettings());
   renderSettingsOtherPanels();
+}
+
+function syncSettingsSectionNav(buttons, selectEl, stateKey, datasetKey) {
+  if (!buttons.length) return;
+  const visible = buttons.filter(btn => !btn.hidden);
+  if (!visible.some(btn => btn.dataset[datasetKey] === state[stateKey]) && visible[0]) {
+    state[stateKey] = visible[0].dataset[datasetKey];
+  }
+  for (const button of buttons) {
+    const sectionId = button.dataset[datasetKey];
+    const active = sectionId === state[stateKey];
+    const panel = document.getElementById(sectionId);
+    if (panel) panel.hidden = !active;
+    button.setAttribute('aria-pressed', String(active));
+  }
+  if (selectEl) {
+    selectEl.replaceChildren(...visible.map(button =>
+      new Option(button.textContent.trim(), button.dataset[datasetKey])));
+    selectEl.value = state[stateKey];
+    if (typeof syncCustomSelect === 'function') syncCustomSelect(selectEl);
+  }
 }
 
 async function copyJsonWithFeedback(button, text) {
@@ -526,14 +550,14 @@ async function copyJsonWithFeedback(button, text) {
   }
 }
 
-function wireSettingsEvents() {
-  $$('[data-access-section]').forEach(button => {
+function bindSettingsSectionNav({ attr, stateKey, datasetKey, selectSelector }) {
+  $$(`[${attr}]`).forEach(button => {
     button.addEventListener('click', () => {
-      state.accessSection = button.dataset.accessSection;
+      state[stateKey] = button.dataset[datasetKey];
       syncUrlState();
       renderSettingsView();
       void loadSettingsRouteData(state.generation);
-      const section = document.getElementById(state.accessSection);
+      const section = document.getElementById(state[stateKey]);
       section?.focus({ preventScroll: true });
       if (section && section.getBoundingClientRect().top < $('.topbar').getBoundingClientRect().bottom) {
         $('#settings-tabs')?.scrollIntoView({ block: 'start' });
@@ -541,12 +565,19 @@ function wireSettingsEvents() {
     });
   });
 
-  $('#access-section-select')?.addEventListener('change', event => {
-    state.accessSection = event.target.value;
+  $(selectSelector)?.addEventListener('change', event => {
+    state[stateKey] = event.target.value;
     syncUrlState();
     renderSettingsView();
     void loadSettingsRouteData(state.generation);
   });
+}
+
+function wireSettingsEvents() {
+  bindSettingsSectionNav({ attr: 'data-access-section', stateKey: 'accessSection', datasetKey: 'accessSection', selectSelector: '#access-section-select' });
+  bindSettingsSectionNav({ attr: 'data-connections-section', stateKey: 'connectionsSection', datasetKey: 'connectionsSection', selectSelector: '#connections-section-select' });
+  bindSettingsSectionNav({ attr: 'data-workspaces-section', stateKey: 'workspacesSection', datasetKey: 'workspacesSection', selectSelector: '#workspaces-section-select' });
+  bindSettingsSectionNav({ attr: 'data-history-section', stateKey: 'historySection', datasetKey: 'historySection', selectSelector: '#history-section-select' });
 
   $('#copy-project-id')?.addEventListener('click', async () => {
     const id = state.project?.project_id;

@@ -30,6 +30,7 @@ type Backend interface {
 	HeartbeatAgentWithMetadata(context.Context, string, string, string, []AgentCapability, MCPClientInfo) error
 	EndAgentSession(context.Context, string, string, string) error
 	ListAgentPresence(context.Context, string, string) ([]AgentPresence, error)
+	RecordToolCall(context.Context, string, string, string, bool) error
 	RevokePrincipal(context.Context, string, string, string) error
 	AddCertificateGrant(context.Context, string, string, string) (CertificateGrant, error)
 	AddCertificateGrantUntil(context.Context, string, string, string, int64) (CertificateGrant, error)
@@ -1238,5 +1239,23 @@ func mcpServer(store Backend, project, token string, keeper *leaseKeeper, outbox
 				return result(nil, errors.New("operation must be read, search, publish, links, or link"))
 			}
 		})
+	if store != nil && strings.TrimSpace(project) != "" && strings.TrimSpace(token) != "" {
+		tools := srv.ListTools()
+		wrapped := make([]server.ServerTool, 0, len(tools))
+		for _, def := range tools {
+			toolName := def.Tool.Name
+			handler := def.Handler
+			wrapped = append(wrapped, server.ServerTool{
+				Tool: def.Tool,
+				Handler: func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+					res, callErr := handler(ctx, r)
+					isErr := callErr != nil || (res != nil && res.IsError)
+					_ = store.RecordToolCall(ctx, project, token, toolName, isErr)
+					return res, callErr
+				},
+			})
+		}
+		srv.SetTools(wrapped...)
+	}
 	return srv
 }

@@ -265,6 +265,10 @@ func (r *Remote) EndAgentSession(c context.Context, p, t, instanceID string) err
 func (r *Remote) ListAgentPresence(c context.Context, p, t string) ([]AgentPresence, error) {
 	return remoteCall[[]AgentPresence](c, r, t, rpcRequest{Operation: "agent.presence", Project: p})
 }
+func (r *Remote) RecordToolCall(c context.Context, p, t, toolName string, isError bool) error {
+	_, err := remoteCall[map[string]bool](c, r, t, rpcRequest{Operation: "agent.tool_call", Project: p, Name: toolName, IsError: isError})
+	return err
+}
 
 func (r *Remote) RevokePrincipal(c context.Context, p, t, principalID string) error {
 	_, err := remoteCall[map[string]bool](c, r, t, rpcRequest{Operation: "principal.revoke", Project: p, ID: principalID})

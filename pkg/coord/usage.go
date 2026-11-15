@@ -145,6 +145,33 @@ func equalDigest(a, b []byte) bool {
 	return bytes.Equal(a, b)
 }
 
+func accumulateUsageRow(summary *UsageSummary, costs map[string]int64, costCounts map[string]int, source, currency string, input, output, cost int64) error {
+	total := input + output
+	if summary.InputTokens > math.MaxInt64-input || summary.OutputTokens > math.MaxInt64-output || summary.TotalTokens > math.MaxInt64-total {
+		return errors.New("reported usage aggregate exceeds supported limits")
+	}
+	summary.InputTokens += input
+	summary.OutputTokens += output
+	summary.TotalTokens += total
+	summary.Records++
+	summary.Sources[source]++
+	if currency != "" {
+		if costs[currency] > math.MaxInt64-cost {
+			return errors.New("reported cost aggregate exceeds supported limits")
+		}
+		costs[currency] += cost
+		costCounts[currency]++
+	}
+	return nil
+}
+
+func finalizeUsageSummary(summary *UsageSummary, costs map[string]int64, costCounts map[string]int) {
+	for currency, cost := range costs {
+		summary.Costs = append(summary.Costs, UsageCost{Currency: currency, CostMicros: cost, Records: costCounts[currency]})
+	}
+	sort.Slice(summary.Costs, func(i, j int) bool { return summary.Costs[i].Currency < summary.Costs[j].Currency })
+}
+
 func readReportedUsage(ctx context.Context, tx *sql.Tx, project string) (UsageSummary, error) {
 	summary := UsageSummary{Sources: map[string]int{}, Costs: []UsageCost{}}
 	rows, err := tx.QueryContext(ctx, `SELECT source,input_tokens,output_tokens,cost_micros,currency FROM attempt_usage WHERE project_id=? ORDER BY recorded_at,task_id,attempt`, project)
@@ -160,29 +187,48 @@ func readReportedUsage(ctx context.Context, tx *sql.Tx, project string) (UsageSu
 		if err = rows.Scan(&source, &input, &output, &cost, &currency); err != nil {
 			return summary, err
 		}
-		total := input + output
-		if summary.InputTokens > math.MaxInt64-input || summary.OutputTokens > math.MaxInt64-output || summary.TotalTokens > math.MaxInt64-total {
-			return summary, errors.New("reported usage aggregate exceeds supported limits")
-		}
-		summary.InputTokens += input
-		summary.OutputTokens += output
-		summary.TotalTokens += total
-		summary.Records++
-		summary.Sources[source]++
-		if currency != "" {
-			if costs[currency] > math.MaxInt64-cost {
-				return summary, errors.New("reported cost aggregate exceeds supported limits")
-			}
-			costs[currency] += cost
-			costCounts[currency]++
+		if err = accumulateUsageRow(&summary, costs, costCounts, source, currency, input, output, cost); err != nil {
+			return summary, err
 		}
 	}
 	if err = rows.Err(); err != nil {
 		return summary, err
 	}
-	for currency, cost := range costs {
-		summary.Costs = append(summary.Costs, UsageCost{Currency: currency, CostMicros: cost, Records: costCounts[currency]})
-	}
-	sort.Slice(summary.Costs, func(i, j int) bool { return summary.Costs[i].Currency < summary.Costs[j].Currency })
+	finalizeUsageSummary(&summary, costs, costCounts)
 	return summary, nil
+}
+
+func readPrincipalReportedUsage(ctx context.Context, tx *sql.Tx, project string) (map[string]*UsageSummary, error) {
+	out := map[string]*UsageSummary{}
+	costsByPrincipal := map[string]map[string]int64{}
+	costCountsByPrincipal := map[string]map[string]int{}
+	rows, err := tx.QueryContext(ctx, `SELECT principal_id,source,input_tokens,output_tokens,cost_micros,currency FROM attempt_usage WHERE project_id=? ORDER BY recorded_at,task_id,attempt`, project)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var principalID, source, currency string
+		var input, output, cost int64
+		if err = rows.Scan(&principalID, &source, &input, &output, &cost, &currency); err != nil {
+			return nil, err
+		}
+		summary := out[principalID]
+		if summary == nil {
+			summary = &UsageSummary{Sources: map[string]int{}, Costs: []UsageCost{}}
+			out[principalID] = summary
+			costsByPrincipal[principalID] = map[string]int64{}
+			costCountsByPrincipal[principalID] = map[string]int{}
+		}
+		if err = accumulateUsageRow(summary, costsByPrincipal[principalID], costCountsByPrincipal[principalID], source, currency, input, output, cost); err != nil {
+			return nil, err
+		}
+	}
+	if err = rows.Err(); err != nil {
+		return nil, err
+	}
+	for principalID, summary := range out {
+		finalizeUsageSummary(summary, costsByPrincipal[principalID], costCountsByPrincipal[principalID])
+	}
+	return out, nil
 }
