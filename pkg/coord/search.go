@@ -9,6 +9,7 @@ import (
 )
 
 type TaskFilter struct {
+	Revision int    `json:"revision,omitempty"`
 	Status   string `json:"status"`
 	Kind     string `json:"kind"`
 	Assignee string `json:"assignee"`
@@ -61,11 +62,11 @@ func (s *Store) SearchTasks(ctx context.Context, project, token string, f TaskFi
 		}
 	}
 	rows, err := tx.QueryContext(ctx, `SELECT `+taskColumns+` FROM tasks WHERE project_id=?
-		AND (?='' OR status=?) AND (?='' OR kind=?)
+		AND (?=0 OR EXISTS(SELECT 1 FROM task_plan_links l WHERE l.project_id=tasks.project_id AND l.task_id=tasks.id AND l.revision=?)) AND (?='' OR status=?) AND (?='' OR kind=?)
 		AND (?='' OR owner=? OR EXISTS(SELECT 1 FROM task_assignments a WHERE a.task_id=tasks.id AND a.principal_id=?))
 		AND (?='' OR instr(lower(id||' '||title||' '||description),lower(?))>0)
 		AND (?='' OR rowid<?)
-		ORDER BY rowid DESC LIMIT ?`, project, f.Status, f.Status, f.Kind, f.Kind, f.Assignee, f.Assignee, f.Assignee, f.Query, f.Query, f.Cursor, cursorRowID, f.Limit+1)
+		ORDER BY rowid DESC LIMIT ?`, project, f.Revision, f.Revision, f.Status, f.Status, f.Kind, f.Kind, f.Assignee, f.Assignee, f.Assignee, f.Query, f.Query, f.Cursor, cursorRowID, f.Limit+1)
 	if err != nil {
 		return page, err
 	}

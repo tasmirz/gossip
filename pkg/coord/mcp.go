@@ -24,6 +24,7 @@ import (
 type Backend interface {
 	CredentialValid(context.Context, string, string) (bool, error)
 	ListPrincipals(context.Context, string, string) ([]Principal, error)
+	SetAgentParent(context.Context, string, string, string, string) error
 	HeartbeatAgent(context.Context, string, string, string) error
 	HeartbeatAgentWithCapabilities(context.Context, string, string, string, []AgentCapability) error
 	HeartbeatAgentWithMetadata(context.Context, string, string, string, []AgentCapability, MCPClientInfo) error
@@ -51,6 +52,8 @@ type Backend interface {
 	UpdateSettings(context.Context, string, string, Settings) (Settings, error)
 	CurrentPlan(context.Context, string, string) (Plan, error)
 	PublishPlan(context.Context, string, string, string, int) (int, error)
+	DeletePlanRevision(context.Context, string, string, int, int) error
+	DeletePlanThread(context.Context, string, string, string, int) error
 	AcknowledgePlan(context.Context, string, string, int) error
 	CreateRepository(context.Context, string, string, string) (Repository, error)
 	AddRepositoryRemoteHint(context.Context, string, string, string, string) (Repository, error)
@@ -291,7 +294,14 @@ func mcpServer(store Backend, project, token string, keeper *leaseKeeper, outbox
 		}
 		return map[string]any{}
 	}
+	channelBackend, _ := store.(ChannelBackend)
 	str := func(a map[string]any, k string) string { v, _ := a[k].(string); return v }
+	flag := func(a map[string]any, k string, defaultVal bool) bool {
+		if v, ok := a[k].(bool); ok {
+			return v
+		}
+		return defaultVal
+	}
 	num := func(a map[string]any, k string, defaultValue int) int {
 		switch v := a[k].(type) {
 		case float64:
@@ -488,10 +498,14 @@ func mcpServer(store Backend, project, token string, keeper *leaseKeeper, outbox
 			p, err := store.CurrentPlan(ctx, project, token)
 			return result(p, err)
 		})
-	srv.AddTool(mcp.NewTool("gossip_agents", mcp.WithDescription("List enrolled project principals, or revoke a principal's project credential. Membership changes require owner authority or a project-scoped membership.manage grant; delegated managers can enroll or revoke workers and reviewers, but cannot create owners or grant TLS certificate access."),
-		mcp.WithString("operation", mcp.Description("list (default) or revoke")), mcp.WithString("principal_id", mcp.Description("Principal to revoke"))),
+	srv.AddTool(mcp.NewTool("gossip_agents", mcp.WithDescription("List enrolled project principals, assign an explicit parent to preserve an agent/subagent tree, or revoke a principal's project credential. Parentage is display metadata and grants no permissions. Hierarchy changes require project owner authority."),
+		mcp.WithString("operation", mcp.Description("list (default), revoke, or parent")), mcp.WithString("principal_id", mcp.Description("Principal to revoke or the child whose parent changes")), mcp.WithString("parent_id", mcp.Description("Parent principal ID; empty detaches the child at the project root"))),
 		func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			a := args(r)
+			if str(a, "operation") == "parent" {
+				err := store.SetAgentParent(ctx, project, token, str(a, "principal_id"), str(a, "parent_id"))
+				return result(map[string]bool{"updated": err == nil}, err)
+			}
 			if str(a, "operation") == "revoke" {
 				err := store.RevokePrincipal(ctx, project, token, str(a, "principal_id"))
 				return result(map[string]bool{"revoked": err == nil}, err)
@@ -543,7 +557,7 @@ func mcpServer(store Backend, project, token string, keeper *leaseKeeper, outbox
 			}
 		})
 	srv.AddTool(mcp.NewTool("gossip_history", mcp.WithDescription("Browse imported legacy project history. Historical identities and roles do not grant permissions or reactivate tasks."),
-		mcp.WithString("operation", mcp.Required(), mcp.Description("imports or records")),
+		mcp.WithString("operation", mcp.Required(), mcp.Description("imports, records, or record (list imports, list archived record pages, or read one record chunk)")),
 		mcp.WithString("import_id", mcp.Description("Import ID required for records")),
 		mcp.WithString("record_type", mcp.Description("goal, actor, task, message, workflow, sop_artifact, or artifact_file")),
 		mcp.WithString("record_id", mcp.Description("Record ID required for record operation")),
@@ -621,9 +635,11 @@ func mcpServer(store Backend, project, token string, keeper *leaseKeeper, outbox
 				return result(nil, fmt.Errorf("unknown budget operation"))
 			}
 		})
-	srv.AddTool(mcp.NewTool("gossip_plan", mcp.WithDescription("Read or publish a versioned project plan. Publishing requires owner authority or a project-scoped plan.edit grant."),
-		mcp.WithString("operation", mcp.Required(), mcp.Description("read, cached, publish, or acknowledge")),
+	srv.AddTool(mcp.NewTool("gossip_plan", mcp.WithDescription("Read, publish, acknowledge, or delete a plan revision or independent plan. Publishing and deletion require owner authority or a project-scoped plan.edit grant."),
+		mcp.WithString("operation", mcp.Required(), mcp.Description("read, cached, publish, acknowledge, delete (revision), or delete_plan (all revisions and exclusive task records)")),
 		mcp.WithString("body", mcp.Description("Plan text for publish")),
+		mcp.WithString("plan_id", mcp.Description("Independent plan ID for delete_plan")),
+		mcp.WithInteger("revision", mcp.Description("Target plan revision for delete")),
 		mcp.WithInteger("expected_revision", mcp.Description("Current revision; zero for the first plan"))),
 		func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			a := args(r)
@@ -646,6 +662,12 @@ func mcpServer(store Backend, project, token string, keeper *leaseKeeper, outbox
 			case "acknowledge":
 				err := store.AcknowledgePlan(ctx, project, token, num(a, "expected_revision", 0))
 				return result(map[string]bool{"acknowledged": err == nil}, err)
+			case "delete":
+				err := store.DeletePlanRevision(ctx, project, token, int(num(a, "revision", 0)), int(num(a, "expected_revision", 0)))
+				return result(map[string]bool{"deleted": err == nil}, err)
+			case "delete_plan":
+				err := store.DeletePlanThread(ctx, project, token, str(a, "plan_id"), int(num(a, "expected_revision", 0)))
+				return result(map[string]bool{"deleted": err == nil}, err)
 			default:
 				return result(nil, fmt.Errorf("unknown plan operation"))
 			}
@@ -811,14 +833,31 @@ func mcpServer(store Backend, project, token string, keeper *leaseKeeper, outbox
 			usage, err := store.RecordAttemptUsage(ctx, project, token, str(a, "task_id"), num(a, "attempt", 0), str(a, "request_id"), UsageReport{Provider: str(a, "provider"), Model: str(a, "model"), Source: str(a, "source"), InputTokens: int64(num(a, "input_tokens", 0)), OutputTokens: int64(num(a, "output_tokens", 0)), CostMicros: int64(num(a, "cost_micros", 0)), Currency: str(a, "currency")})
 			return result(usage, err)
 		})
-	srv.AddTool(mcp.NewTool("gossip_submit", mcp.WithDescription("Submit a report for a live task attempt with its source baseline. For full_code review, use capture_diff to capture the registered worktree from the attempt's recorded commit, then request review; the orchestrator receives the candidate ID and digest and can fetch bounded pages. Capture is limited to the current MCP process worktree and includes tracked changes plus non-ignored untracked files. For diagram_report, include populated Markdown sections titled Review summary, Scope and evidence, UML class diagram, Sequence diagram, Findings, and Coverage and limitations. Put the classDiagram and sequenceDiagram Mermaid blocks in their matching sections, cover every planned coverage item, and state evidence limitations."),
-		mcp.WithString("operation", mcp.Description("submit (default), capture_diff, save_candidate, enqueue_candidate, candidate_outbox, retry_candidate, discard_candidate, prune_candidates, report_outbox, enqueue_report, retry_report, discard_report, prune_reports, list_candidates, get_candidate, or candidate_page")),
+	srv.AddTool(mcp.NewTool("gossip_submit", mcp.WithDescription("Submit a report for a live task attempt. For full_code review, capture the exact diff and submit it with operation submit_for_review, report body, baseline, and stable request_id in one atomic operation; the response returns report and candidate references. For diagram_report, include populated Markdown sections titled Review summary, Scope and evidence, UML class diagram, Sequence diagram, Findings, and Coverage and limitations."),
+		mcp.WithString("operation", mcp.Description("submit (default), submit_for_review, capture_diff, save_candidate, enqueue_candidate, candidate_outbox, retry_candidate, discard_candidate, prune_candidates, report_outbox, enqueue_report, retry_report, discard_report, prune_reports, list_candidates, get_candidate, or candidate_page")),
 		mcp.WithString("task_id"), mcp.WithInteger("attempt"), mcp.WithString("candidate_id"), mcp.WithString("request_id"), mcp.WithInteger("limit"), mcp.WithInteger("offset"), mcp.WithInteger("max_chars"),
 		mcp.WithString("baseline", mcp.Description("Source revision or workspace baseline")),
-		mcp.WithString("body", mcp.Description("Markdown report or result"))),
+		mcp.WithString("body", mcp.Description("Markdown report or result")), mcp.WithString("candidate_digest", mcp.Description("Exact SHA-256 digest returned with the captured candidate reference"))),
 		func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			a := args(r)
 			switch str(a, "operation") {
+			case "submit_for_review":
+				submitter, ok := store.(interface {
+					SubmitForReview(context.Context, string, string, string, int, string, string, string, string, string) (Report, CandidateReport, error)
+				})
+				if !ok {
+					return result(nil, errors.New("atomic submit_for_review is unavailable on this backend"))
+				}
+				report, candidate, err := submitter.SubmitForReview(ctx, project, token, str(a, "task_id"), num(a, "attempt", 0), str(a, "baseline"), str(a, "body"), str(a, "candidate_id"), str(a, "candidate_digest"), str(a, "request_id"))
+				if err == nil {
+					keeper.stop(str(a, "task_id"), report.Attempt)
+				}
+				report.Body = ""
+				candidate.Body = ""
+				return result(struct {
+					Report    Report          `json:"report"`
+					Candidate CandidateReport `json:"candidate"`
+				}{report, candidate}, err)
 			case "report_outbox":
 				if outbox == nil {
 					return result(nil, errors.New("report outbox is not enabled for this adapter"))
@@ -988,15 +1027,20 @@ func mcpServer(store Backend, project, token string, keeper *leaseKeeper, outbox
 				return result(nil, fmt.Errorf("unknown review operation"))
 			}
 		})
-	srv.AddTool(mcp.NewTool("gossip_send", mcp.WithDescription("Send a project message or a direct message to a project principal."),
+	srv.AddTool(mcp.NewTool("gossip_send", mcp.WithDescription("Send a project message, a group channel message (via channel_id), or a 1-on-1 direct message (via recipient)."),
 		mcp.WithString("operation", mcp.Description("send (default), enqueue, outbox, retry, or prune_delivered")),
-		mcp.WithString("recipient", mcp.Description("Principal ID, or empty for the project")),
+		mcp.WithString("recipient", mcp.Description("Principal ID for a 1-on-1 direct message, or empty for broadcast / channel")),
+		mcp.WithString("channel_id", mcp.Description("Group channel ID (sets thread_id to channel:<id>)")),
 		mcp.WithString("thread_id"), mcp.WithString("subject"), mcp.WithString("body"), mcp.WithInteger("limit"), mcp.WithString("request_id", mcp.Description("Stable unique ID for safe retries of the same message"))),
 		func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			a := args(r)
+			threadID := str(a, "thread_id")
+			if chID := strings.TrimSpace(str(a, "channel_id")); chID != "" && threadID == "" {
+				threadID = channelThreadID(chID)
+			}
 			switch str(a, "operation") {
 			case "", "send":
-				message, err := store.SendMessageWithID(ctx, project, token, str(a, "recipient"), str(a, "thread_id"), str(a, "subject"), str(a, "body"), str(a, "request_id"))
+				message, err := store.SendMessageWithID(ctx, project, token, str(a, "recipient"), threadID, str(a, "subject"), str(a, "body"), str(a, "request_id"))
 				return result(message, err)
 			case "enqueue", "outbox", "retry", "prune_delivered":
 				if outbox == nil {
@@ -1004,7 +1048,7 @@ func mcpServer(store Backend, project, token string, keeper *leaseKeeper, outbox
 				}
 				switch str(a, "operation") {
 				case "enqueue":
-					message, err := outbox.Enqueue(ctx, str(a, "recipient"), str(a, "thread_id"), str(a, "subject"), str(a, "body"), str(a, "request_id"))
+					message, err := outbox.Enqueue(ctx, str(a, "recipient"), threadID, str(a, "subject"), str(a, "body"), str(a, "request_id"))
 					message.Body = ""
 					return result(message, err)
 				case "outbox":
@@ -1044,12 +1088,25 @@ func mcpServer(store Backend, project, token string, keeper *leaseKeeper, outbox
 			report, err := store.GetReportPage(ctx, project, token, str(a, "report_id"), num(a, "offset", 0), num(a, "max_chars", 2048))
 			return result(report, err)
 		})
-	srv.AddTool(mcp.NewTool("gossip_sync", mcp.WithDescription("Read or wait for project events, inspect or clear the offline cache, refresh project snapshots, acknowledge a durable sequence cursor, or explicitly prune old event history as the project owner."),
-		mcp.WithString("operation", mcp.Description("events (default), wait, cached, refresh_cache, clear_cache, checkpoint, acknowledge, or owner-only prune_events")),
-		mcp.WithInteger("after", mcp.Description("Last event sequence read or processed for acknowledgment")), mcp.WithInteger("through_sequence", mcp.Description("For prune_events only: permanently remove project event rows through this sequence; stale replicas will be forced to refresh their snapshots")), mcp.WithInteger("limit", mcp.Description("Maximum results, 1 to 200")), mcp.WithInteger("wait_seconds", mcp.Description("For wait only; bounded to 25 seconds"))),
+	srv.AddTool(mcp.NewTool("gossip_sync", mcp.WithDescription("Use inbox for one bounded routine check-in containing the project snapshot, visible deltas, and message previews; use events or wait for event-only reads."),
+		mcp.WithString("operation", mcp.Description("inbox, events (default), wait, cached, refresh_cache, clear_cache, checkpoint, acknowledge, or owner-only prune_events")),
+		mcp.WithInteger("after", mcp.Description("Last event sequence read or processed for acknowledgment")), mcp.WithInteger("message_after", mcp.Description("Inbox message cursor returned by the previous inbox call")), mcp.WithInteger("through_sequence", mcp.Description("For prune_events only: permanently remove project event rows through this sequence; stale replicas will be forced to refresh their snapshots")), mcp.WithInteger("limit", mcp.Description("Maximum results, 1 to 200")), mcp.WithInteger("wait_seconds", mcp.Description("For wait only; bounded to 25 seconds"))),
 		func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			a := args(r)
 			switch str(a, "operation") {
+			case "inbox":
+				limit := num(a, "limit", 25)
+				if limit == 0 {
+					limit = 25
+				}
+				messageAfter := int64(num(a, "message_after", 0))
+				if inbox, ok := store.(interface {
+					SyncInbox(context.Context, string, string, int64, int64, int) (ProjectSyncFrame, error)
+				}); ok {
+					v, err := inbox.SyncInbox(ctx, project, token, int64(num(a, "after", 0)), messageAfter, limit)
+					return result(v, err)
+				}
+				return result(nil, errors.New("inbox synchronization is unavailable on this backend"))
 			case "", "events":
 				events, err := store.ReadEvents(ctx, project, token, int64(num(a, "after", 0)), num(a, "limit", 50))
 				if err == nil && outbox != nil {
@@ -1095,6 +1152,90 @@ func mcpServer(store Backend, project, token string, keeper *leaseKeeper, outbox
 				return result(status, err)
 			default:
 				return result(nil, fmt.Errorf("unknown sync operation"))
+			}
+		})
+	srv.AddTool(mcp.NewTool("gossip_channel", mcp.WithDescription("Create or participate in named project group chats alongside # general and 1-on-1 DMs. Other members can ask to join, and creators or owners can invite agents in # general."),
+		mcp.WithString("operation", mcp.Description("list (default), create, ask_join, join, invite, approve, decline, leave, remove, send, or messages")),
+		mcp.WithString("channel_id"), mcp.WithString("name"), mcp.WithString("topic"), mcp.WithString("principal_id", mcp.Description("Target member principal ID for invite/approve/remove")),
+		mcp.WithString("members", mcp.Description("Comma-separated principal IDs or JSON array of initial members")),
+		mcp.WithBoolean("auto_suffix", mcp.Description("Append a short suffix to the channel slug to avoid name collisions")),
+		mcp.WithBoolean("announce", mcp.Description("Post a short invitation or announcement into # general (defaults true for create/ask_join/invite)")),
+		mcp.WithString("note"), mcp.WithString("subject"), mcp.WithString("body"), mcp.WithString("request_id"), mcp.WithInteger("after"), mcp.WithInteger("limit")),
+		func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			if channelBackend == nil {
+				return result(nil, errors.New("group channels are unavailable on this backend"))
+			}
+			a := args(r)
+			switch str(a, "operation") {
+			case "", "list":
+				v, err := channelBackend.ListChannels(ctx, project, token)
+				return result(v, err)
+			case "create":
+				v, err := channelBackend.CreateChannel(ctx, project, token, str(a, "name"), str(a, "topic"), list(a, "members"), flag(a, "auto_suffix", false), flag(a, "announce", true))
+				return result(v, err)
+			case "ask_join":
+				v, err := channelBackend.RequestJoinChannel(ctx, project, token, str(a, "channel_id"), str(a, "note"), flag(a, "announce", true))
+				return result(v, err)
+			case "invite":
+				v, err := channelBackend.InviteToChannel(ctx, project, token, str(a, "channel_id"), str(a, "principal_id"), str(a, "note"), flag(a, "announce", true))
+				return result(v, err)
+			case "join", "approve", "decline", "leave", "remove":
+				v, err := channelBackend.RespondChannelMembership(ctx, project, token, str(a, "channel_id"), str(a, "principal_id"), str(a, "operation"))
+				return result(v, err)
+			case "send":
+				v, err := store.SendMessageWithID(ctx, project, token, "", channelThreadID(str(a, "channel_id")), str(a, "subject"), str(a, "body"), str(a, "request_id"))
+				return result(v, err)
+			case "messages":
+				v, err := channelBackend.ChannelMessages(ctx, project, token, str(a, "channel_id"), int64(num(a, "after", 0)), 0, num(a, "limit", 50), num(a, "after", 0) == 0)
+				return result(v, err)
+			default:
+				return result(nil, fmt.Errorf("unknown channel operation"))
+			}
+		})
+	srv.AddTool(mcp.NewTool("gossip_personal_todos", mcp.WithDescription("Browse project members’ personal to-dos, or create or update your own to-do."),
+		mcp.WithString("operation", mcp.Required()), mcp.WithString("id"), mcp.WithString("title"), mcp.WithString("status"), mcp.WithString("notes")),
+		func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			backend, ok := store.(personalItemsBackend)
+			if !ok {
+				return result(nil, errors.New("personal to-dos unavailable on this backend"))
+			}
+			switch r.GetString("operation", "") {
+			case "list":
+				return result(backend.PersonalItems(ctx, project, token))
+			case "save":
+				return result(backend.SavePersonalItem(ctx, project, token, PersonalItemInput{
+					ID: r.GetString("id", ""), Title: r.GetString("title", ""), Status: r.GetString("status", "todo"), Notes: r.GetString("notes", ""),
+				}))
+			default:
+				return result(nil, errors.New("operation must be list or save"))
+			}
+		})
+	srv.AddTool(mcp.NewTool("gossip_project_context", mcp.WithDescription("Read project stories, invariants and decisions, or publish a revision with plan edit permission."),
+		mcp.WithString("operation", mcp.Required()), mcp.WithString("target_kind"), mcp.WithString("target_id"), mcp.WithString("query"), mcp.WithString("id"), mcp.WithInteger("revision"),
+		mcp.WithString("kind"), mcp.WithString("title"), mcp.WithString("body"), mcp.WithString("verification"), mcp.WithString("source"), mcp.WithString("status")),
+		func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			backend, ok := store.(projectContextBackend)
+			if !ok {
+				return result(nil, errors.New("project context unavailable on this backend"))
+			}
+			id := r.GetString("id", "")
+			rev := int(num(args(r), "revision", 0))
+			switch r.GetString("operation", "") {
+			case "links":
+				return result(backend.ContextLinks(ctx, project, token, r.GetString("target_kind", ""), r.GetString("target_id", "")))
+			case "link":
+				err := backend.LinkContext(ctx, project, token, ContextLink{TargetKind: r.GetString("target_kind", ""), TargetID: r.GetString("target_id", ""), ContextID: id, Revision: rev})
+				return result(err == nil, err)
+			case "search":
+				return result(backend.SearchContext(ctx, project, token, r.GetString("query", "")))
+			case "read":
+				return result(backend.ProjectContext(ctx, project, token, id, rev))
+			case "publish":
+				return result(backend.PublishContext(ctx, project, token, ContextRecord{
+					ID: id, Revision: rev, Kind: r.GetString("kind", ""), Title: r.GetString("title", ""), Body: r.GetString("body", ""), Verification: r.GetString("verification", ""), Source: r.GetString("source", ""), Status: r.GetString("status", "active"),
+				}))
+			default:
+				return result(nil, errors.New("operation must be read, search, publish, links, or link"))
 			}
 		})
 	return srv

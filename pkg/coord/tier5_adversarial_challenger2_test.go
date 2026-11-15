@@ -972,13 +972,13 @@ func TestTier5_Adversarial_WebUI_InMemoryCredentialClearingOn401And403(t *testin
 	}
 
 	// B. Verify automatic invocation on HTTP 401
-	if !strings.Contains(appJS, "if(response.status===401&&projectPath){expireProjectSession(decodeURIComponent(projectPath[1]));}") &&
-		!strings.Contains(appJS, "response.status===401") {
+	if !strings.Contains(appJS, "response.status === 401 && projectPath && state.project === project") ||
+		!strings.Contains(appJS, "expireProjectSession(decodeURIComponent(projectPath[1]))") {
 		t.Error("app.js request handler does not automatically trigger expireProjectSession on HTTP 401")
 	}
 
 	// C. Verify handling of HTTP 403 in refresh() clears read data
-	if !strings.Contains(appJS, "e.status===403") || !strings.Contains(appJS, "state.projectReadDenied=true") {
+	if !strings.Contains(appJS, "e.status === 403") || !strings.Contains(appJS, "state.projectReadDenied=true") {
 		t.Error("app.js refresh catch block does not handle 403 access denial")
 	}
 

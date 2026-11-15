@@ -1,0 +1,22 @@
+{
+  "mcpServers": {
+    "gossip": {
+      "command": "/absolute/path/to/gossip",
+      "args": [
+        "coord-mcp"
+      ]
+    },
+    "gossip-project-bootstrap": {
+      "command": "/absolute/path/to/gossip",
+      "args": [
+        "coord-mcp-bootstrap",
+        "--db",
+        "/private/path/gossip/coord.db",
+        "--bootstrap-api-key-file",
+        "/private/path/gossip/bootstrap.key",
+        "--credential-dir",
+        "/private/path/gossip/credentials"
+      ]
+    }
+  }
+}

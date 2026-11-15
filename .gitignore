@@ -4,6 +4,8 @@
 *.tmp
 /gossip
 /bin/
+/test-website/
+/issues_todo.md
 
 # OS and Editor files
 .DS_Store

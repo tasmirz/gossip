@@ -3,11 +3,7 @@
     "gossip": {
       "command": "/absolute/path/to/gossip",
       "args": [
-        "coord-mcp",
-        "--db",
-        "/private/path/gossip/coord.db",
-        "--credential-file",
-        "/private/path/to/project-credential.json"
+        "coord-mcp"
       ]
     },
     "gossip-project-bootstrap": {
@@ -20,8 +16,7 @@
         "/private/path/gossip/bootstrap.key",
         "--credential-dir",
         "/private/path/gossip/credentials"
-      ],
-      "cwd": "/path/to/gossip"
+      ]
     }
   }
 }

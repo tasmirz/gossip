@@ -32,6 +32,10 @@ type Store struct {
 	instanceID string
 }
 
+// InstanceID identifies this local coordinator database for device registry
+// routing. It is metadata only and never grants project access.
+func (s *Store) InstanceID() string { return s.instanceID }
+
 // Open opens a local database. Do not place it on a network filesystem.
 func Open(path string) (*Store, error) {
 	if path == "" || path == ":memory:" {
@@ -71,6 +75,101 @@ func Open(path string) (*Store, error) {
 			return nil, fmt.Errorf("initialize coordination database: %w", err)
 		}
 	}
+	if _, err = db.Exec(`INSERT OR IGNORE INTO task_plan_links(project_id,task_id,revision) SELECT project_id,id,plan_revision FROM tasks`); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate task plan history: %w", err)
+	}
+	// Independent plans have stable identities; legacy revisions are kept as
+	// separate, unclassified plan threads until a user explicitly groups them.
+	if _, err = db.Exec(`CREATE TABLE IF NOT EXISTS plan_threads (
+		id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+		title TEXT NOT NULL, created_at INTEGER NOT NULL, created_by TEXT NOT NULL REFERENCES principals(id)
+	)`); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("create plan threads: %w", err)
+	}
+	if _, err = db.Exec(`CREATE INDEX IF NOT EXISTS plan_threads_project ON plan_threads(project_id,created_at)`); err != nil {
+		db.Close()
+		return nil, err
+	}
+	planIDFound := false
+	planCols, e := db.Query(`PRAGMA table_info(plans)`)
+	if e != nil {
+		db.Close()
+		return nil, e
+	}
+	for planCols.Next() {
+		var cid, nn, pk int
+		var name, typ string
+		var def any
+		if e = planCols.Scan(&cid, &name, &typ, &nn, &def, &pk); e != nil {
+			break
+		}
+		if name == "plan_id" {
+			planIDFound = true
+		}
+	}
+	if closeErr := planCols.Close(); e == nil {
+		e = closeErr
+	}
+	if e != nil {
+		db.Close()
+		return nil, e
+	}
+	if !planIDFound {
+		if _, e = db.Exec(`ALTER TABLE plans ADD COLUMN plan_id TEXT NOT NULL DEFAULT ''`); e != nil {
+			db.Close()
+			return nil, fmt.Errorf("migrate independent plan identities: %w", e)
+		}
+		// Historical links were created while every project plan was treated as
+		// one chain. Their relationship cannot be trusted after separating legacy
+		// entries, so preserve each task once at its current revision.
+		if _, e = db.Exec(`DELETE FROM task_plan_links`); e == nil {
+			_, e = db.Exec(`INSERT OR IGNORE INTO task_plan_links(project_id,task_id,revision) SELECT project_id,id,plan_revision FROM tasks`)
+		}
+		if e != nil {
+			db.Close()
+			return nil, fmt.Errorf("migrate task links to independent plans: %w", e)
+		}
+	}
+	legacyPlans, e := db.Query(`SELECT p.project_id,p.revision,p.body,p.author,p.created_at FROM plans p WHERE p.plan_id='' ORDER BY p.project_id,p.revision`)
+	if e != nil {
+		db.Close()
+		return nil, e
+	}
+	type legacyPlan struct {
+		project      string
+		revision     int
+		body, author string
+		created      int64
+	}
+	var legacy []legacyPlan
+	for legacyPlans.Next() {
+		var p legacyPlan
+		if e = legacyPlans.Scan(&p.project, &p.revision, &p.body, &p.author, &p.created); e != nil {
+			break
+		}
+		legacy = append(legacy, p)
+	}
+	if closeErr := legacyPlans.Close(); e == nil {
+		e = closeErr
+	}
+	if e != nil {
+		db.Close()
+		return nil, e
+	}
+	for _, p := range legacy {
+		id := fmt.Sprintf("plan_%s_%d", p.project, p.revision)
+		title := planDisplayTitle(p.body)
+		if _, e = db.Exec(`INSERT OR IGNORE INTO plan_threads(id,project_id,title,created_at,created_by) VALUES(?,?,?,?,?)`, id, p.project, title, p.created, p.author); e != nil {
+			db.Close()
+			return nil, e
+		}
+		if _, e = db.Exec(`UPDATE plans SET plan_id=? WHERE project_id=? AND revision=? AND plan_id=''`, id, p.project, p.revision); e != nil {
+			db.Close()
+			return nil, e
+		}
+	}
 	// Add descriptive MCP client fields to existing databases without replacing their data.
 	for _, column := range []struct{ name, ddl string }{{"client_name", `ALTER TABLE agent_sessions ADD COLUMN client_name TEXT NOT NULL DEFAULT ''`}, {"client_version", `ALTER TABLE agent_sessions ADD COLUMN client_version TEXT NOT NULL DEFAULT ''`}} {
 		rows, queryErr := db.Query(`PRAGMA table_info(agent_sessions)`)
@@ -103,6 +202,41 @@ func Open(path string) (*Store, error) {
 				return nil, fmt.Errorf("migrate coordination database: %w", queryErr)
 			}
 		}
+	}
+	// Keep plan version numbers monotonic even if the current revision is deleted.
+	rows, queryErr := db.Query(`PRAGMA table_info(projects)`)
+	if queryErr != nil {
+		db.Close()
+		return nil, queryErr
+	}
+	sequenceFound := false
+	for rows.Next() {
+		var cid, notnull, pk int
+		var name, typ string
+		var defaultValue any
+		if queryErr = rows.Scan(&cid, &name, &typ, &notnull, &defaultValue, &pk); queryErr != nil {
+			break
+		}
+		if name == "plan_sequence" {
+			sequenceFound = true
+		}
+	}
+	if closeErr := rows.Close(); queryErr == nil {
+		queryErr = closeErr
+	}
+	if queryErr != nil {
+		db.Close()
+		return nil, queryErr
+	}
+	if !sequenceFound {
+		if _, queryErr = db.Exec(`ALTER TABLE projects ADD COLUMN plan_sequence INTEGER NOT NULL DEFAULT 0`); queryErr != nil {
+			db.Close()
+			return nil, fmt.Errorf("migrate plan sequence: %w", queryErr)
+		}
+	}
+	if _, queryErr = db.Exec(`UPDATE projects SET plan_sequence=MAX(plan_sequence,COALESCE((SELECT MAX(revision) FROM plans WHERE plans.project_id=projects.id),plan_revision))`); queryErr != nil {
+		db.Close()
+		return nil, fmt.Errorf("initialize plan sequence: %w", queryErr)
 	}
 	// Seed conservative holds for installations predating per-attempt accounting.
 	tx, err := db.Begin()
@@ -247,6 +381,26 @@ func Open(path string) (*Store, error) {
 				}
 			}
 		}
+		if err == nil {
+			var localOwnersDone int
+			err = tx.QueryRow(`SELECT COUNT(*) FROM coord_migrations WHERE name='local_dashboard_owners_v6'`).Scan(&localOwnersDone)
+			if err == nil && localOwnersDone == 0 {
+				for _, query := range []string{
+					`INSERT OR IGNORE INTO local_dashboard_owners(project_id,principal_id,updated_at)
+  SELECT p.project_id,MIN(p.id),CAST(strftime('%s','now') AS INTEGER)*1000
+  FROM principals p
+  WHERE p.role='owner' AND p.revoked=0
+    AND NOT EXISTS (SELECT 1 FROM local_dashboard_owners l WHERE l.project_id=p.project_id)
+  GROUP BY p.project_id
+  HAVING COUNT(*)=1`,
+					`INSERT INTO coord_migrations(name) VALUES('local_dashboard_owners_v6')`,
+				} {
+					if _, err = tx.Exec(query); err != nil {
+						break
+					}
+				}
+			}
+		}
 	}
 	if err != nil {
 		tx.Rollback()
@@ -303,7 +457,8 @@ CREATE TABLE IF NOT EXISTS remote_access_control (id INTEGER PRIMARY KEY CHECK(i
 INSERT OR IGNORE INTO remote_access_control(id,enabled,updated_at) VALUES(1,0,0);
 CREATE TABLE IF NOT EXISTS local_bootstrap_key (id INTEGER PRIMARY KEY CHECK(id=1), key_hash BLOB NOT NULL, updated_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS projects (
-  id TEXT PRIMARY KEY, name TEXT NOT NULL, plan_revision INTEGER NOT NULL DEFAULT 0
+  id TEXT PRIMARY KEY, name TEXT NOT NULL, plan_revision INTEGER NOT NULL DEFAULT 0,
+  plan_sequence INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS node_identity (
   id INTEGER PRIMARY KEY CHECK(id=1), instance_id TEXT NOT NULL UNIQUE
@@ -319,6 +474,37 @@ CREATE TABLE IF NOT EXISTS principals (
   id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id), name TEXT NOT NULL,
   role TEXT NOT NULL CHECK(role IN ('owner','worker','reviewer')), token_hash BLOB NOT NULL UNIQUE,
   revoked INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS agent_parent_links (
+  project_id TEXT NOT NULL REFERENCES projects(id), child_id TEXT NOT NULL REFERENCES principals(id),
+  parent_id TEXT NOT NULL REFERENCES principals(id), linked_by TEXT NOT NULL REFERENCES principals(id), linked_at INTEGER NOT NULL,
+  PRIMARY KEY(project_id,child_id), CHECK(child_id<>parent_id)
+);
+CREATE TABLE IF NOT EXISTS local_dashboard_owners (
+  project_id TEXT PRIMARY KEY REFERENCES projects(id),
+  principal_id TEXT NOT NULL REFERENCES principals(id),
+  updated_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS project_context (
+ project_id TEXT NOT NULL REFERENCES projects(id), id TEXT NOT NULL, revision INTEGER NOT NULL,
+ kind TEXT NOT NULL, title TEXT NOT NULL, body TEXT NOT NULL, verification TEXT NOT NULL,
+ source TEXT NOT NULL, status TEXT NOT NULL, author TEXT NOT NULL REFERENCES principals(id),
+ created_at INTEGER NOT NULL, PRIMARY KEY(project_id,id,revision)
+);
+CREATE TABLE IF NOT EXISTS project_context_links (
+ project_id TEXT NOT NULL, target_kind TEXT NOT NULL, target_id TEXT NOT NULL, context_id TEXT NOT NULL, revision INTEGER NOT NULL,
+ PRIMARY KEY(project_id,target_kind,target_id,context_id,revision),
+ FOREIGN KEY(project_id,context_id,revision) REFERENCES project_context(project_id,id,revision)
+);
+CREATE TABLE IF NOT EXISTS remote_enrollments (id TEXT PRIMARY KEY,project_id TEXT NOT NULL REFERENCES projects(id),name TEXT NOT NULL,role_id TEXT NOT NULL,state TEXT NOT NULL,expires_at INTEGER NOT NULL,code_hash BLOB NOT NULL,issued_by TEXT NOT NULL REFERENCES principals(id),fingerprint TEXT NOT NULL DEFAULT '',csr BLOB,certificate BLOB,enrolled_principal TEXT NOT NULL DEFAULT '');
+CREATE TABLE IF NOT EXISTS project_roles (project_id TEXT NOT NULL REFERENCES projects(id),id TEXT NOT NULL,name TEXT NOT NULL,PRIMARY KEY(project_id,id));
+CREATE TABLE IF NOT EXISTS project_role_permissions (project_id TEXT NOT NULL,role_id TEXT NOT NULL,permission TEXT NOT NULL,PRIMARY KEY(project_id,role_id,permission),FOREIGN KEY(project_id,role_id) REFERENCES project_roles(project_id,id));
+CREATE TABLE IF NOT EXISTS project_role_assignments (project_id TEXT NOT NULL REFERENCES projects(id),principal_id TEXT NOT NULL REFERENCES principals(id),role_id TEXT NOT NULL,PRIMARY KEY(project_id,principal_id));
+CREATE TABLE IF NOT EXISTS project_permission_overrides (project_id TEXT NOT NULL REFERENCES projects(id),principal_id TEXT NOT NULL REFERENCES principals(id),permission TEXT NOT NULL,allowed INTEGER NOT NULL CHECK(allowed IN (0,1)),PRIMARY KEY(project_id,principal_id,permission));
+CREATE TABLE IF NOT EXISTS personal_items (
+ project_id TEXT NOT NULL REFERENCES projects(id), principal_id TEXT NOT NULL REFERENCES principals(id),
+ id TEXT NOT NULL, title TEXT NOT NULL, status TEXT NOT NULL CHECK(status IN ('todo','doing','done')),
+ notes TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY(project_id,principal_id,id)
 );
 CREATE TABLE IF NOT EXISTS agent_sessions (
   instance_id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id),
@@ -369,8 +555,20 @@ CREATE TABLE IF NOT EXISTS budget_reservations (task_id TEXT PRIMARY KEY REFEREN
 CREATE TABLE IF NOT EXISTS budget_attempt_holds (task_id TEXT NOT NULL REFERENCES tasks(id), attempt INTEGER NOT NULL, amount INTEGER NOT NULL CHECK(amount>0), PRIMARY KEY(task_id,attempt));
 CREATE TABLE IF NOT EXISTS plans (
   project_id TEXT NOT NULL REFERENCES projects(id), revision INTEGER NOT NULL, body TEXT NOT NULL,
-  author TEXT NOT NULL REFERENCES principals(id), created_at INTEGER NOT NULL,
+  author TEXT NOT NULL REFERENCES principals(id), created_at INTEGER NOT NULL, plan_id TEXT NOT NULL DEFAULT '',
   PRIMARY KEY(project_id,revision)
+);
+CREATE TABLE IF NOT EXISTS plan_variants (
+  id TEXT PRIMARY KEY, project_id TEXT NOT NULL, revision INTEGER NOT NULL,
+  name TEXT NOT NULL, body TEXT NOT NULL, author TEXT NOT NULL REFERENCES principals(id), created_at INTEGER NOT NULL,
+  FOREIGN KEY(project_id,revision) REFERENCES plans(project_id,revision)
+);
+CREATE INDEX IF NOT EXISTS plan_variants_revision ON plan_variants(project_id,revision);
+CREATE TABLE IF NOT EXISTS plan_completions (
+  project_id TEXT NOT NULL, revision INTEGER NOT NULL,
+  completed_by TEXT NOT NULL REFERENCES principals(id), completed_at INTEGER NOT NULL,
+  PRIMARY KEY(project_id,revision),
+  FOREIGN KEY(project_id,revision) REFERENCES plans(project_id,revision)
 );
 CREATE TABLE IF NOT EXISTS plan_acknowledgments (
   project_id TEXT NOT NULL REFERENCES projects(id), principal_id TEXT NOT NULL REFERENCES principals(id),
@@ -401,6 +599,13 @@ CREATE TABLE IF NOT EXISTS tasks (
   owner TEXT REFERENCES principals(id), attempt INTEGER NOT NULL DEFAULT 0,
   lease_until INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL,
   FOREIGN KEY(project_id,plan_revision) REFERENCES plans(project_id,revision)
+);
+CREATE TABLE IF NOT EXISTS task_plan_links (
+  project_id TEXT NOT NULL,
+  task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  revision INTEGER NOT NULL,
+  PRIMARY KEY(task_id,revision),
+  FOREIGN KEY(project_id,revision) REFERENCES plans(project_id,revision)
 );
 CREATE TABLE IF NOT EXISTS attempts (
   task_id TEXT NOT NULL REFERENCES tasks(id), number INTEGER NOT NULL,
@@ -524,6 +729,26 @@ CREATE TABLE IF NOT EXISTS legacy_records (
 );
 CREATE INDEX IF NOT EXISTS legacy_records_project_type ON legacy_records(project_id,record_type,record_id);
 CREATE INDEX IF NOT EXISTS tasks_project_status ON tasks(project_id,status);
+CREATE TABLE IF NOT EXISTS project_channels (
+  project_id TEXT NOT NULL REFERENCES projects(id),
+  id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  topic TEXT NOT NULL DEFAULT '',
+  created_by TEXT NOT NULL REFERENCES principals(id),
+  created_at INTEGER NOT NULL,
+  PRIMARY KEY(project_id,id),
+  UNIQUE(project_id,name)
+);
+CREATE TABLE IF NOT EXISTS channel_members (
+  project_id TEXT NOT NULL,
+  channel_id TEXT NOT NULL,
+  principal_id TEXT NOT NULL REFERENCES principals(id),
+  status TEXT NOT NULL,
+  invited_by TEXT NOT NULL DEFAULT '',
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY(project_id,channel_id,principal_id),
+  FOREIGN KEY(project_id,channel_id) REFERENCES project_channels(project_id,id)
+);
 `
 
 type identity struct{ ID, Role string }
@@ -546,6 +771,7 @@ type ReportContract struct {
 	SummaryTokenTarget   int      `json:"summary_token_target"`
 }
 type Task struct {
+	ContextLinks  []ContextLink  `json:"context_links,omitempty"`
 	ID            string         `json:"id"`
 	ProjectID     string         `json:"project_id"`
 	PlanRevision  int            `json:"plan_revision"`
@@ -611,10 +837,43 @@ func newToken() (string, []byte, error) {
 	h := sha256.Sum256([]byte(token))
 	return token, h[:], nil
 }
+
+// localOwnerAuthorityKey is attached only by a loopback dashboard configured
+// with explicit device-owner authority. It never crosses RPC or HTTP and never
+// overrides an explicit credential token.
+type localOwnerAuthorityKey struct{}
+
+type localOwnerAuthority struct {
+	homeID string
+}
+
+func withLocalOwnerAuthority(ctx context.Context, homeID string) context.Context {
+	return context.WithValue(ctx, localOwnerAuthorityKey{}, localOwnerAuthority{homeID: homeID})
+}
+
 func authenticate(ctx context.Context, tx *sql.Tx, projectID, token string, roles ...string) (identity, error) {
 	var id identity
-	h := sha256.Sum256([]byte(token))
-	err := tx.QueryRowContext(ctx, `SELECT id, role FROM principals WHERE project_id=? AND token_hash=? AND revoked=0`, projectID, h[:]).Scan(&id.ID, &id.Role)
+	var err error
+	if token != "" {
+		h := sha256.Sum256([]byte(token))
+		err = tx.QueryRowContext(ctx, `SELECT id, role FROM principals WHERE project_id=? AND token_hash=? AND revoked=0`, projectID, h[:]).Scan(&id.ID, &id.Role)
+	} else if auth, ok := ctx.Value(localOwnerAuthorityKey{}).(localOwnerAuthority); ok {
+		if auth.homeID != "" {
+			var nodeID string
+			if err = tx.QueryRowContext(ctx, `SELECT instance_id FROM node_identity WHERE id=1`).Scan(&nodeID); err != nil {
+				return id, err
+			}
+			if nodeID != auth.homeID {
+				return id, ErrUnauthorized
+			}
+		}
+		err = tx.QueryRowContext(ctx, `SELECT p.id, p.role
+			FROM local_dashboard_owners l
+			JOIN principals p ON p.project_id=l.project_id AND p.id=l.principal_id
+			WHERE l.project_id=? AND p.role='owner' AND p.revoked=0`, projectID).Scan(&id.ID, &id.Role)
+	} else {
+		return id, ErrUnauthorized
+	}
 	if errors.Is(err, sql.ErrNoRows) {
 		return id, ErrUnauthorized
 	}
@@ -670,6 +929,9 @@ func (s *Store) CreateProject(ctx context.Context, name, ownerName string) (Proj
 		return Project{}, Credential{}, err
 	}
 	if _, err = tx.ExecContext(ctx, `INSERT INTO principals(id,project_id,name,role,token_hash) VALUES(?,?,?,?,?)`, c.PrincipalID, p.ID, ownerName, "owner", hash); err != nil {
+		return Project{}, Credential{}, err
+	}
+	if _, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO local_dashboard_owners(project_id,principal_id,updated_at) VALUES(?,?,?)`, p.ID, c.PrincipalID, time.Now().UnixMilli()); err != nil {
 		return Project{}, Credential{}, err
 	}
 	if err = event(ctx, tx, p.ID, c.PrincipalID, "project.created", p.ID, map[string]string{"name": name}); err != nil {
@@ -836,6 +1098,9 @@ func (s *Store) CreatePreparedProjectWithWorkspaceAndCertificate(ctx context.Con
 	if _, err = tx.ExecContext(ctx, `INSERT INTO principals(id,project_id,name,role,token_hash) VALUES(?,?,?,?,?)`, c.PrincipalID, p.ID, ownerName, "owner", tokenHash[:]); err != nil {
 		return p, Credential{}, repo, workspace, err
 	}
+	if _, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO local_dashboard_owners(project_id,principal_id,updated_at) VALUES(?,?,?)`, p.ID, c.PrincipalID, now); err != nil {
+		return p, Credential{}, repo, workspace, err
+	}
 	if fingerprint != "" {
 		if _, err = tx.ExecContext(ctx, `INSERT INTO certificate_grants(project_id,fingerprint,granted_by,granted_at) VALUES(?,?,?,?)`, p.ID, fingerprint, c.PrincipalID, now); err != nil {
 			return p, Credential{}, repo, workspace, err
@@ -930,7 +1195,21 @@ func (s *Store) PublishPlan(ctx context.Context, projectID, token, body string, 
 	if err != nil {
 		return 0, err
 	}
-	res, err := tx.ExecContext(ctx, `UPDATE projects SET plan_revision=plan_revision+1 WHERE id=? AND plan_revision=?`, projectID, expected)
+	planID := ""
+	planTitle := planDisplayTitle(body)
+	if expected > 0 {
+		_ = tx.QueryRowContext(ctx, `SELECT plan_id FROM plans WHERE project_id=? AND revision=?`, projectID, expected).Scan(&planID)
+	}
+	if planID == "" {
+		planID, err = randomID("plan_")
+		if err != nil {
+			return 0, err
+		}
+		if _, err = tx.ExecContext(ctx, `INSERT INTO plan_threads(id,project_id,title,created_at,created_by) VALUES(?,?,?,?,?)`, planID, projectID, planTitle, time.Now().UnixMilli(), actor.ID); err != nil {
+			return 0, err
+		}
+	}
+	res, err := tx.ExecContext(ctx, `UPDATE projects SET plan_revision=plan_sequence+1,plan_sequence=plan_sequence+1 WHERE id=? AND plan_revision=?`, projectID, expected)
 	if err != nil {
 		return 0, err
 	}
@@ -941,15 +1220,27 @@ func (s *Store) PublishPlan(ctx context.Context, projectID, token, body string, 
 	if n != 1 {
 		return 0, ErrConflict
 	}
-	rev := expected + 1
-	if _, err = tx.ExecContext(ctx, `INSERT INTO plans(project_id,revision,body,author,created_at) VALUES(?,?,?,?,?)`, projectID, rev, body, actor.ID, time.Now().UnixMilli()); err != nil {
+	var rev int
+	if err = tx.QueryRowContext(ctx, `SELECT plan_revision FROM projects WHERE id=?`, projectID).Scan(&rev); err != nil {
+		return 0, err
+	}
+	if _, err = tx.ExecContext(ctx, `INSERT INTO plans(project_id,revision,body,author,created_at,plan_id) VALUES(?,?,?,?,?,?)`, projectID, rev, body, actor.ID, time.Now().UnixMilli(), planID); err != nil {
+		return 0, err
+	}
+	// Tasks retain their IDs and history as a plan evolves. Link them to both
+	// revisions and move their current workflow to the new plan revision.
+	if _, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO task_plan_links(project_id,task_id,revision)
+		SELECT project_id,id,? FROM tasks WHERE project_id=? AND plan_revision=?`, rev, projectID, expected); err != nil {
+		return 0, err
+	}
+	if _, err = tx.ExecContext(ctx, `UPDATE tasks SET plan_revision=? WHERE project_id=? AND plan_revision=?`, rev, projectID, expected); err != nil {
 		return 0, err
 	}
 	if _, err = tx.ExecContext(ctx, `INSERT INTO plan_acknowledgments(project_id,principal_id,revision,acknowledged_at) VALUES(?,?,?,?) ON CONFLICT(project_id,principal_id) DO UPDATE SET revision=excluded.revision,acknowledged_at=excluded.acknowledged_at`, projectID, actor.ID, rev, time.Now().UnixMilli()); err != nil {
 		return 0, err
 	}
 	// Existing work requires explicit reconciliation against the changed plan.
-	if _, err = tx.ExecContext(ctx, `UPDATE tasks SET status='needs_replan', owner=NULL, lease_until=0 WHERE project_id=? AND status IN ('ready','blocked','running','submitted','accepted')`, projectID); err != nil {
+	if _, err = tx.ExecContext(ctx, `UPDATE tasks SET status='needs_replan', owner=NULL, lease_until=0 WHERE project_id=? AND plan_revision=? AND status IN ('ready','blocked','running','submitted','accepted')`, projectID, rev); err != nil {
 		return 0, err
 	}
 	if err = event(ctx, tx, projectID, actor.ID, "plan.published", projectID, map[string]int{"revision": rev}); err != nil {

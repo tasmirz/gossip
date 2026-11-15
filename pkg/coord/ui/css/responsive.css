@@ -1,0 +1,376 @@
+/* ==========================================================================
+   Gossip Responsive Breakpoints
+   ========================================================================== */
+
+@media (min-width: 840px) {
+  .tablet-below,
+  .mobile-only {
+    display: none;
+  }
+}
+
+@media (min-width: 681px) {
+  .mobile-chat-back {
+    display: none;
+  }
+}
+
+@media (min-width: 701px) {
+  .plan-reader-back {
+    display: none;
+  }
+}
+
+@media (max-width: 960px) and (min-width: 701px) {
+  .plan-reader-card .card-head {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}
+
+/* <= 839px: Slide-in off-canvas navigation drawer */
+@media (max-width: 839px) {
+  .app-shell {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .app-rail {
+    position: fixed;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: min(var(--rail-width, 268px), calc(100vw - 2rem));
+    visibility: hidden;
+    transform: translateX(-105%);
+    transition: transform 160ms ease;
+  }
+
+  .app-rail.is-open {
+    visibility: visible;
+    transform: translateX(0);
+  }
+
+  .rail-resize-handle {
+    visibility: hidden;
+    left: calc(min(var(--rail-width, 268px), 100vw - 2rem) - 0.25rem);
+    z-index: 35;
+  }
+
+  .app-rail.is-open + .rail-resize-handle {
+    visibility: visible;
+  }
+
+  .tablet-below,
+  .mobile-only {
+    display: inline-flex;
+  }
+}
+
+/* <= 700px: Compact controls, single-pane Plans/Agents, horizontal Kanban */
+@media (max-width: 700px) {
+  .topbar-title {
+    font-size: 1.15rem;
+  }
+
+  #topbar-home-badge {
+    display: none;
+  }
+
+  .icon-only-control:not(.icon-btn) {
+    width: 2.35rem;
+    min-width: 2.35rem;
+    min-height: 2.35rem;
+    height: 2.35rem;
+    padding: 0;
+    justify-content: center;
+  }
+
+  .icon-only-control:not(.icon-btn) > span,
+  #logout > span,
+  #composer-hint {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  #logout {
+    width: 2.25rem;
+    min-width: 2.25rem;
+    padding: 0;
+  }
+
+  #send-message-btn {
+    min-height: 2.35rem;
+  }
+
+  /* Plans single-pane & header */
+  .plans-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .plans-grid[data-pane="list"] .plan-reader-card,
+  .plans-grid[data-pane="reader"] .plan-thread-list {
+    display: none;
+  }
+
+  .plan-reader-back {
+    display: inline-flex;
+    margin-bottom: 0.35rem;
+  }
+
+  .plan-reader-card {
+    padding: 1rem;
+  }
+
+  .plan-reader-card .card-head {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.65rem;
+  }
+
+  #plan-version-select {
+    max-width: 100%;
+  }
+
+  .plan-action-bar #plan-compare-select {
+    max-width: min(9rem, 42vw);
+  }
+
+  .plan-editor-switch {
+    display: inline-flex;
+  }
+
+  .plan-editor-split {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .plan-editor-split[data-pane="write"] #plan-preview-pane,
+  .plan-editor-split[data-pane="preview"] #plan-write-pane {
+    display: none;
+  }
+
+  #plan-editor-body {
+    min-height: 14rem;
+    height: min(20rem, 45dvh);
+  }
+
+  /* Agents single-pane */
+  .agent-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .agent-layout[data-pane="roster"] #agent-profile,
+  .agent-layout[data-pane="profile"] aside {
+    display: none;
+  }
+
+  .agent-layout[data-pane="profile"] #agent-profile-back {
+    display: inline-flex;
+    align-self: flex-start;
+  }
+
+  /* To-dos mobile checklist wrap & horizontal Kanban swipe */
+  .todo-card-subbar {
+    gap: 0.5rem 0.9rem;
+  }
+
+  .task-plan-items {
+    padding-inline-start: 0.55rem;
+  }
+
+  #view-todos .shared-task-head:not(.is-kanban-task-head) {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 0.35rem 0.5rem;
+  }
+
+  #view-todos .shared-task-head:not(.is-kanban-task-head) > .task-checklist-title {
+    grid-column: 1 / -1;
+    grid-row: 1;
+    align-items: flex-start;
+  }
+
+  #view-todos .shared-task-head:not(.is-kanban-task-head) > .task-flairs {
+    grid-column: 1;
+    grid-row: 2;
+  }
+
+  #view-todos .shared-task-head:not(.is-kanban-task-head) > .task-side-actions {
+    grid-column: 2;
+    grid-row: 2;
+    margin-inline-start: 0;
+  }
+
+  #view-todos .todo-board {
+    grid-template-columns: none;
+    grid-auto-flow: column;
+    grid-auto-columns: min(86%, 22rem);
+    overflow-x: auto;
+    overscroll-behavior-inline: contain;
+    gap: 0.65rem;
+    padding: 0.1rem 0.1rem 0.75rem;
+    scroll-snap-type: inline mandatory;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  #view-todos .todo-board > .todo-lane {
+    scroll-snap-align: start;
+  }
+
+  /* Settings mobile */
+  .view-header > .subtabs {
+    display: flex;
+    max-width: 100%;
+  }
+
+  #settings-panel-access {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0.6rem;
+  }
+
+  .access-section-links {
+    display: none;
+  }
+
+  .access-section-select-wrap {
+    display: block;
+    width: 100%;
+  }
+
+  #access-section-select {
+    width: 100%;
+  }
+
+  .role-editor-grid,
+  .repository-settings-row,
+  .project-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .repository-settings-row {
+    gap: 0.2rem;
+  }
+
+  .settings-action-disclosure {
+    min-width: 0;
+  }
+
+  #plan-walkthrough-dialog {
+    width: calc(100vw - 0.75rem);
+    max-height: calc(100dvh - 0.75rem);
+  }
+
+  #plan-walkthrough-dialog .modal-card {
+    padding: 0.85rem;
+  }
+}
+
+/* <= 680px: Single-pane chat & stacked projects columns */
+@media (max-width: 680px) {
+  .main-viewport {
+    padding: 0.85rem;
+  }
+
+  .chat-shell {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .chat-sidebar {
+    border-right: 0 !important;
+  }
+
+  .chat-shell[data-mobile-pane="conversations"] .chat-main,
+  .chat-shell[data-mobile-pane="thread"] .chat-sidebar {
+    display: none;
+  }
+
+  .mobile-chat-back {
+    display: inline-flex;
+  }
+
+  .projects-columns {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* <= 640px: Two-row topbar with full-width search bar */
+@media (max-width: 640px) {
+  .topbar {
+    min-height: 3.4rem;
+    padding: 0.5rem 0.75rem;
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .topbar-left {
+    grid-row: 1;
+    grid-column: 1;
+  }
+
+  .topbar-actions {
+    grid-row: 1;
+    grid-column: 2;
+  }
+
+  .topbar-search {
+    order: 3;
+    grid-row: 2;
+    grid-column: 1 / -1;
+    width: 100%;
+    min-width: 0;
+  }
+}
+
+/* <= 480px: Compact phones */
+@media (max-width: 480px) {
+  .task-quick-add-form {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .task-quick-add-form .input:first-child {
+    grid-column: 1 / -1;
+  }
+
+  .todo-toolbar #open-task-dialog-btn {
+    margin-inline-start: 0;
+  }
+
+  .role-permissions {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .role-reset-field {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .msg-head {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 0.15rem 0.5rem;
+  }
+
+  .msg-head .message-menu {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+  }
+
+  .join-connection-basics {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .join-connection-basics > :first-child {
+    grid-column: auto;
+  }
+}
+
+@media (max-height: 450px) {
+  .chat-shell {
+    min-height: 20rem;
+  }
+}

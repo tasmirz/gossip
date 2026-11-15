@@ -1,13 +1,1413 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Gossip · Coordination</title><link rel="stylesheet" href="/app.css"><script defer src="/app.js"></script></head>
-<body><div class="shell"><aside class="sidebar"><div class="brand"><span class="brand-icon">◈</span><div><strong>gossip</strong><small>COORDINATION</small></div></div><div class="side-label">WORKSPACES</div><div id="projects" class="project-list"></div><details class="project-recognizer"><summary>Find by Git remote</summary><form id="recognize-form"><input name="remote_url" maxlength="2048" required aria-label="Git repository remote URL" placeholder="https://host/org/repo.git"><button class="button small">Find project</button></form><div id="recognition-results" aria-live="polite"></div></details><label class="connect">＋ Connect project credential<input id="credential" type="file" accept="application/json,.json" hidden></label><button type="button" class="connect-create" data-create-local-project>＋ Create local project</button><div class="side-label">VIEWS</div><nav><button class="nav active" data-view="overview">◉ <span>Overview</span></button><button class="nav" data-view="work">▤ <span>Work</span></button><button class="nav" data-view="workspaces">◇ <span>Workspaces</span></button><button class="nav" data-view="agents">♙ <span>Agents</span></button><button class="nav" data-view="conversation">▧ <span>Conversations</span></button><button class="nav" data-view="activity">◷ <span>Activity</span></button><button class="nav" data-view="settings">⚙ <span>Settings</span></button></nav><div class="sidebar-foot"><span class="online-dot"></span> Local coordination <small>PREVIEW</small><button id="logout" class="text-button">Sign out</button></div></aside>
-<main><header class="topbar"><div><span class="eyebrow">GOSSIP / PROJECT</span><h1 id="project-name">Your workspace</h1></div><div class="top-actions"><span id="identity" class="identity">No project connected</span><button class="button quiet" id="refresh">↻ Refresh</button></div></header>
-<section id="welcome" class="welcome"><div class="welcome-orb">◈</div><div class="eyebrow">A PLACE TO WORK TOGETHER</div><h2>Good work starts with<br><em>shared context.</em></h2><p>Connect a project credential to see its plan, delegate research, and follow the conversation between your agents.</p><div class="welcome-actions"><label class="button primary">Choose project credential<input id="credential-welcome" type="file" accept="application/json,.json" hidden></label><button type="button" class="button quiet" data-create-local-project>Set up a local project</button></div><p class="hint">A credential only works with the coordination database that issued it. To start from a checkout folder, create a project here, then register the checkout’s full path under Workspaces.</p></section>
-<section id="connect-required" class="connect-required" hidden aria-live="polite"><div class="welcome-orb">◈</div><div class="eyebrow">PROJECT CONTEXT REQUIRED</div><h2 id="connect-required-title">Connect a project to open this view</h2><p id="connect-required-description">Project views only show data you are authorized to access.</p><div class="welcome-actions"><button type="button" id="connect-required-connect" class="button primary">Choose project credential</button><button type="button" class="button quiet" data-create-local-project>Set up a local project</button></div><p class="hint">A checkout folder is registered after a project is connected. This dashboard cannot treat a folder path as a project credential.</p></section>
-<div id="workspace" hidden><section class="hero"><div><div class="eyebrow">ACTIVE PLAN <span id="plan-revision" class="pill">NO PLAN</span></div><h2 id="plan-heading">Make the goal clear.</h2><p id="plan-text">Publish a plan to give your agents shared context.</p></div><div class="plan-actions"><button id="ack-plan" class="button primary" hidden>Acknowledge plan</button><button id="edit-plan" class="button light">Edit plan <span>↗</span></button></div></section>
-<div class="metrics"><article><span>READY TO START</span><strong id="count-ready">0</strong><small>Tasks available</small></article><article><span>IN PROGRESS</span><strong id="count-running">0</strong><small>Active attempts</small></article><article><span>AWAITING REVIEW</span><strong id="count-submitted">0</strong><small>Submitted reports</small></article><article><span>ACCEPTED</span><strong id="count-accepted">0</strong><small>Accepted reports</small></article></div>
-<div class="content-grid"><section class="panel work-panel" id="work-panel"><div class="panel-head"><div><div class="eyebrow">PROJECT WORK</div><h3>Tasks <span id="task-total" class="counter">0</span></h3></div><button class="button small" id="new-task" disabled>＋ New task</button></div><div class="task-filters"><select id="task-status" aria-label="Filter by status"><option value="">All statuses</option><option value="ready">Ready</option><option value="running">Running</option><option value="blocked">Blocked</option><option value="submitted">Submitted</option><option value="accepted">Accepted</option><option value="needs_replan">Needs replan</option><option value="cancelled">Cancelled</option></select><select id="task-kind" aria-label="Filter by task type"><option value="">All types</option><option value="research">Research</option><option value="design">Design</option><option value="implementation">Implementation</option><option value="review">Review</option><option value="verification">Verification</option><option value="integration">Integration</option></select><select id="task-agent" aria-label="Filter by agent"><option value="">All agents</option></select><input id="task-query" type="search" maxlength="256" placeholder="Search tasks…" aria-label="Search task titles and descriptions"><select id="saved-filter" aria-label="Saved project filters"><option value="">Saved views</option></select><button type="button" id="save-filter" class="button small">Save view</button><button type="button" id="delete-filter" class="button small" disabled>Delete</button></div><div id="tasks" class="items"></div><div class="task-pagination"><button id="task-prev" class="button small">Previous</button><span id="task-page"></span><button id="task-next" class="button small">Next</button></div></section><section class="panel conversation-panel" id="conversation-panel"><div class="panel-head"><div><div class="eyebrow">SHARED CONTEXT</div><h3>Conversation</h3></div><span id="connection-status" class="live idle" role="status" aria-live="polite"><span class="online-dot"></span> DISCONNECTED</span></div><div id="messages" class="messages"></div><form id="message-form" class="message-form"><select name="recipient" aria-label="Message recipient"><option value="">Project</option></select><input name="body" placeholder="Share an update with the project…" required maxlength="65536"><button class="send" aria-label="Send message">↑</button></form></section><section class="panel workspace-panel" id="workspaces-panel"><div class="panel-head"><div><div class="eyebrow">REPOSITORIES &amp; CHECKOUTS</div><h3>Workspaces</h3></div><button class="button small" id="new-workspace">＋ Add workspace</button></div><div class="panel-subhead">Registered repositories</div><div id="repositories" class="items"></div><form id="remote-hint-form" class="settings-form"><fieldset><label>Repository<select name="repository_id" required></select></label><label>Git remote URL<input name="remote_url" maxlength="2048" required placeholder="https://host/org/repo.git"></label><button class="button small">Save recognition hint</button></fieldset><p>Hints help find this project by Git URL. They do not grant access.</p></form><div class="panel-subhead">Checkouts</div><div id="workspaces" class="items"></div></section><section class="panel agent-panel" id="agents-panel"><div class="panel-head"><div><div class="eyebrow">PROJECT ACCESS</div><h3>Agents and access</h3></div></div><div id="access-project-scope" class="access-project-scope" role="status"><strong id="access-project-name"></strong><span id="access-project-id"></span><p>Every invite, member revocation, permission grant, and certificate change on this page applies only to this project.</p></div><p class="hint">Members are enrolled separately in each project. Network clients must present this project’s member credential; TLS clients on the LAN or remotely also need a certificate grant for this same project.</p><div id="agents" class="items"></div><form id="invite-form" class="settings-form"><fieldset><label>Name<input name="name" maxlength="512" required placeholder="Agent or collaborator"></label><label>Role in this project<select name="role"><option value="worker">Worker</option><option value="reviewer">Reviewer</option><option value="owner">Owner</option></select></label><label>TLS client certificate fingerprint (LAN or remote) <small>Optional; include it to grant this project and certificate together</small><input name="client_fingerprint" autocomplete="off" placeholder="64 hexadecimal characters"></label><label>Certificate access expires <small>Optional; blank means indefinite</small><input name="certificate_expires" type="datetime-local"></label><button class="button small">＋ Invite to project</button></fieldset><p>This invitation grants access to the currently selected project only. It downloads a private project credential. For a TLS client on the LAN or remotely, add its certificate here to grant project membership and certificate access atomically; otherwise grant the certificate separately in this project.</p></form><div class="panel-head"><div><h3>Action permissions</h3></div></div><div id="permission-grants" class="items"></div><form id="permission-form" class="settings-form"><fieldset><label>Project member<select name="principal_id" required></select></label><label>Permission<select name="permission"><option value="project.read">Read project data</option><option value="message.send">Send project messages</option><option value="task.claim">Claim and manage work</option><option value="task.delegate">Delegate and assign tasks</option><option value="result.submit">Submit results</option><option value="plan.edit">Edit shared plan</option><option value="settings.edit">Change project settings</option><option value="review.decide">Accept reports or request rework</option><option value="membership.manage">Enroll or revoke members</option></select></label><button class="button small">Grant permission</button></fieldset><p>Worker and Reviewer enrollment creates a one-time starter grant set. Every action requires project.read plus its matching action grant. membership.manage can enroll or revoke workers and reviewers; owner creation and TLS certificate grants remain owner-only. Grants stay independent after enrollment: changing work duties never changes permissions. Each grant applies only to this project and can be revoked here.</p></form><div class="panel-head"><div><h3>Remote certificate access</h3></div></div><div id="certificates" class="items"></div><form id="certificate-form" class="settings-form"><fieldset><label>Client certificate SHA-256 fingerprint<input name="fingerprint" autocomplete="off" placeholder="64 hexadecimal characters" required></label><label>Access expires <small>Optional, local time</small><input type="datetime-local" name="expires"></label><button class="button small">Grant project access</button></fieldset><p>Certificate access is one gate; each person also needs a project credential. Revocation applies immediately.</p></form><div class="panel-subhead">Certificate invitations</div><div id="certificate-invitations" class="items"></div><form id="pair-form" class="settings-form"><fieldset><label>Expected certificate fingerprint <small>Optional</small><input name="fingerprint" autocomplete="off" placeholder="64 hexadecimal characters"></label><label>Invitation lifetime (minutes)<input type="number" name="minutes" min="1" max="1440" value="10" required></label><button class="button small">Create pairing invitation</button></fieldset><p>Downloads a private, one-use invitation before enrollment. The client needs a certificate from the trusted CA and a separate project credential.</p></form><div id="roles-list" class="items"></div><form id="role-form" class="settings-form"><fieldset><label>Agent<select name="principal" required></select></label><label>Task ID <small>Optional; blank applies project-wide</small><input name="task_id"></label><label>Work role <small>Choose a preset or enter a custom role</small><input name="name" list="role-preset-options" maxlength="128" placeholder="e.g. researcher or release manager"><datalist id="role-preset-options"></datalist></label><div id="role-preset-guidance" class="role-preset-guidance" aria-live="polite">Choose a preset to preview its duties, or enter a custom role and describe its duties below.</div><label>Duties <small>Leave blank to use the selected preset duties</small><textarea name="duties" rows="3"></textarea></label><label>Expires <small>Optional, local time</small><input type="datetime-local" name="expires"></label><button class="button small">Save work role</button><p>Work roles describe duties and never change permissions.</p></fieldset></form></section><section class="panel settings-panel" id="settings-panel"><div class="panel-head"><div><div class="eyebrow">PROJECT DEFAULTS</div><h3>Coordination settings</h3></div></div><form id="settings-form" class="settings-form"><p>Limits apply to new claims and lease renewals. Report defaults apply to new tasks.</p><fieldset><label>Maximum parallel tasks<input type="number" name="max_parallel" min="1" max="128" required></label><label>Maximum lease (seconds)<input type="number" name="max_lease_seconds" min="1" max="3600" required></label><label>Summary token target <small>Advisory</small><input type="number" name="summary_token_target" min="1" max="100000" required></label><label>Default review depth<select name="default_review_mode"><option value="summary">Summary</option><option value="report_first">Report first</option><option value="targeted_source">Targeted source</option><option value="full_source">Full source</option></select></label><div><button class="button primary">Save settings</button> <button type="button" id="reload-settings" class="button quiet">Reload</button></div></fieldset><p id="settings-permission" hidden>Only the owner or a member granted settings.edit can change these settings.</p></form><div class="panel-head"><div><h3>Token reservations</h3></div></div><p id="budget-summary">No token limit configured.</p><p id="usage-summary">No agent usage reported; provider billing is unavailable.</p><p>Usage summaries are self-reported by agents and are not provider-verified or enforced. Reservations limit task claims; release allocations only after checking in-flight work.</p><form id="budget-form" class="settings-form"><fieldset><label>Project token limit<input type="number" name="amount" min="1" max="1000000000000" required></label><button class="button small">Set limit</button></fieldset></form><form id="reservation-form" class="settings-form"><fieldset><label>Task ID<input name="task_id" required></label><label>Reserved tokens (0 releases)<input type="number" name="amount" min="0" max="1000000000000" required></label><button class="button small">Save reservation</button></fieldset></form></section><section class="panel activity-panel" id="activity-panel"><div class="panel-head"><div><div class="eyebrow">WHAT'S HAPPENING</div><h3>Recent activity</h3></div></div><div id="events" class="events"></div></section></div></div></main></div>
-<dialog id="plan-dialog"><form id="plan-form"><div class="dialog-head"><div><div class="eyebrow">SHARED DIRECTION</div><h3>Publish a plan</h3></div><button type="button" class="close" data-close="plan-dialog" aria-label="Close">×</button></div><p>Publishing a new revision marks existing work for reconciliation.</p><label>Plan<textarea name="body" rows="9" required placeholder="Describe the goal, scope, and acceptance criteria."></textarea></label><div class="dialog-actions"><button type="button" class="button quiet" data-close="plan-dialog">Cancel</button><button class="button primary">Publish plan</button></div></form></dialog>
-<dialog id="task-dialog"><form id="task-form"><div class="dialog-head"><div><div class="eyebrow">DELEGATE WORK</div><h3>Create a task</h3></div><button type="button" class="close" data-close="task-dialog" aria-label="Close">×</button></div><label>Title<input name="title" required placeholder="What needs to be done?"></label><label>Type<select name="kind"><option value="research">Research</option><option value="design">Design</option><option value="implementation">Implementation</option><option value="verification">Verification</option><option value="integration">Integration</option><option value="review">Review</option></select></label><label>Required role <small>Optional; only members with this active project or task role can claim it.</small><select name="required_role"><option value="">Any eligible agent</option></select></label><label>Required capabilities <small>Optional; an online adapter session must report all selected capabilities.</small><select name="required_capabilities" multiple size="4" aria-label="Required reported capabilities"><option value="mcp_tools">MCP tools</option><option value="git_workspace_inspection">Git workspace inspection</option><option value="lease_renewal">Lease renewal</option><option value="durable_outbox">Durable outbox</option><option value="notification">Notification</option><option value="wake">Wake</option><option value="launch">Launch</option><option value="interrupt">Interrupt</option><option value="isolated_workspace">Isolated workspace</option><option value="usage_reporting">Usage reporting</option><option value="model_selection">Model selection</option></select></label><label>Scope and acceptance criteria<textarea name="description" rows="4" required placeholder="Define the outcome and how to verify it."></textarea></label><label>Research questions <small>One per line</small><textarea name="questions" rows="3" placeholder="What should the agent investigate?"></textarea></label><div class="form-row"><label>Review deliverable<select name="review_type" required><option value="" disabled selected>Choose during planning</option><option value="full_code">Full code review</option><option value="diagram_report">Markdown report with UML class and sequence diagrams</option></select></label><label>Report formats<select name="formats" multiple size="3" aria-label="Report formats"><option value="markdown" selected>Markdown</option><option value="mermaid_sequence">UML sequence diagram</option><option value="mermaid_class">UML class diagram</option></select></label><label>Review depth<select name="review_mode"><option value="report_first">Report first</option><option value="summary">Summary</option><option value="targeted_source">Targeted source</option><option value="full_source">Full source</option></select></label></div><p class="hint">Choose the review deliverable while planning this task. For full code review, save the attempt’s source diff as a candidate before requesting review; the orchestrator receives its exact digest and can read it in pages. For a Markdown UML report, include populated sections titled Review summary, Scope and evidence, UML class diagram, Sequence diagram, Findings, and Coverage and limitations. Put each Mermaid diagram in its matching section, cover planned coverage, and state evidence limitations.</p><div class="dialog-actions"><button type="button" class="button quiet" data-close="task-dialog">Cancel</button><button class="button primary">Create task</button></div></form></dialog>
-<dialog id="local-project-dialog"><form id="local-project-form"><div class="dialog-head"><div><div class="eyebrow">LOCAL PROJECT SETUP</div><h3>Connect a code folder</h3></div><button type="button" class="close" data-close="local-project-dialog" aria-label="Close">×</button></div><p>Choose a local Git checkout. Gossip will infer its repository name, remote, branch, and current commit, then create the project and workspace together.</p><label>Folder path<input name="local_path" maxlength="4096" required placeholder="/home/you/code/my-project" autocomplete="off"></label><p class="hint">Paste the full path to the checkout on the machine running this dashboard. The folder must already be a Git repository.</p><label>Project name <span class="hint">(optional)</span><input name="name" maxlength="512" placeholder="Defaults to the Git repository name"></label><p class="hint">An owner credential downloads once for configuring MCP agents. Keep it private and set its file permissions to <code>600</code>.</p><div class="dialog-actions"><button type="button" class="button quiet" data-close="local-project-dialog">Cancel</button><button class="button primary">Connect folder</button></div></form></dialog>
-<dialog id="workspace-dialog"><form id="workspace-form"><div class="dialog-head"><div><div class="eyebrow">LOCAL CHECKOUT</div><h3>Register workspace</h3></div><button type="button" class="close" data-close="workspace-dialog" aria-label="Close">×</button></div><p>These details are provided by you. Other project members cannot see your local path.</p><label>Repository<select name="repository_id" required></select></label><div id="repo-create"><label>Or create repository<input name="repository_name" placeholder="Repository name"></label><button type="button" id="add-repository" class="button small">Create repository</button></div><label>Workspace name<input name="name" required placeholder="e.g. Worker checkout"></label><label>Machine label<input name="node_label" placeholder="e.g. Laptop"></label><label>Local path<input name="local_path" required placeholder="/path/to/worktree"></label><div class="form-row"><label>Branch<input name="branch" placeholder="main"></label><label>Head revision<input name="head" placeholder="Commit ID"></label></div><label><input type="checkbox" name="dirty"> Contains uncommitted changes</label><div class="dialog-actions"><button type="button" class="button quiet" data-close="workspace-dialog">Cancel</button><button class="button primary">Register workspace</button></div></form></dialog><dialog id="workspace-update-dialog"><form id="workspace-update-form"><div class="dialog-head"><div><div class="eyebrow">UPDATE BASELINE</div><h3>Update workspace</h3></div><button type="button" class="close" data-close="workspace-update-dialog" aria-label="Close">×</button></div><input type="hidden" name="workspace_id"><label>Branch<input name="branch"></label><label>Head revision<input name="head"></label><label><input type="checkbox" name="dirty"> Contains uncommitted changes</label><p>Existing task attempts retain the baseline recorded when they were claimed.</p><div class="dialog-actions"><button type="button" class="button quiet" data-close="workspace-update-dialog">Cancel</button><button class="button primary">Save observation</button></div></form></dialog><dialog id="invite-dialog"><div class="dialog-head"><div><div class="eyebrow">PROJECT ACCESS</div><h3>Project invitation</h3></div><button type="button" class="close" data-close="invite-dialog" aria-label="Close">×</button></div><p id="invite-summary"></p><p>Keep the downloaded credential private and share it only with the intended member. Dashboard/API access over TLS, on the LAN or remotely, also requires a client certificate granted to this project.</p><div class="dialog-actions"><button type="button" id="retry-invite" class="button primary" hidden>Retry same invitation</button><button type="button" id="download-invite" class="button quiet">Download credential again</button><button type="button" class="button quiet" data-close="invite-dialog">Done</button></div></dialog><dialog id="pair-dialog"><div class="dialog-head"><div><div class="eyebrow">REMOTE ACCESS</div><h3>Certificate invitation</h3></div><button type="button" class="close" data-close="pair-dialog" aria-label="Close">×</button></div><p id="pair-summary"></p><p>Share the downloaded invitation privately. On the client, set its file mode to 0600 and run <code>gossip coord-pair --action redeem --remote ... --tls-ca ... --tls-cert ... --tls-key ... --invite-file ...</code>. A project credential is still required after pairing.</p><div class="dialog-actions"><button type="button" id="retry-pair" class="button primary" hidden>Retry same invitation</button><button type="button" id="download-pair" class="button quiet">Download again</button><button type="button" class="button quiet" data-close="pair-dialog">Done</button></div></dialog><dialog id="detail-dialog"><div class="dialog-head"><div><div class="eyebrow">TASK DETAILS</div><h3 id="detail-title"></h3></div><button type="button" class="close" data-close="detail-dialog" aria-label="Close">×</button></div><div id="detail-content"></div><form id="submit-form"><label>Source baseline<input name="baseline" placeholder="Commit or workspace baseline" required></label><label>Report<textarea name="body" rows="6" placeholder="Findings, evidence, and remaining questions" required></textarea></label><button class="button primary">Submit report</button></form></dialog><div id="toast" class="toast" role="status" hidden></div></body></html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Gossip — Local Coordination Studio</title>
+  <link rel="stylesheet" href="/css/tokens.css">
+  <link rel="stylesheet" href="/css/components.css">
+  <link rel="stylesheet" href="/css/shell.css">
+  <link rel="stylesheet" href="/css/views.css">
+  <link rel="stylesheet" href="/css/responsive.css">
+  <script src="/app.js" defer></script>
+  <script src="/js/projects.js" defer></script>
+  <script src="/js/chat.js" defer></script>
+  <script src="/js/plans.js" defer></script>
+  <script src="/js/todos.js" defer></script>
+  <script src="/js/agents-search.js" defer></script>
+  <script src="/js/settings.js" defer></script>
+</head>
+<body>
+  <svg class="icon-library" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" width="0" height="0">
+    <symbol id="icon-projects" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></symbol>
+    <symbol id="icon-folder-open" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v1M3 7v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-1l3-7a1.5 1.5 0 0 0-1.4-2H8a2 2 0 0 0-1.8 1.2L5 14"/></symbol>
+    <symbol id="icon-chat" viewBox="0 0 24 24"><path d="M21 11.5a8.5 8.5 0 0 1-8.5 8.5H4l1.4-3.1A8.5 8.5 0 1 1 21 11.5Z M8 11h8m-8 4h5"/></symbol>
+    <symbol id="icon-plans" viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6Z M14 3v5h4M9 12h6m-6 4h6"/></symbol>
+    <symbol id="icon-todos" viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h11M3 6l1 1 2-2m-3 7 1 1 2-2m-3 7 1 1 2-2"/></symbol>
+    <symbol id="icon-agents" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2m16 0v-2a4 4 0 0 0-3-4 M14 7a4 4 0 1 1-8 0 4 4 0 0 1 8 0Zm2-4a4 4 0 0 1 0 8"/></symbol>
+    <symbol id="icon-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m15.2 15.2 4.3 4.3"/></symbol>
+    <symbol id="icon-settings" viewBox="0 0 24 24"><path d="M5 4v16m7-16v16m7-16v16M3 8h4m3 8h4m3-8h4"/></symbol>
+    <symbol id="icon-menu" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></symbol>
+    <symbol id="icon-chevron-right" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></symbol>
+    <symbol id="icon-close" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></symbol>
+    <symbol id="icon-back" viewBox="0 0 24 24"><path d="M19 12H5m6-6-6 6 6 6"/></symbol>
+    <symbol id="icon-add" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="icon-share" viewBox="0 0 24 24"><path d="M12 15V3m-4 4 4-4 4 4M5 12v8h14v-8"/></symbol>
+    <symbol id="icon-more" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></symbol>
+    <symbol id="icon-down" viewBox="0 0 24 24"><path d="M12 5v14m-6-6 6 6 6-6"/></symbol>
+    <symbol id="icon-check" viewBox="0 0 24 24"><path d="M5 12l4 4L19 6"/></symbol>
+    <symbol id="icon-user-check" viewBox="0 0 24 24"><path d="M15 20H5v-1a6 6 0 0 1 12 0v1M11 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm5 3 2 2 4-5"/></symbol>
+    <symbol id="icon-board" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16m6-16v16M6 8h.1M12 8h.1M18 8h.1"/></symbol>
+    <symbol id="icon-filter" viewBox="0 0 24 24"><path d="M4 5h16l-6 7v5l-4 2v-7Z"/></symbol>
+    <symbol id="icon-send" viewBox="0 0 24 24"><path d="m21 3-7 18-4-7-7-4 18-7Zm0 0L10 14"/></symbol>
+    <symbol id="icon-edit" viewBox="0 0 24 24"><path d="m15 5 4 4M4 20l4-1L20 7a2.8 2.8 0 0 0-4-4L4 15Z"/></symbol>
+    <symbol id="icon-trash" viewBox="0 0 24 24"><path d="M4 7h16M10 11v6m4-6v6M6 7l1 14h10l1-14M9 7V4h6v3"/></symbol>
+    <symbol id="icon-refresh" viewBox="0 0 24 24"><path d="M20 6v5h-5M4 18v-5h5m10-2a7 7 0 0 0-12-4m-2 6a7 7 0 0 0 12 4"/></symbol>
+    <symbol id="icon-lock" viewBox="0 0 24 24"><rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 1 1 8 0v3m-4 4v3"/></symbol>
+    <symbol id="icon-log-out" viewBox="0 0 24 24"><path d="M10 4H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h5M15 16l5-4-5-4m5 4H9"/></symbol>
+    <symbol id="icon-link" viewBox="0 0 24 24"><path d="m9 15 6-6m-7 3-2 2a3 3 0 1 0 4 4l2-2m0-8 2-2a3 3 0 0 1 4 4l-2 2"/></symbol>
+    <symbol id="icon-history" viewBox="0 0 24 24"><path d="M3 11a9 9 0 1 1 2 7M3 5v6h6m3-4v5l3 2"/></symbol>
+    <symbol id="icon-chevron-down" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+    <symbol id="icon-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3.6 9h16.8M3.6 15h16.8M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></symbol>
+    <symbol id="icon-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></symbol>
+    <symbol id="icon-moon" viewBox="0 0 24 24"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"/></symbol>
+    <symbol id="icon-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M4.9 4.9l1.4 1.4m11.4 11.4 1.4 1.4M2 12h2m16 0h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></symbol>
+  </svg>
+  <div id="file-warning" class="banner banner-warn" hidden>
+    Open this dashboard from the running Gossip HTTP server (for example <code>http://127.0.0.1:8081/</code>) rather than opening <code>index.html</code> as a local file.
+  </div>
+  <div id="connect-required" class="banner banner-warn" hidden>
+    Unable to reach the Gossip dashboard API. Verify the service is running on loopback and refresh.
+  </div>
+  <div id="error" class="banner banner-error" hidden>
+    <span id="error-text"></span>
+    <button id="error-dismiss" class="btn btn-xs btn-ghost" type="button">Dismiss</button>
+  </div>
+
+  <div class="app-shell">
+    <aside id="app-rail" class="app-rail" aria-label="Workspace navigation">
+      <div class="rail-brand">
+        <div class="brand-lockup">
+          <span class="brand-mark" aria-hidden="true"><svg class="icon"><use href="#icon-chat"></use></svg></span>
+          <div>
+            <div class="brand-name">Gossip</div>
+            <div id="authority-badge" class="brand-sub">Checking access…</div>
+          </div>
+        </div>
+        <button id="rail-close-btn" class="btn icon-btn btn-ghost modal-close mobile-only" type="button" aria-label="Close navigation" title="Close navigation"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-close"></use></svg></button>
+      </div>
+
+      <section class="rail-project-box" aria-label="Project switcher">
+        <div id="project-dropdown" class="project-dropdown">
+          <button id="project-switcher-btn" class="project-switcher-btn" type="button" aria-haspopup="listbox" aria-expanded="false" aria-controls="project-switcher-menu">
+            <svg id="project-switcher-icon" class="icon project-switcher-icon" aria-hidden="true" focusable="false"><use href="#icon-projects"></use></svg>
+            <span id="project-switcher-label" class="project-switcher-label">Select a project…</span>
+            <svg class="icon project-switcher-caret" aria-hidden="true" focusable="false"><use href="#icon-chevron-down"></use></svg>
+          </button>
+          <div id="project-switcher-menu" class="project-switcher-menu" role="listbox" aria-label="Projects" hidden>
+            <div id="project-switcher-options" class="project-switcher-options"></div>
+            <div class="project-switcher-foot">
+              <button id="rail-add-project-btn" class="project-switcher-add-btn" type="button">
+                <svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-add"></use></svg>
+                <span>New project</span>
+              </button>
+            </div>
+          </div>
+        </div>
+        <select id="project-switcher" class="input select-compact" aria-label="Select active project" hidden>
+          <option value="">No project selected</option>
+        </select>
+        <div id="rail-project-hint" class="rail-hint" hidden></div>
+      </section>
+
+      <nav class="rail-nav" aria-label="Primary routes">
+        <button class="nav-tab" data-view="projects" type="button">
+          <svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-projects"></use></svg>
+          <span class="nav-label">Projects</span>
+          <span id="nav-badge-projects" class="nav-badge"></span>
+        </button>
+        <span class="nav-section-label">Project</span>
+        <button class="nav-tab" data-view="chat" type="button">
+          <svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-chat"></use></svg>
+          <span class="nav-label">Chat</span>
+          <span id="nav-badge-chat" class="nav-badge"></span>
+        </button>
+        <button class="nav-tab" data-view="plans" type="button">
+          <svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-plans"></use></svg>
+          <span class="nav-label">Plans</span>
+          <span id="nav-badge-plans" class="nav-badge"></span>
+        </button>
+        <button class="nav-tab" data-view="todos" type="button">
+          <svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-todos"></use></svg>
+          <span class="nav-label">To-dos</span>
+          <span id="nav-badge-todos" class="nav-badge"></span>
+        </button>
+        <button class="nav-tab" data-view="agents" type="button">
+          <svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-agents"></use></svg>
+          <span class="nav-label">Agents</span>
+          <span id="nav-badge-agents" class="nav-badge"></span>
+        </button>
+        <button class="nav-tab" data-view="settings" type="button">
+          <svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-settings"></use></svg>
+          <span class="nav-label">Settings</span>
+        </button>
+      </nav>
+
+      <footer id="identity-footer" class="rail-footer">
+        <div class="identity-pill">
+          <div id="identity-name" class="identity-name">You</div>
+          <div id="identity-role" class="identity-meta">No active session</div>
+        </div>
+        <div id="home-id-label" class="home-meta"></div>
+      </footer>
+    </aside>
+
+    <button id="rail-resize-handle" class="rail-resize-handle" type="button" role="separator" aria-orientation="vertical" aria-label="Resize navigation sidebar" aria-valuemin="248" aria-valuemax="380" aria-valuenow="264" title="Drag to resize sidebar"></button>
+
+    <div id="rail-backdrop" class="rail-backdrop" hidden></div>
+
+    <div class="app-main">
+      <header class="topbar">
+        <div class="topbar-left">
+          <button id="rail-toggle-btn" class="btn btn-sm icon-btn btn-ghost tablet-below" type="button" aria-label="Open navigation" title="Open navigation" aria-controls="app-rail" aria-expanded="false"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-menu"></use></svg></button>
+          <div class="topbar-title-group">
+            <div class="topbar-pills tablet-below">
+              <span id="topbar-project-badge" class="badge" hidden></span>
+              <span id="topbar-home-badge" class="badge badge-muted" hidden></span>
+            </div>
+            <h1 id="topbar-title" class="topbar-title">Projects</h1>
+          </div>
+        </div>
+
+        <form id="header-search-form" class="topbar-search" role="search">
+          <input id="header-search-input" class="input input-compact" type="search" placeholder="Search project…" aria-label="Search project">
+          <button class="btn btn-sm icon-btn search-submit icon-only-control" type="submit" aria-label="Search project" title="Search project"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-search"></use></svg></button>
+        </form>
+
+        <div class="topbar-actions">
+          <button id="share-project-btn" class="btn btn-sm btn-primary icon-btn icon-only-control" type="button" aria-label="Share project" title="Share project" hidden><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-share"></use></svg><span>Share project</span></button>
+          <button id="theme-toggle-btn" class="btn btn-sm icon-btn btn-secondary" type="button" aria-label="Switch to dark mode" title="Switch to dark mode"><svg class="icon" aria-hidden="true" focusable="false"><use id="theme-toggle-icon" href="#icon-moon"></use></svg><span id="theme-toggle-label">Switch to dark mode</span></button>
+          <button id="logout" class="btn btn-sm btn-ghost" type="button" aria-label="Sign out" title="Sign out" hidden><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-log-out"></use></svg><span>Sign out</span></button>
+          <details id="shell-actions" class="shell-actions">
+            <summary class="btn btn-sm icon-btn btn-secondary" aria-label="Dashboard actions" title="Dashboard actions"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-more"></use></svg></summary>
+            <div class="shell-actions-panel">
+              <button id="refresh" class="btn btn-ghost" type="button"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-refresh"></use></svg><span>Refresh dashboard</span></button>
+            </div>
+          </details>
+        </div>
+      </header>
+
+      <main id="workspace-main" class="main-viewport">
+        <div id="access-denied-banner" class="card banner-denied" hidden>
+          <div>
+            <strong>Project access restricted (403)</strong>
+            <p class="muted">Your current credential is signed in, but this project role does not have <code>project.read</code> permission for the selected workspace.</p>
+          </div>
+        </div>
+
+        <!-- VIEW: PROJECTS -->
+        <section id="view-projects" class="route-view">
+          <div class="view-header">
+            <div id="projects-tabs" class="subtabs" role="tablist" aria-label="Project lists">
+              <button id="projects-tab-local" class="subtab subtab-active" data-projects-tab="local" role="tab" aria-selected="true" aria-controls="local-projects-panel" type="button"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-projects"></use></svg><span>On this device</span></button>
+              <button id="projects-tab-joined" class="subtab" data-projects-tab="joined" role="tab" aria-selected="false" aria-controls="joined-projects-panel" type="button"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-globe"></use></svg><span>Joined projects</span></button>
+            </div>
+            <div class="btn-row">
+              <button id="open-local-project-btn" class="btn btn-primary" type="button"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-add"></use></svg><span>Create local project</span></button>
+              <button id="open-join-remote-btn" class="btn btn-secondary" type="button"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-link"></use></svg><span>Join project</span></button>
+            </div>
+          </div>
+
+          <section id="local-projects-panel" class="card projects-panel" role="tabpanel" aria-labelledby="projects-tab-local">
+            <div class="card-head">
+              <div>
+                <h3 id="local-projects-heading">On this device</h3>
+                <p class="muted small">Local Git checkouts initialized with Gossip on this workstation.</p>
+              </div>
+              <span id="local-count-pill" class="badge badge-muted">0</span>
+            </div>
+            <div id="local-projects-list" class="stack-list projects-grid"></div>
+          </section>
+
+          <section id="joined-projects-panel" class="card projects-panel" role="tabpanel" aria-labelledby="projects-tab-joined" hidden>
+            <div class="card-head">
+              <div>
+                <h3 id="remote-projects-heading">Joined projects</h3>
+                <p class="muted small">Remote projects connected over LAN or relay with a project credential.</p>
+              </div>
+              <span id="remote-count-pill" class="badge badge-muted">0</span>
+            </div>
+            <div id="remote-projects-list" class="stack-list projects-grid"></div>
+          </section>
+
+          <section id="welcome" class="card welcome-signin-card" hidden>
+            <div class="card-head">
+              <div>
+                <h3>Connect a scoped identity</h3>
+                <p class="muted">Required when using an isolated browser profile, connecting as a specific non-default principal, or testing a scoped member credential.</p>
+              </div>
+            </div>
+            <form id="login-form" class="inline-form-grid">
+              <label class="field">
+                <span>Project ID (optional if importing JSON bundle)</span>
+                <input id="login-project-id" class="input" type="text" placeholder="proj_..." autocomplete="off">
+              </label>
+              <label class="field">
+                <span>Credential JSON or Bearer Token</span>
+                <textarea id="credential-welcome" class="input textarea-sm" rows="2" placeholder='Paste {"project_id":"...","principal_id":"...","token":"..."} or raw token'></textarea>
+              </label>
+              <div class="field-actions">
+                <button id="login-submit-btn" class="btn btn-primary" type="submit">Sign in</button>
+              </div>
+            </form>
+            <div id="recognize-row" class="recognize-box" hidden>
+              <label class="field">
+                <span>Recognize project from Git remote URL</span>
+                <div class="btn-row">
+                  <input id="recognize-remote-url" class="input" type="text" placeholder="git@github.com:org/repo.git">
+                  <button id="recognize-btn" class="btn btn-secondary" type="button">Check</button>
+                </div>
+              </label>
+              <div id="recognize-results" class="stack-list"></div>
+            </div>
+          </section>
+        </section>
+
+        <!-- VIEW: CHAT -->
+        <section id="view-chat" class="route-view" hidden>
+          <div id="chat-layout" class="chat-shell" data-mobile-pane="thread">
+            <aside id="chat-channels-pane" class="chat-sidebar card" aria-label="Conversations">
+              <div class="chat-sidebar-head">
+                <h3>Conversations</h3>
+                <span id="chat-agent-count" class="badge badge-muted">0 online</span>
+              </div>
+              <div id="chat-channels" class="chat-channel-list"></div>
+              <div id="agent-dm-inspect-bar" class="agent-dm-inspect-bar" hidden>
+                <div class="channel-section-head">
+                  <span class="channel-section-label">Agent chats</span>
+                  <button id="inspect-agent-dms" class="btn btn-xs icon-btn btn-secondary" type="button" aria-label="Browse all agent conversations" title="Browse all agent conversations"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-history"></use></svg><span>View all</span></button>
+                </div>
+                <div id="agent-dm-quick-list" class="chat-channel-list"></div>
+              </div>
+            </aside>
+
+            <section id="chat-thread-pane" class="chat-main card" aria-label="Message timeline">
+              <header class="chat-thread-head">
+                <div class="chat-head-left">
+                  <button id="chat-mobile-back" class="btn btn-sm btn-ghost mobile-chat-back icon-only-control" type="button" aria-label="Back to conversations" title="Back to conversations"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-back"></use></svg><span>Back</span></button>
+                  <div>
+                    <h3 id="chat-thread-title"># general</h3>
+                    <div id="chat-thread-scope" class="muted small">Shared project channel visible to project members</div>
+                  </div>
+                </div>
+                <div class="btn-row">
+                  <button id="chat-load-older-btn" class="btn btn-xs btn-secondary" type="button" hidden>Load older</button>
+                  <button id="chat-jump-latest-btn" class="btn btn-xs btn-ghost icon-only-control" type="button" aria-label="Jump to latest message" title="Jump to latest message" hidden><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-down"></use></svg><span>Latest</span></button>
+                </div>
+              </header>
+              <div id="chat-channel-bar" class="chat-channel-bar" hidden></div>
+
+              <section id="chat-search-panel" class="chat-search-panel" aria-label="Chat search results" hidden>
+                <div class="card-head"><h3>Search messages</h3><button id="close-chat-search" class="btn btn-secondary icon-only-control" type="button" aria-label="Back to conversation" title="Back to conversation"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-back"></use></svg><span>Back to conversation</span></button></div>
+                <p id="chat-search-status" class="muted" role="status"></p>
+                <div id="chat-search-results" class="stack-list"></div>
+              </section>
+              <section id="agent-dm-panel" class="chat-search-panel" aria-labelledby="agent-dm-title" hidden>
+                <div class="card-head"><h3 id="agent-dm-title" tabindex="-1">Agent conversations</h3><button id="close-agent-dms" class="btn btn-secondary icon-only-control" type="button" aria-label="Back to chat" title="Back to chat"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-back"></use></svg><span>Back to chat</span></button></div>
+                <p class="muted">Read-only. Opening an agent conversation is logged in project history.</p>
+                <div id="agent-dm-results" class="stack-list" aria-live="polite"></div>
+              </section>
+              <div id="chat-timeline" class="chat-timeline" role="log" aria-live="polite"></div>
+
+              <form id="message-form" class="chat-composer">
+                <div class="composer-meta">
+                  <span id="message-recipient-pill" class="badge">Posting to # general</span>
+                  <span id="composer-hint" class="muted small">Enter sends · Shift+Enter adds a newline</span>
+                </div>
+                <div class="composer-row">
+                  <textarea id="message-body" class="input composer-input" rows="2" placeholder="Write a message to # general…"></textarea>
+                  <button id="send-message-btn" class="btn btn-primary icon-only-control" type="submit" aria-label="Send message" title="Send message"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-send"></use></svg><span>Send</span></button>
+                </div>
+              </form>
+            </section>
+          </div>
+        </section>
+
+        <!-- VIEW: PLANS -->
+        <section id="view-plans" class="route-view" hidden>
+          <div class="view-header">
+            <div id="plan-view-tabs" class="subtabs" role="tablist" aria-label="Plans view">
+              <button id="plan-tab-reader" class="subtab subtab-active" type="button" role="tab" aria-selected="true" aria-controls="plan-reader-layout"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-plans"></use></svg><span>Plan</span></button>
+              <button id="plan-tab-context" class="subtab" type="button" role="tab" aria-selected="false" aria-controls="plan-project-context"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-folder-open"></use></svg><span>Project context</span></button>
+            </div>
+            <div class="btn-row plan-toolbar-actions">
+              <button id="new-plan-btn" class="btn btn-secondary icon-only-control" type="button" aria-label="New plan" title="New plan"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-add"></use></svg><span>New plan</span></button>
+              <button id="open-plan-dialog-btn" class="btn btn-primary icon-only-control" type="button" aria-label="Edit revision" title="Edit revision"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-edit"></use></svg><span>Edit revision</span></button>
+            </div>
+          </div>
+
+          <div id="plan-reader-layout" class="plans-grid" data-pane="list">
+            <aside id="plan-thread-list" class="card plan-thread-list" aria-label="Independent plans"></aside>
+            <article class="card plan-reader-card">
+              <div class="card-head">
+                <div>
+                  <button id="plan-reader-back" class="btn btn-sm btn-ghost plan-reader-back" type="button" aria-label="Back to plans" title="Back to plans"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-back"></use></svg><span>Back to plans</span></button>
+                  <h3 id="plan-active-heading">Plan</h3>
+                  <div id="plan-meta-line" class="muted small"></div>
+                </div>
+              </div>
+              <div class="plan-action-bar">
+                <div class="plan-action-meta">
+                  <label id="plan-version-control" class="plan-select-control" for="plan-version-select">
+                    <span class="visually-hidden">Version</span><select id="plan-version-select" class="input select-compact" aria-label="Revision in selected plan"></select>
+                  </label>
+                  <span id="plan-status-badge" class="badge" hidden></span>
+                  <select id="plan-compare-select" class="input select-compact" aria-label="Compare against revision" hidden></select>
+                  <button id="plan-ack-btn" class="btn btn-sm btn-secondary" type="button" hidden>Acknowledge</button>
+                </div>
+                <div id="plan-action-icons" class="icon-bar" role="toolbar" aria-label="Plan actions">
+                  <div id="plan-related-actions" class="icon-bar-group" hidden>
+                    <button id="plan-open-tasks" class="btn btn-sm icon-btn btn-ghost" type="button" aria-label="View revision tasks" title="View revision tasks"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-todos"></use></svg><span>View revision tasks</span></button>
+                    <button id="plan-open-walkthrough" class="btn btn-sm icon-btn btn-ghost" type="button" aria-label="Walkthrough" title="Walkthrough"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-plans"></use></svg><span>Walkthrough</span></button>
+                  </div>
+                  <div id="plan-reader-actions" class="icon-bar-group" hidden>
+                    <button id="plan-complete-btn" class="btn btn-sm icon-btn btn-ghost" type="button" aria-label="Mark plan done" title="Mark plan done" hidden><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-check"></use></svg><span>Mark plan done</span></button>
+                    <button id="plan-delete-btn" class="btn btn-sm icon-btn btn-ghost icon-btn-danger" type="button" aria-label="Delete plan" title="Delete plan" hidden><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-trash"></use></svg><span>Delete plan</span></button>
+                  </div>
+                </div>
+              </div>
+              <section id="plan-variants" class="stack-list" hidden>
+                <details><summary><span>Variants</span> <span id="plan-variants-count" class="count-pill">0</span></summary>
+                  <div id="plan-variant-list" class="stack-list"></div>
+                  <details id="plan-add-variant"><summary>Add variant</summary>
+                    <form id="plan-variant-form" class="stack-list">
+                      <label class="field"><span>Name</span><input name="variantName" class="input" maxlength="160" required></label>
+                      <label class="field"><span>Plan text</span><textarea name="variantBody" class="input" rows="7" required></textarea></label>
+                      <p id="plan-variant-error" role="alert"></p>
+                      <button type="submit" class="btn btn-secondary">Save variant</button>
+                    </form>
+                  </details>
+                </details>
+              </section>
+              <div id="plan-view-content" class="markdown-body"></div>
+              <div id="plan-context-links"></div>
+              <div id="plan-diff-panel" class="diff-panel" hidden></div>
+            </article>
+          </div>
+          <section id="plan-empty-state" class="plan-empty-state" aria-labelledby="plan-empty-title" hidden>
+            <svg class="icon plan-empty-icon" aria-hidden="true" focusable="false"><use href="#icon-plans"></use></svg>
+            <h2 id="plan-empty-title">No plans yet</h2>
+            <p>Start a plan to capture the workstream. Add its task list and walkthrough as the plan takes shape.</p>
+            <button id="plan-empty-create" class="btn btn-primary" type="button"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-add"></use></svg><span>Create first plan</span></button>
+          </section>
+          <section id="plan-project-context" class="card" aria-labelledby="project-context-title" hidden>
+            <div class="card-head"><h3 id="project-context-title">Project context</h3><button id="context-add" class="btn btn-primary" type="button" hidden><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-add"></use></svg><span>New record</span></button></div>
+            <div id="context-list" class="stack-list" aria-live="polite"></div>
+          </section>
+        </section>
+
+        <!-- VIEW: TO-DOS -->
+        <section id="view-todos" class="route-view" hidden>
+          <div class="view-header todo-top-bar">
+            <div id="todo-scope-tabs" class="subtabs" role="tablist" aria-label="Tasks view">
+              <button id="todo-scope-project" class="subtab subtab-active" type="button" role="tab" data-todo-scope="project" data-todo-goal="all" aria-selected="true"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-todos"></use></svg><span>All tasks</span></button>
+              <button id="todo-goal-plan" class="subtab" type="button" role="tab" data-todo-scope="project" data-todo-goal="plan" aria-selected="false"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-plans"></use></svg><span>Plan goals</span></button>
+              <button id="todo-goal-global" class="subtab" type="button" role="tab" data-todo-scope="project" data-todo-goal="global" aria-selected="false"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-globe"></use></svg><span>Global goals</span></button>
+              <button id="todo-scope-mine" class="subtab" type="button" role="tab" data-todo-scope="mine" data-todo-goal="all" aria-selected="false"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-check"></use></svg><span>My work</span></button>
+              <button id="todo-scope-agent" class="subtab" type="button" role="tab" data-todo-scope="agent" data-todo-goal="all" aria-selected="false"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-agents"></use></svg><span>Browse agent</span></button>
+            </div>
+            <div class="btn-row">
+              <button id="open-task-dialog-btn" class="btn btn-primary icon-only-control" type="button" aria-label="New task" title="New task"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-add"></use></svg><span>New task</span></button>
+            </div>
+          </div>
+
+          <section class="card">
+            <div class="card-head todo-card-head">
+              <div class="todo-card-title-row">
+                <h3 id="shared-todos-title">Project tasks</h3>
+                <span id="project-todos-count" class="badge badge-muted">0</span>
+              </div>
+              <div class="todo-card-actions">
+                <label id="todo-agent-field" class="todo-agent-inline" hidden><span class="muted small">Agent</span><select id="personal-agent" class="input select-compact"></select></label>
+                <div id="todo-layout-tabs" class="icon-bar" role="group" aria-label="Task layout">
+                  <button id="todo-checklist" class="btn btn-sm icon-btn btn-ghost is-active" type="button" aria-pressed="true" aria-label="Checklist view" title="Checklist view"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-todos"></use></svg><span>Checklist</span></button>
+                  <button id="todo-kanban" class="btn btn-sm icon-btn btn-ghost" type="button" aria-pressed="false" aria-label="Kanban view" title="Kanban view"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-board"></use></svg><span>Kanban</span></button>
+                </div>
+              </div>
+            </div>
+            <div class="todo-card-subbar">
+              <select id="todo-scope" class="input" hidden aria-label="Work scope">
+                <option value="project">Project</option>
+                <option value="mine">My work</option>
+                <option value="agent">Browse agent</option>
+              </select>
+              <details class="todo-filters-panel">
+                <summary><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-filter"></use></svg><span>Filters</span><span id="todo-filter-count" class="badge badge-muted" hidden></span></summary>
+                <label class="field revision-filter"><span>Plan revision</span><select id="filter-revision" class="input"><option value="">All revisions</option></select></label>
+                <form id="todo-filters" class="filter-bar">
+                <select id="filter-status" class="input select-compact" aria-label="Filter by status">
+                  <option value="">All statuses</option>
+                  <option value="ready">Ready</option>
+                  <option value="running">In progress</option>
+                  <option value="submitted">In review</option>
+                  <option value="accepted">Done</option>
+                  <option value="blocked">Blocked</option>
+                  <option value="needs_replan">Needs replan</option>
+                  <option value="cancelled">Cancelled</option>
+                </select>
+                <select id="filter-kind" class="input select-compact" aria-label="Filter by type">
+                  <option value="">All types</option>
+                  <option value="research">Research</option>
+                  <option value="design">Design</option>
+                  <option value="implementation">Implementation</option>
+                  <option value="review">Review</option>
+                  <option value="verification">Verification</option>
+                  <option value="integration">Integration</option>
+                </select>
+                <select id="filter-assignee" class="input select-compact" aria-label="Filter by agent">
+                  <option value="">All agents</option>
+                </select>
+                <input id="filter-query" class="input select-compact" type="search" placeholder="Filter tasks by title or ID…">
+                <button id="filter-reset-btn" class="btn btn-xs btn-ghost" type="button">Reset</button>
+              </form>
+              </details>
+              <details id="quick-task-disclosure" class="todo-quick-add">
+                <summary><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-add"></use></svg><span>Quick add task</span></summary>
+                <form id="quick-task-form" class="quick-create-row task-quick-add-form">
+                  <input id="quick-task-title" class="input" required type="text" placeholder="Task title" aria-label="Quick task title">
+                  <select id="quick-task-kind" class="input select-compact" aria-label="To-do type">
+                    <option value="implementation">Implementation</option>
+                    <option value="research">Research</option>
+                    <option value="design">Design</option>
+                    <option value="review">Review</option>
+                    <option value="verification">Verification</option>
+                    <option value="integration">Integration</option>
+                  </select>
+                  <button class="btn btn-secondary" type="submit">Continue</button>
+                </form>
+              </details>
+            </div>
+            <div id="project-todos-list" class="stack-list"></div>
+            <div class="card-foot">
+              <button id="todos-load-more-btn" class="btn btn-sm btn-secondary" type="button" hidden>Load more tasks</button>
+            </div>
+          </section>
+
+          <section id="personal-todos-section" class="card" hidden>
+            <div class="card-head">
+              <div>
+                <h3>Personal checklist</h3>
+                <p id="personal-checklists-note" class="muted small">Local workspace notes recorded by agents outside the shared task graph.</p>
+              </div>
+              <span id="personal-checklists-count" class="badge badge-muted">0</span>
+            </div>
+            <form id="personal-item-form" class="filter-bar">
+              <input id="personal-item-title" class="input" aria-label="New personal to-do" placeholder="Add a personal to-do" maxlength="240" required>
+              <button class="btn btn-primary" type="submit">Add</button>
+            </form>
+            <div id="personal-checklists-list" class="stack-list"></div>
+          </section>
+        </section>
+
+        <!-- VIEW: AGENTS -->
+        <section id="view-agents" class="route-view" hidden>
+          <div class="view-header">
+            <div id="agents-view-tabs" class="subtabs" role="tablist" aria-label="Agent sections">
+              <button class="subtab subtab-active" type="button" role="tab" data-agent-tab="all" aria-selected="true"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-agents"></use></svg><span>Overview</span></button>
+              <button class="subtab" type="button" role="tab" data-agent-tab="roles" aria-selected="false"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-user-check"></use></svg><span>Work roles</span></button>
+              <button class="subtab" type="button" role="tab" data-agent-tab="tasks" aria-selected="false"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-todos"></use></svg><span>Tasks &amp; to-dos</span></button>
+              <button class="subtab" type="button" role="tab" data-agent-tab="details" aria-selected="false"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-settings"></use></svg><span>Identity &amp; usage</span></button>
+            </div>
+          </div>
+          <div id="agent-layout" class="agent-layout" data-pane="roster">
+            <aside class="card">
+              <div class="card-head"><h2>Roster</h2><span id="agent-roster-count" class="badge"></span></div>
+              <div id="agents-list" class="stack-list"></div>
+            </aside>
+            <section id="agent-profile" class="card" aria-label="Agent profile"></section>
+          </div>
+          <dialog id="work-roles-section" class="modal" aria-labelledby="work-role-title">
+            <div class="modal-card">
+            <div class="modal-head">
+              <h3 id="work-role-title">Assign work role</h3>
+              <button class="btn icon-btn btn-ghost modal-close" type="button" data-close-dialog="work-roles-section" aria-label="Close" title="Close"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-close"></use></svg></button>
+            </div>
+            <form id="role-form" class="form-grid-compact">
+              <label class="field">
+                <span>Agent</span>
+                <select id="role-agent" class="input" required></select>
+              </label>
+              <label class="field">
+                <span>Role preset</span>
+                <select id="role-preset" class="input"></select>
+              </label>
+              <label class="field">
+                <span>Role key</span>
+                <input id="role-id" class="input" type="text" placeholder="implementer" required>
+              </label>
+              <label class="field">
+                <span>Display label</span>
+                <input id="role-name" class="input" type="text" placeholder="Implementer" required>
+              </label>
+              <label class="field field-span-2">
+                <span>Responsibilities</span>
+                <textarea id="role-body" class="input" rows="2" placeholder="Describe scope and expectations…"></textarea>
+              </label>
+              <div class="modal-foot">
+                <button class="btn btn-secondary" type="button" data-close-dialog="work-roles-section">Cancel</button>
+                <button class="btn btn-primary" type="submit">Assign role</button>
+              </div>
+            </form>
+            </div>
+          </dialog>
+          <dialog id="agent-parent-dialog" class="modal" aria-labelledby="agent-parent-title">
+            <form id="agent-parent-form" class="modal-card single-col-form">
+              <div class="modal-head"><h3 id="agent-parent-title">Set agent parent</h3><button class="btn icon-btn btn-ghost modal-close" type="button" data-close-dialog="agent-parent-dialog" aria-label="Close" title="Close"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-close"></use></svg></button></div>
+              <input type="hidden" name="child_id">
+              <p id="agent-parent-child" class="muted small"></p>
+              <label class="field"><span>Parent identity</span><select name="parent_id" class="input"></select></label>
+              <p class="muted small">Parentage only organizes the roster. It does not grant access to messages, tasks, credentials, or permissions.</p>
+              <p id="agent-parent-error" class="form-feedback" role="alert"></p>
+              <div class="modal-foot">
+                <button class="btn btn-secondary" type="button" data-close-dialog="agent-parent-dialog">Cancel</button>
+                <button class="btn btn-primary" type="submit">Save hierarchy</button>
+              </div>
+            </form>
+          </dialog>
+        </section>
+
+        <!-- VIEW: SEARCH -->
+        <section id="view-search" class="route-view" hidden>
+          <div class="view-header">
+            <div id="search-mode-tabs" class="subtabs" role="tablist" aria-label="Search view">
+              <button id="search-results-tab" class="subtab subtab-active" type="button" role="tab" aria-selected="true" aria-controls="search-results-container"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-search"></use></svg><span>All results</span></button>
+              <button id="search-graph-tab" class="subtab" type="button" role="tab" aria-selected="false" aria-controls="graphify-panel"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-board"></use></svg><span>Knowledge graph</span></button>
+            </div>
+            <div class="view-header-actions">
+              <button id="search-back-btn" class="btn btn-sm btn-secondary" type="button"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-back"></use></svg><span>Back</span></button>
+            </div>
+          </div>
+          <section id="search-welcome" class="card search-welcome" aria-labelledby="search-welcome-title">
+            <div class="search-welcome-heading">
+              <span class="search-welcome-icon"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-search"></use></svg></span>
+              <div>
+                <h2 id="search-welcome-title">Find something in this project</h2>
+                <p class="muted">Search from the field above. Results open the source they came from.</p>
+              </div>
+            </div>
+            <div class="search-sources" aria-label="Searchable sources">
+              <span>Conversations</span><span>Plans</span><span>Tasks</span><span>Project context</span><span>Indexed code</span>
+            </div>
+            <p class="search-privacy muted small">Direct messages appear only to their participants.</p>
+          </section>
+          <p id="search-status" class="muted" role="status"></p>
+
+          <section id="graphify-panel" class="card" hidden>
+            <div class="card-head">
+              <div>
+                <h3>Graphify index</h3>
+                <p id="graphify-status-text" class="muted small">Enter a query or inspect workspace Graphify status.</p>
+              </div>
+              <div class="graphify-status-actions">
+                <span id="graphify-status-badge" class="badge badge-muted">Idle</span>
+                <button id="graphify-open-workspaces" class="btn btn-secondary icon-btn" type="button" aria-label="Open workspace settings" title="Open workspace settings"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-folder-open"></use></svg></button>
+              </div>
+            </div>
+            <p class="muted small graphify-help">Search reads an existing <code>.gossip/graph.json</code> or <code>graphify-out/graph.json</code> from a registered local checkout. Gossip does not build or refresh the index yet.</p>
+            <div id="graphify-nodes-list" class="stack-list"></div>
+          </section>
+
+          <div id="search-results-container" class="search-results-grid">
+            <section class="card">
+              <div class="card-head"><h3>Project context</h3><span id="search-context-count" class="badge badge-muted">0</span></div>
+              <div id="search-context-list" class="stack-list"></div>
+            </section>
+            <section class="card">
+              <div class="card-head"><h3>Tasks</h3><span id="search-tasks-count" class="badge badge-muted">0</span></div>
+              <div id="search-tasks-list" class="stack-list"></div>
+            </section>
+            <section class="card">
+              <div class="card-head"><h3>Plans</h3><span id="search-plans-count" class="badge badge-muted">0</span></div>
+              <div id="search-plans-list" class="stack-list"></div>
+            </section>
+            <section class="card">
+              <div class="card-head"><h3>Accessible Messages</h3><span id="search-messages-count" class="badge badge-muted">0</span></div>
+              <div id="search-messages-list" class="stack-list"></div>
+            </section>
+            <section class="card">
+              <div class="card-head"><h3>Events</h3><span id="search-events-count" class="badge badge-muted">0</span></div>
+              <div id="search-events-list" class="stack-list"></div>
+            </section>
+          </div>
+        </section>
+
+        <!-- VIEW: SETTINGS -->
+        <section id="view-settings" class="route-view" hidden>
+          <div class="view-header">
+            <div id="settings-tabs" class="subtabs" role="tablist" aria-label="Project settings">
+              <button class="subtab subtab-active" id="settings-tab-access" data-settings-tab="access" role="tab" aria-selected="true" aria-label="Access" title="Access" aria-controls="settings-panel-access" type="button"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-lock"></use></svg><span>Access</span></button>
+              <button class="subtab" id="settings-tab-connections" data-settings-tab="connections" role="tab" aria-selected="false" aria-label="Connections" title="Connections" aria-controls="settings-panel-connections" type="button"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-link"></use></svg><span>Connections</span></button>
+              <button class="subtab" id="settings-tab-workspaces" data-settings-tab="workspaces" role="tab" aria-selected="false" aria-label="Workspaces" title="Workspaces" aria-controls="settings-panel-workspaces" type="button"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-projects"></use></svg><span>Workspaces</span></button>
+              <button class="subtab" id="settings-tab-history" data-settings-tab="history" role="tab" aria-selected="false" aria-label="History" title="History" aria-controls="settings-panel-history" type="button"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-history"></use></svg><span>History</span></button>
+            </div>
+          </div>
+          <div id="settings-load-status" class="settings-load-status muted small" role="status" hidden></div>
+
+          <div id="access-project-scope" class="scope-callout">
+            <div class="scope-callout-main">
+              <span class="badge">Project</span>
+              <strong id="access-project-name">No project</strong>
+              <div class="scope-id-pill">
+                <code id="access-project-id"></code>
+                <button id="copy-project-id" class="btn btn-xs btn-secondary" type="button"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-copy"></use></svg><span>Copy ID</span></button>
+                <span id="copy-project-status" class="small" role="status"></span>
+              </div>
+            </div>
+            <p class="muted small scope-callout-note">Every invite, member revocation, permission grant, and certificate change applies to this project.</p>
+          </div>
+
+          <!-- SETTINGS: ACCESS -->
+          <div id="settings-panel-access" class="settings-panel" data-settings-panel="access" role="tabpanel" aria-labelledby="settings-tab-access">
+            <nav class="access-section-links" aria-label="Access sections">
+              <button class="btn btn-secondary" type="button" data-access-section="access-members">Members</button>
+              <button class="btn btn-secondary" type="button" data-access-section="project-roles-card" hidden>Roles</button>
+              <button class="btn btn-secondary" type="button" data-access-section="access-requests-card" hidden>Requests</button>
+              <button class="btn btn-secondary" type="button" data-access-section="access-devices">Devices</button>
+              <button class="btn btn-secondary" type="button" data-access-section="access-permissions">Permissions</button>
+              <button class="btn btn-secondary" type="button" data-access-section="access-limits">Limits</button>
+              <button class="btn btn-secondary" type="button" data-access-section="recovery-card">Recovery</button>
+            </nav>
+            <label class="access-section-select-wrap">
+              <span class="visually-hidden">Access section</span>
+              <select id="access-section-select" class="input" aria-label="Access section"></select>
+            </label>
+            <div class="settings-stack">
+              <section id="access-members" class="card" tabindex="-1">
+                <div class="card-head">
+                  <div>
+                    <h3>Members</h3>
+                    <p class="muted small">Manage agents connecting from another device. The local dashboard uses this computer’s account and needs no project credential.</p>
+                  </div>
+                </div>
+                <div id="members-list" class="stack-list"></div>
+                <details id="invite-member-panel" class="settings-disclosure">
+                  <summary>Invite an agent from another device</summary>
+                <form id="invite-form" class="single-col-form">
+                  <label class="field">
+                    <span>Agent name</span>
+                    <input id="invite-name" class="input" type="text" placeholder="e.g. Antigravity" required>
+                  </label>
+                  <label class="field">
+                    <span>Role</span>
+                    <select id="invite-role" class="input">
+                      <option value="worker">worker</option>
+                      <option value="owner">owner</option>
+                    </select>
+                  </label>
+                  <label class="field">
+                    <span>Client certificate fingerprint <span class="muted">(needed for LAN or FRP access)</span></span>
+                    <input id="invite-fingerprint" class="input" type="text" placeholder="Optional 64-character SHA-256 fingerprint">
+                  </label>
+                  <label class="field">
+                    <span>Optional expiry (RFC3339 or empty)</span>
+                    <input id="invite-expires" class="input" type="text" placeholder="2026-12-31T23:59:59Z">
+                  </label>
+                  <div class="field-actions">
+                    <button class="btn btn-primary" type="submit">Issue scoped invite</button>
+                  </div>
+                </form>
+                <div id="invite-result" class="notice-box" hidden></div>
+                </details>
+              </section>
+
+              <section class="card" id="access-requests-card" tabindex="-1" hidden>
+                <div class="card-head">
+                  <h3>Remote access requests</h3>
+                  <button id="open-access-requests" class="btn btn-secondary" type="button">Review requests</button>
+                </div>
+              </section>
+
+              <section class="card" id="project-roles-card" tabindex="-1" hidden>
+                <div class="card-head">
+                  <div>
+                    <h3>Project roles</h3>
+                    <p class="muted small">Create custom roles or edit permission sets and assignments across members.</p>
+                  </div>
+                  <div class="btn-row">
+                    <button id="new-project-role-btn" class="btn btn-primary btn-sm" type="button"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-add"></use></svg><span>New role</span></button>
+                    <button id="load-project-roles" class="btn btn-secondary btn-sm" type="button"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-refresh"></use></svg><span>Refresh</span></button>
+                  </div>
+                </div>
+                <div id="project-roles-content" class="stack-list" aria-live="polite"></div>
+              </section>
+
+              <section class="card" id="access-permissions" tabindex="-1" hidden>
+                <div class="card-head">
+                  <div>
+                    <h3>Fine-Grained Permissions</h3>
+                    <p class="muted small">Grant or inspect explicit per-principal capability flags.</p>
+                  </div>
+                </div>
+                <form id="permission-form" class="single-col-form">
+                  <label class="field">
+                    <span>Principal</span>
+                    <select id="permission-principal" class="input" required></select>
+                  </label>
+                  <label class="field">
+                    <span>Permission</span>
+                    <select id="permission-name" class="input">
+                      <option value="project.read">project.read</option>
+                      <option value="message.send">message.send</option>
+                      <option value="task.claim">task.claim</option>
+                      <option value="task.delegate">task.delegate</option>
+                      <option value="result.submit">result.submit</option>
+                      <option value="plan.edit">plan.edit</option>
+                      <option value="settings.edit">settings.edit</option>
+                      <option value="review.decide">review.decide</option>
+                      <option value="membership.manage">membership.manage</option>
+                    </select>
+                  </label>
+                  <div class="field-actions">
+                    <button class="btn btn-secondary" type="submit">Grant permission</button>
+                  </div>
+                </form>
+                <div id="permissions-list" class="stack-list"></div>
+              </section>
+
+              <section id="access-devices" class="card" tabindex="-1">
+                <div class="card-head">
+                  <div>
+                    <h3>Devices and certificates</h3>
+                    <p class="muted small">Enroll client TLS certificates and one-time pairing codes scoped exclusively to this project.</p>
+                  </div>
+                </div>
+                <div id="certificates-list" class="stack-list"></div>
+                <details class="settings-disclosure"><summary>Advanced certificate setup</summary>
+                <form id="certificate-form" class="single-col-form">
+                  <label class="field">
+                    <span>Client Certificate SHA-256 Fingerprint</span>
+                    <input id="cert-fingerprint" class="input" type="text" placeholder="64-character hex fingerprint" required>
+                  </label>
+                  <label class="field">
+                    <span>Expires At (optional RFC3339)</span>
+                    <input id="cert-expires" class="input" type="text" placeholder="2026-12-31T23:59:59Z">
+                  </label>
+                  <div class="field-actions">
+                    <button class="btn btn-secondary" type="submit">Grant certificate</button>
+                  </div>
+                </form>
+
+                <hr class="divider">
+
+                <form id="pair-form" class="single-col-form">
+                  <label class="field">
+                    <span>Optional client certificate fingerprint lock</span>
+                    <input id="pair-fingerprint" class="input" type="text" placeholder="Optional SHA-256 fingerprint">
+                  </label>
+                  <label class="field">
+                    <span>Expires At (optional RFC3339)</span>
+                    <input id="pair-expires" class="input" type="text" placeholder="2026-12-31T23:59:59Z">
+                  </label>
+                  <div class="field-actions">
+                    <button class="btn btn-secondary" type="submit">Create certificate invitation</button>
+                  </div>
+                </form>
+                <div id="pair-result" class="notice-box" hidden></div>
+                </details>
+                <div id="cert-invitations-list" class="stack-list"></div>
+              </section>
+
+              <section class="card" id="access-limits" tabindex="-1" hidden>
+                <div class="card-head">
+                  <h3>Coordination Limits &amp; Budget</h3>
+                </div>
+                <form id="settings-form" class="single-col-form">
+                  <label class="field">
+                    <span>Max parallel tasks</span>
+                    <input id="setting-max-parallel" class="input" type="number" min="1" required>
+                  </label>
+                  <label class="field">
+                    <span>Max lease (seconds)</span>
+                    <input id="setting-max-lease" class="input" type="number" min="30" required>
+                  </label>
+                  <label class="field">
+                    <span>Summary token target</span>
+                    <input id="setting-summary-tokens" class="input" type="number" min="100" required>
+                  </label>
+                  <label class="field">
+                    <span>Default review mode</span>
+                    <select id="setting-review-mode" class="input">
+                      <option value="report_first">report_first</option>
+                      <option value="summary">summary</option>
+                      <option value="targeted_source">targeted_source</option>
+                      <option value="full_source">full_source</option>
+                    </select>
+                  </label>
+                  <div class="field-actions">
+                    <button class="btn btn-primary" type="submit">Save project settings</button>
+                  </div>
+                </form>
+
+                <hr class="divider">
+
+                <form id="budget-form" class="single-col-form">
+                  <label class="field">
+                    <span>Total unit budget</span>
+                    <input id="budget-total" class="input" type="number" min="0" required>
+                  </label>
+                  <div id="budget-status-text" class="muted small"></div>
+                  <div class="field-actions">
+                    <button class="btn btn-secondary" type="submit">Update unit budget</button>
+                  </div>
+                </form>
+              </section>
+
+              <section id="recovery-card" class="card" tabindex="-1" hidden>
+                <div class="card-head">
+                  <div>
+                    <h3>Recovery Credential &amp; Device Import</h3>
+                    <p class="muted small">Export is disabled by default until explicitly requested. Legacy imported projects without a locally saved secret must issue a fresh scoped credential from Invites above.</p>
+                  </div>
+                </div>
+                <div class="btn-row">
+                  <button id="export-recovery-btn" class="btn btn-secondary" type="button">Export saved recovery credential</button>
+                  <button id="copy-recovery-btn" class="btn btn-secondary" type="button" hidden>Copy JSON</button>
+                  <button id="open-credential-import-btn" class="btn btn-secondary" type="button">Import JSON credential</button>
+                </div>
+                <pre id="recovery-output" class="code-block" hidden></pre>
+              </section>
+            </div>
+          </div>
+
+          <!-- SETTINGS: CONNECTIONS -->
+          <div id="settings-panel-connections" class="settings-panel" data-settings-panel="connections" role="tabpanel" aria-labelledby="settings-tab-connections" hidden>
+            <div class="settings-stack">
+              <section id="remote-access-card" class="card">
+                <div class="card-head">
+                  <h3>Host Remote Access &amp; Sync</h3>
+                </div>
+                <div id="remote-access-status" class="muted"></div>
+              </section>
+
+              <section class="card">
+                <div class="card-head">
+                  <h3>Known Sync Replicas</h3>
+                </div>
+                <div id="replicas-list" class="stack-list"></div>
+              </section>
+
+              <section class="card">
+                <div class="card-head">
+                  <h3>Joined Remote Peers</h3>
+                </div>
+                <div id="connections-remote-list" class="stack-list"></div>
+              </section>
+            </div>
+          </div>
+
+          <!-- SETTINGS: WORKSPACES -->
+          <div id="settings-panel-workspaces" class="settings-panel" data-settings-panel="workspaces" role="tabpanel" aria-labelledby="settings-tab-workspaces" hidden>
+            <div class="settings-stack">
+              <section class="card">
+                <div class="card-head">
+                  <div>
+                    <h3>Repositories &amp; Remote Hints</h3>
+                  </div>
+                </div>
+                <div class="settings-add-actions">
+                  <details class="settings-action-disclosure">
+                    <summary><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-add"></use></svg><span>Add repository</span></summary>
+                    <form id="repo-create-form" class="single-col-form">
+                      <label class="field">
+                        <span>Repository name</span>
+                        <input id="repo-create-name" class="input" type="text" placeholder="gossip" required>
+                      </label>
+                      <div class="field-actions">
+                        <button class="btn btn-secondary" type="submit">Save repository</button>
+                      </div>
+                    </form>
+                  </details>
+                  <details class="settings-action-disclosure">
+                    <summary><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-link"></use></svg><span>Add remote hint</span></summary>
+                    <form id="remote-hint-form" class="single-col-form">
+                      <label class="field">
+                        <span>Repository</span>
+                        <select id="remote-hint-repo" class="input" required></select>
+                      </label>
+                      <label class="field">
+                        <span>Git remote URL</span>
+                        <input id="remote-hint-url" class="input" type="text" placeholder="git@github.com:org/repo.git" required>
+                      </label>
+                      <div class="field-actions">
+                        <button class="btn btn-secondary" type="submit">Save remote hint</button>
+                      </div>
+                    </form>
+                  </details>
+                </div>
+                <div id="repositories-list" class="stack-list"></div>
+              </section>
+
+              <section class="card">
+                <div class="card-head">
+                  <div>
+                    <h3>Registered Workspace Checkouts</h3>
+                  </div>
+                  <button id="open-workspace-dialog-btn" class="btn btn-sm btn-secondary" type="button"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-add"></use></svg><span>Register workspace</span></button>
+                </div>
+                <div id="workspaces-list" class="stack-list"></div>
+              </section>
+
+              <section class="card">
+                <div class="card-head">
+                  <div>
+                    <h3>Active File Reservations</h3>
+                    <p class="muted small">Advisory lease locks currently held by local agents.</p>
+                  </div>
+                </div>
+                <div id="reservations-list" class="stack-list"></div>
+              </section>
+
+              <section class="card">
+                <div class="card-head">
+                  <h3>Recorded Integrations</h3>
+                </div>
+                <div id="integrations-list" class="stack-list"></div>
+              </section>
+            </div>
+          </div>
+
+          <!-- SETTINGS: HISTORY -->
+          <div id="settings-panel-history" class="settings-panel" data-settings-panel="history" role="tabpanel" aria-labelledby="settings-tab-history" hidden>
+            <div class="settings-stack">
+              <section class="card">
+                <div class="card-head">
+                  <h3>Audit history</h3><button id="open-audit-btn" class="btn btn-secondary" type="button" hidden>Browse events</button>
+                </div>
+                <form id="event-retention-form" class="single-col-form">
+                  <div id="retention-summary" class="muted small"></div>
+                  <label class="field">
+                    <span>Prune events through sequence</span>
+                    <input id="prune-sequence" class="input" type="number" min="1" required>
+                  </label>
+                  <div class="field-actions">
+                    <button class="btn btn-secondary" type="submit">Prune older events</button>
+                  </div>
+                </form>
+                <div id="history-events-list" class="stack-list" aria-live="polite"></div>
+              </section>
+
+              <section class="card">
+                <div class="card-head">
+                  <h3>Legacy Imported Archives</h3>
+                </div>
+                <div id="legacy-imports-list" class="stack-list"></div>
+                <div id="legacy-records-list" class="stack-list"></div>
+              </section>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+  </div>
+
+  <!-- DIALOGS -->
+  <dialog id="add-project-dialog" class="modal" aria-labelledby="add-project-title">
+    <div class="modal-card">
+      <div class="modal-head">
+        <h3 id="add-project-title">Add project</h3>
+        <button class="btn icon-btn btn-ghost modal-close" type="button" data-close-dialog="add-project-dialog" aria-label="Close" title="Close"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-close"></use></svg></button>
+      </div>
+      <div class="project-entry-options">
+        <button id="choose-local-project" class="project-entry list-item" type="button">
+          <svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-projects"></use></svg>
+          <span><strong>Local checkout</strong><span class="muted">Create from a Git folder on this device.</span></span>
+        </button>
+        <button id="choose-remote-project" class="project-entry list-item" type="button">
+          <svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-link"></use></svg>
+          <span><strong>Join project</strong><span class="muted">Use a LAN or remote invitation or credential.</span></span>
+        </button>
+      </div>
+    </div>
+  </dialog>
+
+  <dialog id="local-project-dialog" class="modal">
+    <form id="local-project-form" method="dialog" class="modal-card">
+      <div class="modal-head">
+        <h3>Create Local Project</h3>
+        <button class="btn icon-btn btn-ghost modal-close" data-close-dialog="local-project-dialog" type="button" aria-label="Close" title="Close"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-close"></use></svg></button>
+      </div>
+      <label class="field">
+        <span>Git checkout path</span>
+        <div class="checkout-path-row">
+          <input id="local-path-input" class="input" type="text" placeholder="/path/to/my-repo" required>
+          <button id="browse-checkout-btn" class="btn btn-secondary" type="button" title="Choose a folder on this device"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-folder-open"></use></svg><span>Browse</span></button>
+          <button id="inspect-checkout-btn" class="btn btn-primary" type="button"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-search"></use></svg><span>Preview checkout</span></button>
+        </div>
+      </label>
+      <p id="checkout-status" class="small" role="status"></p>
+      <div id="checkout-initial-foot" class="modal-foot">
+        <button class="btn btn-secondary" type="button" data-close-dialog="local-project-dialog">Cancel</button>
+      </div>
+      <div id="checkout-preview" class="notice-box" hidden></div>
+      <fieldset id="checkout-details" hidden>
+        <label class="field">
+          <span>Project name</span>
+          <input id="local-name-input" class="input" type="text">
+        </label>
+        <div class="modal-foot">
+          <button class="btn btn-ghost" data-close-dialog="local-project-dialog" type="button">Cancel</button>
+          <button id="create-local-submit" class="btn btn-primary" type="submit"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-add"></use></svg><span>Create project</span></button>
+        </div>
+      </fieldset>
+    </form>
+  </dialog>
+
+  <dialog id="context-dialog" class="modal" aria-labelledby="context-dialog-title">
+    <form id="context-form" class="modal-card single-col-form">
+      <div class="modal-head"><h3 id="context-dialog-title">Project context</h3><button class="btn icon-btn btn-ghost modal-close" type="button" data-close-dialog="context-dialog" aria-label="Close" title="Close"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-close"></use></svg></button></div>
+      <label class="field"><span>Kind</span><select name="kind" class="input"><option value="story">User story</option><option value="invariant">Invariant</option><option value="decision">Decision</option></select></label>
+      <label class="field"><span>Title</span><input name="title" class="input" maxlength="240" required></label>
+      <label class="field"><span>Description</span><textarea name="body" class="input" rows="5" required></textarea></label>
+      <label class="field"><span>Acceptance criteria or verification</span><textarea name="verification" class="input" rows="3"></textarea></label>
+      <label class="field"><span>Source reference</span><input name="source" class="input" maxlength="2048"></label>
+      <label class="field"><span>Status</span><select name="status" class="input"><option value="active">Active</option><option value="superseded">Superseded</option></select></label>
+      <p id="context-error" role="alert"></p>
+      <div class="modal-foot">
+        <button class="btn btn-secondary" type="button" data-close-dialog="context-dialog">Cancel</button>
+        <button class="btn btn-primary" type="submit">Publish revision</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="personal-edit-dialog" class="modal" aria-labelledby="personal-edit-title">
+    <form id="personal-edit-form" class="modal-card">
+      <div class="modal-head"><h3 id="personal-edit-title">Edit personal to-do</h3><button class="btn icon-btn btn-ghost modal-close" type="button" data-close-dialog="personal-edit-dialog" aria-label="Close" title="Close"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-close"></use></svg></button></div>
+      <input type="hidden" name="item_id">
+      <input type="hidden" name="status">
+      <label class="field"><span>Title</span><input class="input" name="title" maxlength="240" required></label>
+      <label class="field"><span>Notes</span><textarea class="input" name="notes" rows="4"></textarea></label>
+      <p id="personal-edit-error" class="small" role="alert"></p>
+      <div class="modal-foot">
+        <button type="button" class="btn btn-secondary" data-close-dialog="personal-edit-dialog">Cancel</button>
+        <button type="submit" class="btn btn-primary">Save to-do</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="share-project-dialog" class="modal" aria-labelledby="share-project-title">
+    <div class="modal-card">
+      <div class="modal-head"><h3 id="share-project-title">Share project</h3><button class="btn icon-btn btn-ghost modal-close" type="button" data-close-dialog="share-project-dialog" aria-label="Close" title="Close"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-close"></use></svg></button></div>
+      <div class="view-switch" role="group" aria-label="Share project">
+        <button id="share-invite-tab" class="btn btn-secondary" type="button" aria-controls="share-invite-panel" aria-pressed="true">Invite</button>
+        <button id="share-requests-tab" class="btn btn-secondary" type="button" aria-controls="share-requests-panel" aria-pressed="false">Requests</button>
+      </div>
+      <div id="share-invite-panel" class="stack-list">
+      <p class="muted">Send the invitation file and pairing code separately.</p>
+      <p id="share-setup-status" class="muted small" role="status"></p>
+      <details id="share-setup-help" class="muted small">
+        <summary>How to enable peer access</summary>
+        <p>On the home device, run <code>gossip coord-remote --action enable</code>, then start <code>gossip coord-serve</code> with a TLS certificate and enrollment CA key. Reopen Share project when the peer listener is ready.</p>
+      </details>
+      <form id="share-project-form" class="single-col-form">
+        <label class="field"><span>Invitee name</span><input name="invitee" class="input" maxlength="160" required></label>
+        <label class="field"><span>Project role</span><select name="role" class="input"></select></label>
+        <p id="share-role-permissions" class="muted small"></p>
+        <label class="field"><span>LAN or FRP peer URL</span><input name="endpoint" class="input" type="url" placeholder="https://host.example:8443" required></label>
+        <label class="field"><span>Public server CA certificate (PEM)</span><textarea name="serverCA" class="input" rows="3" required></textarea></label>
+        <div class="modal-foot">
+          <button class="btn btn-secondary" type="button" data-close-dialog="share-project-dialog">Cancel</button>
+          <button class="btn btn-primary" type="submit">Create invitation</button>
+        </div>
+      </form>
+      <div id="share-project-result" class="stack-list" aria-live="polite"></div>
+      </div>
+      <section id="share-requests-panel" class="stack-list" hidden>
+        <div class="card-head">
+          <h4 id="share-requests-heading" tabindex="-1">Device requests</h4>
+          <button id="refresh-device-requests" class="btn btn-secondary" type="button">Refresh requests</button>
+        </div>
+        <div id="device-requests" class="stack-list" aria-live="polite"></div>
+      </section>
+    </div>
+  </dialog>
+
+  <dialog id="join-remote-dialog" class="modal join-remote-modal" aria-labelledby="join-remote-title">
+    <div class="modal-card">
+      <div class="modal-head"><h3 id="join-remote-title">Join LAN or remote project</h3><button class="btn icon-btn btn-ghost modal-close" type="button" data-close-dialog="join-remote-dialog" aria-label="Close" title="Close"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-close"></use></svg></button></div>
+      <div class="view-switch" role="group" aria-label="Join method">
+        <button id="join-invitation-tab" class="btn btn-secondary" type="button" aria-pressed="true" aria-controls="accept-invitation-form"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-link"></use></svg><span>Invitation</span></button>
+        <button id="join-credential-tab" class="btn btn-secondary" type="button" aria-pressed="false" aria-controls="join-existing-credential"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-lock"></use></svg><span>Credential file</span></button>
+      </div>
+      <form id="accept-invitation-form" class="single-col-form">
+        <p class="muted small">Use the invitation and pairing code from the project owner.</p>
+        <label class="field"><span>Invitation file</span><input id="accept-invitation-file" type="file" class="input" accept=".json,application/json"></label>
+        <details>
+          <summary>Enter invitation details manually</summary>
+          <div class="single-col-form">
+            <label class="field"><span>Peer HTTPS URL</span><input name="endpoint" class="input" type="url"></label>
+            <label class="field"><span>Home ID</span><input name="home" class="input"></label>
+            <label class="field"><span>Project ID</span><input name="project" class="input"></label>
+            <label class="field"><span>Invitation ID</span><input name="invite" class="input"></label>
+            <label class="field"><span>Public server CA certificate</span><textarea name="ca" class="input" rows="3"></textarea></label>
+          </div>
+        </details>
+        <p id="accept-invitation-preview" class="muted" aria-live="polite"></p>
+        <label class="field"><span>Pairing code</span><input id="accept-invitation-code" class="input" type="password" autocomplete="off" required></label>
+        <button class="btn btn-primary" type="submit">Accept invitation</button>
+        <p id="accept-invitation-status" class="agent-dm-body" aria-live="polite"></p>
+      </form>
+      <section id="join-existing-credential" hidden>
+        <form id="join-remote-form" method="dialog" class="single-col-form">
+          <p class="muted small">Import an existing project credential, then connect using this device’s client certificate.</p>
+          <label class="field"><span>Project credential file</span><input id="join-credential-file" class="input" type="file" accept=".json,application/json"></label>
+          <p id="join-credential-status" class="muted small" aria-live="polite">Choose the credential JSON issued for this project.</p>
+          <div class="join-connection-basics">
+            <label class="field"><span>Remote Gossip endpoint</span><input id="join-endpoint" class="input" type="url" placeholder="https://host.example:8443" autocomplete="url"></label>
+            <label class="field"><span>Home ID <small class="muted">optional</small></span><input id="join-home-id" class="input" type="text" placeholder="Verified after connection"></label>
+            <label class="field"><span>Display name <small class="muted">optional</small></span><input id="join-name" class="input" type="text" placeholder="Remote project"></label>
+          </div>
+          <details id="join-credential-details" class="join-credential-details">
+            <summary>Credential fields and client certificates</summary>
+            <p class="muted small">Use these fields if the JSON does not contain a project credential, or to provide the mTLS certificate paths issued for this device.</p>
+            <div class="single-col-form">
+              <label class="field"><span>Project ID</span><input id="join-project-id" class="input" type="text" autocomplete="off"></label>
+              <label class="field"><span>Principal ID</span><input id="join-principal-id" class="input" type="text" autocomplete="off"></label>
+              <label class="field"><span>Scoped bearer token</span><input id="join-token" class="input" type="password" autocomplete="off"></label>
+              <label class="field"><span>Home CA certificate path</span><input id="join-ca-file" class="input" type="text" placeholder="/path/to/ca.crt" autocomplete="off"></label>
+              <label class="field"><span>Client certificate path</span><input id="join-cert-file" class="input" type="text" placeholder="/path/to/client.crt" autocomplete="off"></label>
+              <label class="field"><span>Client private key path</span><input id="join-key-file" class="input" type="text" placeholder="/path/to/client.key" autocomplete="off"></label>
+            </div>
+          </details>
+          <p id="join-connect-status" class="form-feedback" role="status"></p>
+          <div class="modal-foot">
+            <button class="btn btn-ghost" data-close-dialog="join-remote-dialog" type="button">Cancel</button>
+            <button class="btn btn-primary" type="submit">Connect project</button>
+          </div>
+        </form>
+      </section>
+    </div>
+  </dialog>
+
+  <dialog id="credential-import-dialog" class="modal">
+    <form id="credential-import-form" method="dialog" class="modal-card">
+      <div class="modal-head">
+        <h3>Import Credential JSON</h3>
+        <button class="btn icon-btn btn-ghost modal-close" data-close-dialog="credential-import-dialog" type="button" aria-label="Close" title="Close"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-close"></use></svg></button>
+      </div>
+      <p class="muted small">Signs this browser session in using an existing credential payload.</p>
+      <label class="field">
+        <span>Credential JSON or token</span>
+        <textarea id="credential" class="input" rows="4" placeholder='{"project_id":"...","token":"..."}'></textarea>
+      </label>
+      <div class="modal-foot">
+        <button class="btn btn-ghost" data-close-dialog="credential-import-dialog" type="button">Cancel</button>
+        <button class="btn btn-primary" type="submit">Sign in</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="plan-walkthrough-dialog" class="modal modal-wide" aria-labelledby="plan-walkthrough-title">
+    <div class="modal-card">
+      <div class="modal-head">
+        <h3 id="plan-walkthrough-title">Plan walkthrough</h3>
+        <button class="btn icon-btn btn-ghost modal-close" type="button" data-close-dialog="plan-walkthrough-dialog" aria-label="Close" title="Close"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-close"></use></svg></button>
+      </div>
+      <section id="walkthrough-progress" class="walkthrough-progress" aria-labelledby="walkthrough-progress-title">
+        <div class="card-head"><div><h4 id="walkthrough-progress-title">Plan task progress</h4><p id="walkthrough-progress-summary" class="muted small" role="status">Loading tasks…</p></div><button id="walkthrough-open-tasks" class="btn btn-xs btn-secondary" type="button">Open task list</button></div>
+        <progress id="walkthrough-progress-bar" max="100" value="0" aria-label="Plan task completion"></progress>
+        <div id="walkthrough-task-list" class="walkthrough-task-list"></div>
+      </section>
+      <div id="plan-walkthrough-body" class="detail-body"></div>
+    </div>
+  </dialog>
+
+  <dialog id="plan-dialog" class="modal modal-wide" aria-labelledby="plan-editor-title">
+    <form id="plan-form" method="dialog" class="modal-card">
+      <div class="modal-head">
+        <h3 id="plan-editor-title">Publish plan revision</h3>
+        <button class="btn icon-btn btn-ghost modal-close" data-close-dialog="plan-dialog" type="button" aria-label="Close" title="Close"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-close"></use></svg></button>
+      </div>
+      <div id="plan-conflict-banner" class="banner banner-warn" hidden></div>
+      <div class="view-switch plan-editor-switch" role="group" aria-label="Plan editor view">
+        <button id="plan-write-tab" class="btn btn-secondary" type="button" aria-pressed="true" aria-controls="plan-write-pane"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-edit"></use></svg><span>Write</span></button>
+        <button id="plan-preview-tab" class="btn btn-secondary" type="button" aria-pressed="false" aria-controls="plan-preview-pane"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-plans"></use></svg><span>Preview</span></button>
+      </div>
+      <div class="plan-editor-split" data-pane="write">
+        <label id="new-plan-title-wrap" class="field" hidden><span>Plan name</span><input id="new-plan-title" class="input" maxlength="160" placeholder="e.g. Launch readiness"></label>
+        <label id="plan-write-pane" class="field">
+          <span>Markdown plan body</span>
+          <textarea id="plan-editor-body" class="input textarea-tall" rows="16" required></textarea>
+        </label>
+        <div id="plan-preview-pane" class="field">
+          <span>Preview</span>
+          <div id="plan-editor-preview" class="markdown-body preview-box"></div>
+        </div>
+      </div>
+      <div class="modal-foot">
+        <button class="btn btn-ghost" data-close-dialog="plan-dialog" type="button">Cancel</button>
+        <button id="plan-submit-btn" class="btn btn-primary" type="submit">Publish revision</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="task-dialog" class="modal">
+    <form id="task-form" method="dialog" class="modal-card">
+      <div class="modal-head">
+        <h3>Create Project To-do</h3>
+        <button class="btn icon-btn btn-ghost modal-close" data-close-dialog="task-dialog" type="button" aria-label="Close" title="Close"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-close"></use></svg></button>
+      </div>
+      <div class="single-col-form">
+        <label class="field"><span>Title</span><input id="task-title" class="input" type="text" required></label>
+        <label class="field"><span>Kind</span>
+          <select id="task-kind" class="input">
+                <option value="implementation">Implementation</option>
+                <option value="research">Research</option>
+                <option value="design">Design</option>
+                <option value="review">Review</option>
+                <option value="verification">Verification</option>
+                <option value="integration">Integration</option>
+              </select>
+        </label>
+        <label class="field"><span>Description</span><textarea id="task-description" class="input" rows="4" required></textarea></label>
+        <label class="field"><span>Planned Review Contract</span>
+          <select id="task-review-type" class="input" required>
+            <option value="">Choose review type</option>
+            <option value="full_code">Full source review</option>
+            <option value="diagram_report">Markdown report with UML diagrams</option>
+          </select>
+        </label>
+        <label class="field"><span>Goal scope</span>
+          <select id="task-plan-scope" class="input">
+            <option value="plan">Link to active plan</option>
+            <option value="global">Global goal (no plan)</option>
+          </select>
+        </label>
+        <details id="task-advanced" class="settings-disclosure">
+          <summary>Assignment requirements and dependencies</summary>
+          <div class="single-col-form">
+            <label class="field"><span>Required work role (optional)</span><input id="task-required-role" class="input" type="text" placeholder="implementer"></label>
+            <label class="field"><span>Required Capabilities (comma-separated, optional)</span><input id="task-required-caps" class="input" type="text" placeholder="go, tests"></label>
+            <label class="field"><span>Depends on Task IDs (comma-separated, optional)</span><input id="task-deps" class="input" type="text" placeholder="task_1, task_2"></label>
+          </div>
+        </details>
+        <p id="task-create-error" class="form-feedback" role="alert"></p>
+      </div>
+      <div class="modal-foot">
+        <button class="btn btn-ghost" data-close-dialog="task-dialog" type="button">Cancel</button>
+        <button class="btn btn-primary" type="submit">Create to-do</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="workspace-dialog" class="modal">
+    <form id="workspace-form" method="dialog" class="modal-card">
+      <div class="modal-head">
+        <h3>Register Workspace Checkout</h3>
+        <button class="btn icon-btn btn-ghost modal-close" data-close-dialog="workspace-dialog" type="button" aria-label="Close" title="Close"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-close"></use></svg></button>
+      </div>
+      <div class="single-col-form">
+        <label class="field"><span>Repository</span><select id="ws-repo" class="input" required></select></label>
+        <label class="field"><span>Workspace name</span><input id="ws-name" class="input" type="text" required></label>
+        <label class="field"><span>Node label</span><input id="ws-node" class="input" type="text" placeholder="local-workstation"></label>
+        <label class="field"><span>Local path</span><input id="ws-path" class="input" type="text" placeholder="/path/to/repo" required></label>
+        <label class="field"><span>Branch</span><input id="ws-branch" class="input" type="text" placeholder="main"></label>
+        <label class="field"><span>Head commit</span><input id="ws-head" class="input" type="text" placeholder="HEAD"></label>
+      </div>
+      <div class="modal-foot">
+        <button class="btn btn-ghost" data-close-dialog="workspace-dialog" type="button">Cancel</button>
+        <button class="btn btn-primary" type="submit">Register workspace</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="workspace-update-dialog" class="modal">
+    <form id="workspace-update-form" method="dialog" class="modal-card">
+      <div class="modal-head">
+        <h3>Update Workspace State</h3>
+        <button class="btn icon-btn btn-ghost modal-close" data-close-dialog="workspace-update-dialog" type="button" aria-label="Close" title="Close"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-close"></use></svg></button>
+      </div>
+      <input id="ws-update-id" type="hidden">
+      <div class="single-col-form">
+        <label class="field"><span>Branch</span><input id="ws-update-branch" class="input" type="text" required></label>
+        <label class="field"><span>Head commit</span><input id="ws-update-head" class="input" type="text" required></label>
+        <label class="field field-checkbox"><input id="ws-update-dirty" type="checkbox"><span>Working tree has uncommitted changes</span></label>
+      </div>
+      <div class="modal-foot">
+        <button class="btn btn-ghost" data-close-dialog="workspace-update-dialog" type="button">Cancel</button>
+        <button class="btn btn-primary" type="submit">Save workspace</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="detail-dialog" class="modal modal-wide">
+    <div class="modal-card">
+      <div class="modal-head">
+        <h3 id="detail-title">Details</h3>
+        <button class="btn icon-btn btn-ghost modal-close" data-close-dialog="detail-dialog" type="button" aria-label="Close" title="Close"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-close"></use></svg></button>
+      </div>
+      <div id="detail-body" class="detail-body"></div>
+    </div>
+  </dialog>
+
+  <dialog id="audit-dialog" class="modal modal-wide">
+    <div class="modal-card">
+      <div class="modal-head">
+        <h3>Recent Project Events</h3>
+        <button class="btn icon-btn btn-ghost modal-close" data-close-dialog="audit-dialog" type="button" aria-label="Close" title="Close"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-close"></use></svg></button>
+      </div>
+      <div id="audit-list" class="stack-list"></div>
+    </div>
+  </dialog>
+
+  <dialog id="message-source-dialog" class="modal" aria-labelledby="message-source-title">
+    <div class="modal-card">
+      <div class="modal-head">
+        <h3 id="message-source-title">Source message</h3>
+        <button class="btn icon-btn btn-ghost modal-close" type="button" data-close-dialog="message-source-dialog" aria-label="Close" title="Close"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-close"></use></svg></button>
+      </div>
+      <div id="message-source-body" class="stack-list" aria-live="polite"></div>
+    </div>
+  </dialog>
+
+  <dialog id="message-actions-dialog" class="modal" aria-labelledby="message-actions-title">
+    <div class="modal-card">
+      <div class="modal-head">
+        <h3 id="message-actions-title">Message actions</h3>
+        <button class="btn icon-btn btn-ghost modal-close" type="button" data-close-dialog="message-actions-dialog" aria-label="Close" title="Close"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-close"></use></svg></button>
+      </div>
+      <div id="message-actions-list" class="stack-list"></div>
+    </div>
+  </dialog>
+
+  <dialog id="confirm-dialog" class="modal">
+    <div class="modal-card">
+      <div class="modal-head">
+        <h3 id="confirm-title">Confirm Action</h3>
+        <button class="btn icon-btn btn-ghost modal-close" data-close-dialog="confirm-dialog" type="button" aria-label="Close" title="Close"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-close"></use></svg></button>
+      </div>
+      <p id="confirm-message" class="muted"></p>
+      <blockquote id="confirm-quote" hidden></blockquote>
+      <div class="modal-foot">
+        <button id="confirm-cancel-btn" class="btn btn-ghost" type="button">Cancel</button>
+        <button id="confirm-accept-btn" class="btn btn-primary" type="button">Continue</button>
+      </div>
+    </div>
+  </dialog>
+
+  <dialog id="channel-dialog" class="modal">
+    <form id="channel-form" method="dialog" class="modal-card">
+      <div class="modal-head">
+        <h3>Create Group Chat</h3>
+        <button class="btn icon-btn btn-ghost modal-close" data-close-dialog="channel-dialog" type="button" aria-label="Close" title="Close"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-close"></use></svg></button>
+      </div>
+      <p class="muted small">Any member can create a group chat or ask to join. Project owners can verify all project group chats and invite agents in <code># general</code>.</p>
+      <div class="single-col-form">
+        <label class="field">
+          <span>Channel slug</span>
+          <input id="channel-name" class="input" type="text" placeholder="e.g. api-sync or codex-subagent" required>
+        </label>
+        <label class="field field-checkbox">
+          <input id="channel-auto-suffix" type="checkbox" checked>
+          <span>Append short unique suffix automatically</span>
+        </label>
+        <label class="field">
+          <span>Topic (optional)</span>
+          <input id="channel-topic" class="input" type="text" placeholder="What this group chat coordinates">
+        </label>
+        <div class="field">
+          <span>Initial members (optional)</span>
+          <div id="channel-members-picks" class="stack-list"></div>
+        </div>
+        <label class="field field-checkbox">
+          <input id="channel-announce" type="checkbox" checked>
+          <span>Announce in # general so agents can join or request access</span>
+        </label>
+      </div>
+      <div class="modal-foot">
+        <button class="btn btn-ghost" data-close-dialog="channel-dialog" type="button">Cancel</button>
+        <button class="btn btn-primary" type="submit">Create group chat</button>
+      </div>
+    </form>
+  </dialog>
+</body>
+</html>

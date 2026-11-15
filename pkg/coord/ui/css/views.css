@@ -1,0 +1,1830 @@
+/* ==========================================================================
+   Gossip Route-Specific Layouts
+   Projects, Chat, Plans & Walkthrough, To-dos & Kanban, Agents, Search, Settings
+   ========================================================================== */
+
+/* --- Projects --- */
+.projects-grid {
+  gap: 0.65rem;
+}
+
+.project-row {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem 1rem;
+  flex-wrap: wrap;
+  padding: 0.9rem 1rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  transition: border-color 120ms ease, background 120ms ease;
+}
+
+.project-row:hover {
+  border-color: var(--border-strong);
+  background: var(--rail-surface);
+}
+
+.project-row.is-active-project {
+  border-color: var(--accent-border);
+  background: var(--accent-soft);
+}
+
+.project-card-lead {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  min-width: 0;
+  flex: 1 1 16rem;
+}
+
+.project-card-icon {
+  display: grid;
+  place-items: center;
+  width: 2.4rem;
+  height: 2.4rem;
+  flex: none;
+  border-radius: var(--radius-sm);
+  background: var(--surface-subtle);
+  border: 1px solid var(--border);
+  color: var(--accent-ink);
+}
+
+.project-row.is-active-project .project-card-icon {
+  background: var(--surface);
+  border-color: var(--accent-border);
+}
+
+.project-row-main {
+  display: grid;
+  gap: 0.18rem;
+  min-width: 0;
+}
+
+.project-row-heading {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+}
+
+.project-row .list-item-title {
+  font-size: 1.02rem;
+}
+
+.project-card-meta {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  overflow-wrap: anywhere;
+}
+
+.project-card-actions {
+  flex: none;
+}
+
+.project-row .repair-row {
+  flex-basis: 100%;
+}
+
+.repair-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-top: 0.25rem;
+}
+
+.recognize-box {
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--border);
+  display: grid;
+  gap: 0.65rem;
+}
+
+/* --- Chat --- */
+.app-shell[data-view="chat"] .app-main {
+  height: 100dvh;
+  min-height: 0;
+}
+
+.app-shell[data-view="chat"] .topbar {
+  flex-shrink: 0;
+}
+
+.app-shell[data-view="chat"] .main-viewport {
+  padding: 0;
+  min-height: 0;
+}
+
+#view-chat {
+  max-width: none;
+  flex: 1;
+  min-height: 0;
+}
+
+.chat-shell {
+  display: grid;
+  grid-template-columns: clamp(16.75rem, 24vw, 19rem) minmax(0, 1fr);
+  gap: 0;
+  flex: 1;
+  min-height: 0;
+}
+
+.chat-shell > .card {
+  border: 0;
+  border-radius: 0;
+}
+
+.chat-sidebar {
+  padding: 0.9rem 0.7rem;
+  background: var(--rail-surface);
+  border-right: 1px solid var(--border) !important;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.chat-sidebar-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  flex-wrap: nowrap;
+  padding: 0 0.25rem 0.75rem;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 0.45rem;
+}
+
+.chat-sidebar-head h3 {
+  font-size: 0.94rem;
+  white-space: nowrap;
+}
+
+#chat-agent-count {
+  white-space: nowrap;
+}
+
+.agent-dm-inspect-bar {
+  margin-top: 0.6rem;
+  padding-top: 0.45rem;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.agent-dm-empty {
+  padding: 0.25rem 0.45rem;
+}
+
+.agent-dm-pair-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#channel-members-picks {
+  max-height: 12rem;
+  overflow-y: auto;
+  padding: 0.25rem 0;
+}
+
+.chat-channel-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.channel-section-label {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--ink-muted);
+  font-weight: 650;
+  margin: 0.65rem 0.45rem 0.25rem;
+}
+
+.channel-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  min-height: 1.75rem;
+  margin: 0.55rem 0.15rem 0.25rem 0.45rem;
+}
+
+.agent-dm-inspect-bar .channel-section-head {
+  margin-top: 0.1rem;
+}
+
+.channel-section-head .channel-section-label {
+  margin: 0;
+}
+
+.channel-btn {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  width: 100%;
+  min-width: 0;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--ink);
+  padding: 0.48rem 0.6rem;
+  border-radius: var(--radius-sm);
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+
+.channel-btn:hover {
+  background: var(--surface-subtle);
+}
+
+.channel-btn.is-active {
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+  font-weight: 600;
+}
+
+.channel-btn.has-unread {
+  font-weight: 700;
+}
+
+.channel-btn > .btn-row {
+  flex-wrap: nowrap;
+  min-width: 0;
+}
+
+.channel-item-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex: none;
+}
+
+.presence-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--border-strong);
+  flex-shrink: 0;
+}
+
+.presence-dot.online {
+  background: #16a34a;
+}
+
+.unread-indicator {
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 50%;
+  background: var(--accent);
+  flex: none;
+}
+
+.chat-main {
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  overflow: hidden;
+  min-width: 0;
+  min-height: 0;
+}
+
+.chat-thread-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.65rem;
+  min-height: 4rem;
+  padding: 0.75rem clamp(0.9rem, 2.8vw, 2rem);
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+  flex-shrink: 0;
+}
+
+.chat-head-left {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.chat-channel-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.65rem clamp(0.9rem, 2.8vw, 2rem);
+  background: var(--surface-subtle);
+  border-bottom: 1px solid var(--border);
+  font-size: 0.84rem;
+}
+
+.chat-timeline {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0.9rem clamp(0.9rem, 2.8vw, 2rem);
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  min-height: 0;
+}
+
+.msg-card,
+.msg-card.is-you {
+  flex-shrink: 0;
+  display: grid;
+  grid-template-columns: 2.25rem minmax(0, 1fr);
+  gap: 0.25rem 0.75rem;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  padding: 0.9rem 0;
+  overflow-wrap: anywhere;
+}
+
+.msg-card > :not(.chat-avatar) {
+  grid-column: 2;
+}
+
+.msg-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 0.35rem 0.7rem;
+}
+
+.msg-sender {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+  min-width: 0;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.message-menu {
+  margin-inline-start: auto;
+}
+
+.msg-head .message-menu {
+  width: 2rem;
+  min-width: 2rem;
+  min-height: 2rem;
+  height: 2rem;
+}
+
+.msg-body {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.58;
+}
+
+.msg-body.markdown-body {
+  max-width: 84ch;
+  gap: 0.35rem;
+  white-space: normal;
+  line-height: 1.55;
+}
+
+.msg-body.markdown-body > p {
+  margin: 0;
+}
+
+.msg-body.markdown-body > h1 {
+  font-size: 1.2rem;
+}
+
+.msg-body.markdown-body > h2 {
+  font-size: 1.1rem;
+}
+
+.msg-body.markdown-body > h3 {
+  font-size: 1rem;
+}
+
+.chat-composer {
+  flex-shrink: 0;
+  border-top: 1px solid var(--border);
+  padding: 0.7rem clamp(0.9rem, 2.8vw, 2rem);
+  background: var(--surface);
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.composer-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.composer-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.55rem;
+}
+
+.composer-input {
+  flex: 1;
+  min-width: 0;
+  min-height: 2.9rem;
+  max-height: 9.5rem;
+  resize: vertical;
+  background: var(--bg);
+}
+
+#send-message-btn {
+  min-height: 2.9rem;
+  align-self: flex-end;
+}
+
+.chat-search-panel {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: clamp(0.9rem, 2.8vw, 2rem);
+}
+
+.chat-search-panel > p {
+  margin-block: 0.65rem;
+}
+
+.chat-search-result {
+  font: inherit;
+  text-align: start;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.chat-search-result:hover {
+  background: var(--surface-subtle);
+}
+
+.chat-result-excerpt,
+.search-result-excerpt {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+#agent-dm-title:focus {
+  outline: none;
+}
+
+#agent-dm-results > button {
+  justify-self: start;
+}
+
+.agent-dm-meta {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0.25rem 0.65rem;
+}
+
+.agent-dm-body {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+#message-actions-list .btn {
+  justify-content: flex-start;
+}
+
+/* --- Plans & Walkthrough --- */
+#view-plans > .view-header {
+  align-items: center;
+}
+
+#view-plans .view-switch {
+  flex: 0 0 auto;
+}
+
+#view-plans .plan-toolbar-actions {
+  flex: 0 1 auto;
+  min-width: 0;
+  justify-content: flex-end;
+}
+
+.plans-grid {
+  display: grid;
+  grid-template-columns: minmax(15rem, 19rem) minmax(0, 1fr);
+  gap: 1rem;
+  align-items: start;
+}
+
+.plans-grid.is-empty {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.plan-thread-list,
+.agent-layout > aside {
+  background: var(--rail-surface);
+}
+
+.plan-thread-list {
+  display: grid;
+  align-content: start;
+  gap: 0.6rem;
+  min-width: 0;
+}
+
+.plan-thread-list h2,
+.plan-thread-list p {
+  margin: 0;
+}
+
+.plan-thread-item {
+  display: grid;
+  gap: 0.4rem;
+  width: 100%;
+  min-width: 0;
+  padding: 0.72rem;
+  text-align: start;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font: inherit;
+  cursor: pointer;
+}
+
+.plan-thread-item:hover {
+  border-color: var(--accent);
+  background: var(--surface-subtle);
+}
+
+.plan-thread-item.is-selected {
+  border-color: var(--accent-border);
+  background: var(--accent-soft);
+}
+
+.plan-thread-item-top {
+  display: grid;
+  justify-items: start;
+  gap: 0.2rem;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.plan-thread-item-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.plan-thread-item-meta .muted {
+  white-space: nowrap;
+}
+
+.plan-thread-status {
+  flex: none;
+}
+
+.plan-reader-card {
+  min-width: 0;
+  min-height: 24rem;
+  padding: clamp(1rem, 2.8vw, 2rem);
+}
+
+.plan-reader-card .card-head {
+  align-items: flex-start;
+}
+
+.plan-reader-card .markdown-body {
+  max-width: 76ch;
+  font-size: 1.03rem;
+  line-height: 1.65;
+}
+
+.plan-select-control {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+}
+
+#plan-version-select,
+#plan-compare-select {
+  width: auto;
+  max-width: 100%;
+}
+
+.plan-action-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem 0.75rem;
+  flex-wrap: wrap;
+  min-width: 0;
+  padding: 0.4rem 0.55rem;
+  background: var(--surface-subtle);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.plan-action-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.plan-action-meta .badge {
+  white-space: nowrap;
+}
+
+.plan-history-card {
+  gap: 0.75rem;
+}
+
+#plan-history-list {
+  border-inline-start: 2px solid var(--border);
+  padding-inline-start: 0.65rem;
+}
+
+.plan-revision {
+  display: grid;
+  gap: 0.3rem;
+  width: 100%;
+  min-width: 0;
+  text-align: left;
+  overflow-wrap: anywhere;
+  padding: 0.75rem;
+  background: var(--surface);
+  color: var(--ink);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font: inherit;
+  cursor: pointer;
+}
+
+.plan-revision:hover {
+  border-color: var(--accent);
+}
+
+.plan-revision[aria-pressed="true"] {
+  background: var(--surface-subtle);
+  border-color: var(--accent);
+}
+
+.plan-revision-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.35rem;
+}
+
+#plan-variants {
+  border-block: 1px solid var(--border);
+  padding-block: 0.7rem;
+}
+
+#plan-variants summary {
+  width: fit-content;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+#plan-variant-list {
+  margin-block: 0.65rem;
+}
+
+.plan-empty-state {
+  display: grid;
+  justify-items: start;
+  gap: 0.65rem;
+  width: min(100%, 42rem);
+  margin: clamp(1.5rem, 7vh, 4rem) auto;
+  padding: clamp(1.25rem, 4vw, 2rem);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.plan-empty-state p {
+  max-width: 54ch;
+  color: var(--ink-muted);
+  line-height: 1.55;
+}
+
+.plan-empty-icon {
+  width: 2rem;
+  height: 2rem;
+  padding: 0.4rem;
+  box-sizing: content-box;
+}
+
+.plan-editor-split {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.plan-editor-split .field {
+  min-width: 0;
+}
+
+.plan-editor-switch {
+  display: none;
+}
+
+.walkthrough-progress {
+  display: grid;
+  gap: 0.65rem;
+  padding: 0.85rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-subtle);
+}
+
+.walkthrough-progress .card-head {
+  align-items: center;
+}
+
+.walkthrough-progress progress {
+  width: 100%;
+  height: 0.65rem;
+  accent-color: var(--accent);
+}
+
+.walkthrough-task-list {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.walkthrough-task {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.7rem;
+  padding-block: 0.35rem;
+  border-top: 1px solid var(--border);
+}
+
+.walkthrough-task .task-title-button {
+  min-width: 0;
+}
+
+.walkthrough-task > .badge {
+  flex: none;
+  white-space: nowrap;
+}
+
+.walkthrough-steps {
+  padding-inline-start: 1.75rem;
+}
+
+.walkthrough-steps > li {
+  display: list-item;
+  padding: 0.75rem 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.walkthrough-steps > li > * + * {
+  margin-top: 0.45rem;
+}
+
+#plan-walkthrough-dialog {
+  max-height: calc(100dvh - 1rem);
+  overflow-y: auto;
+}
+
+#plan-walkthrough-body {
+  max-height: none;
+  overflow: visible;
+}
+
+/* --- To-dos & Kanban --- */
+.todo-top-bar {
+  gap: 0.65rem;
+}
+
+.todo-card-head {
+  align-items: center;
+  padding-bottom: 0.65rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.todo-card-title-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+.todo-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  flex-wrap: wrap;
+  margin-inline-start: auto;
+}
+
+.todo-agent-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.todo-agent-inline .input {
+  width: auto;
+}
+
+.todo-card-subbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 1.25rem;
+  padding-bottom: 0.65rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.todo-filters-panel {
+  flex: 0 1 auto;
+}
+
+.todo-filters-panel[open] {
+  width: 100%;
+  flex-basis: 100%;
+  padding-top: 0.2rem;
+}
+
+.todo-filters-panel summary,
+.settings-disclosure summary {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  width: fit-content;
+  min-height: 1.9rem;
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--ink-muted);
+}
+
+.todo-filters-panel[open] summary,
+.settings-disclosure[open] summary {
+  margin-bottom: 0.65rem;
+  color: var(--accent-ink);
+}
+
+#view-todos .filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+#view-todos .filter-bar .input {
+  width: auto;
+  min-width: 9rem;
+  flex: 1 1 9rem;
+}
+
+.revision-filter {
+  max-width: 18rem;
+  margin: 0.5rem 0;
+}
+
+.todo-quick-add {
+  flex: 0 1 auto;
+}
+
+.todo-quick-add[open] {
+  width: 100%;
+  flex-basis: 100%;
+  padding-top: 0.2rem;
+}
+
+.todo-quick-add > summary {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  width: fit-content;
+  min-height: 1.9rem;
+  color: var(--ink-muted);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.todo-quick-add[open] > summary {
+  margin-bottom: 0.65rem;
+  color: var(--accent-ink);
+}
+
+.todo-group-empty {
+  padding: 0.65rem 0.15rem;
+  margin: 0;
+}
+
+.quick-create-row,
+.task-quick-add-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(8rem, 13rem) auto;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.task-quick-add-form .input {
+  min-width: 0;
+}
+
+.task-plan-group {
+  border-bottom: 1px solid var(--border);
+}
+
+.task-plan-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.75rem 0.15rem;
+  color: var(--ink);
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.task-plan-label {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.4rem 0.6rem;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.task-plan-items {
+  padding-inline-start: 1rem;
+  border-inline-start: 2px solid var(--border);
+}
+
+#view-todos .shared-task-head:not(.is-kanban-task-head) {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem 0.75rem;
+  flex-wrap: nowrap;
+}
+
+#view-todos .shared-task-head:not(.is-kanban-task-head) > .task-checklist-title {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+#view-todos .shared-task-head:not(.is-kanban-task-head) > .task-flairs {
+  flex: 0 0 auto;
+  margin: 0;
+}
+
+#view-todos .shared-task-head:not(.is-kanban-task-head) > .task-side-actions {
+  margin-inline-start: auto;
+  flex: 0 0 auto;
+}
+
+.task-side-actions:empty {
+  display: none;
+}
+
+.task-checklist-title {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.task-checkbox {
+  width: 1.2rem;
+  height: 1.2rem;
+  flex: none;
+  margin: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.task-title-button {
+  background: none;
+  border: 0;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  font-weight: 600;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.task-title-button:hover {
+  color: var(--accent-ink);
+  text-decoration: underline;
+}
+
+.shared-task > .btn-row,
+.shared-task > .muted:not(.badge) {
+  margin-inline-start: 1.8rem;
+}
+
+.todo-board .shared-task > .btn-row,
+.todo-board .shared-task > .muted:not(.badge) {
+  margin-inline-start: 0;
+}
+
+.task-assignment {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.task-assignment .input {
+  width: auto;
+  max-width: 100%;
+}
+
+/* Kanban */
+#view-todos .todo-board {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(12.25rem, 1fr));
+  gap: 0.75rem;
+  align-items: start;
+}
+
+#view-todos .todo-lane {
+  min-width: 0;
+  display: grid;
+  align-content: start;
+  gap: 0.5rem;
+  padding: 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-subtle);
+}
+
+#view-todos .todo-lane h4 {
+  margin: 0 0 0.2rem;
+  font-size: 0.875rem;
+  font-weight: 650;
+}
+
+.kanban-empty {
+  margin: 0.15rem 0;
+  padding: 0.55rem 0.5rem;
+  text-align: center;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-sm);
+}
+
+#view-todos .todo-lane > .list-item {
+  overflow-wrap: anywhere;
+}
+
+#view-todos .shared-task-head.is-kanban-task-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.5rem;
+}
+
+#view-todos .is-kanban-task-title {
+  display: block;
+  min-width: 0;
+}
+
+#view-todos .is-kanban-task-title .task-title-button {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+#view-todos .task-kanban-plan {
+  min-width: 0;
+  margin-top: -0.25rem;
+  overflow-wrap: anywhere;
+  line-height: 1.35;
+}
+
+#view-todos .task-kanban-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  min-width: 0;
+  gap: 0.35rem;
+}
+
+#view-todos .task-kanban-footer .task-flairs {
+  display: flex;
+  flex-wrap: wrap;
+  min-width: 0;
+  gap: 0.25rem;
+}
+
+#view-todos .task-kanban-footer .badge {
+  max-width: 7.5rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#view-todos .task-kanban-footer .task-side-actions {
+  flex: none;
+  margin: 0;
+}
+
+/* --- Agents --- */
+.agent-layout {
+  display: grid;
+  grid-template-columns: minmax(14rem, 18rem) minmax(0, 1fr);
+  gap: 1rem;
+  align-items: start;
+}
+
+.agent-layout > .card {
+  min-height: 14rem;
+}
+
+.agent-layout .card-head h2 {
+  font-size: 1.25rem;
+  overflow-wrap: anywhere;
+}
+
+.agent-tree {
+  display: grid;
+  gap: 0.2rem;
+  min-width: 0;
+}
+
+.agent-tree-node {
+  min-width: 0;
+}
+
+.agent-tree-toggle {
+  display: inline-grid;
+  place-items: center;
+  width: 1.5rem;
+  min-width: 1.5rem;
+  height: 1.5rem;
+  min-height: 1.5rem;
+  padding: 0;
+  vertical-align: middle;
+}
+
+.agent-tree-toggle .icon {
+  width: 0.85rem;
+  height: 0.85rem;
+  transition: transform 150ms ease;
+}
+
+.agent-tree-toggle.is-collapsed .icon {
+  transform: rotate(0deg);
+}
+
+.agent-tree-toggle:not(.is-collapsed) .icon {
+  transform: rotate(90deg);
+}
+
+.agent-tree-children {
+  margin-inline-start: 0.85rem;
+  padding-inline-start: 0.7rem;
+  border-inline-start: 1px solid var(--border-strong);
+}
+
+.agent-roster-row {
+  display: flex;
+  align-items: center;
+  text-align: start;
+  min-width: 0;
+  width: 100%;
+  gap: 0.65rem;
+  padding: 0.55rem 0.65rem;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  cursor: pointer;
+}
+
+.agent-roster-row:hover {
+  border-color: var(--border);
+  background: var(--surface-subtle);
+}
+
+.agent-roster-row[aria-selected="true"] {
+  background: var(--accent-soft);
+  border-color: var(--accent-border);
+}
+
+.agent-roster-summary {
+  display: grid;
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+
+#agent-profile {
+  gap: 1rem;
+}
+
+.agent-profile-header {
+  align-items: center;
+  gap: 0.85rem;
+  padding-bottom: 0.85rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.agent-profile-header-lead {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+  min-width: 0;
+}
+
+.agent-avatar-lg {
+  width: 3rem;
+  height: 3rem;
+  font-size: 1.15rem;
+  border-radius: var(--radius);
+  background: var(--accent-soft);
+  border-color: var(--accent-border);
+}
+
+.agent-profile-identity {
+  display: grid;
+  gap: 0.2rem;
+  min-width: 0;
+}
+
+.agent-profile-identity h2 {
+  font-size: 1.25rem;
+  margin: 0;
+}
+
+.agent-principal-preview {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.agent-profile-actions {
+  align-items: center;
+  gap: 0.45rem;
+  flex: none;
+}
+
+.agent-profile-section {
+  display: grid;
+  gap: 0.55rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--border);
+}
+
+.agent-profile-header + .agent-profile-section {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.agent-details-grid {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.5rem 1rem;
+  align-items: center;
+  margin: 0;
+}
+
+.agent-details-grid dt {
+  color: var(--ink-muted);
+  font-size: 0.84rem;
+  font-weight: 600;
+}
+
+.agent-details-grid dd {
+  margin: 0;
+  min-width: 0;
+}
+
+.member-identity {
+  margin-top: 0.35rem;
+}
+
+.member-id-pill {
+  margin-top: 0.4rem;
+}
+
+.member-perms {
+  margin-top: 0.35rem;
+}
+
+.effective-perms-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  margin-top: 0.5rem;
+}
+
+.perm-row-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.3rem 0.55rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-subtle);
+}
+
+.perm-code {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.role-pills-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  padding-bottom: 0.55rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.agent-profile-checklist {
+  border-top: 1px solid var(--border);
+  padding-top: 0.85rem;
+}
+
+.agent-profile-checklist .card-head {
+  align-items: center;
+  margin-bottom: 0.4rem;
+}
+
+.agent-profile-roles {
+  display: grid;
+  gap: 0.55rem;
+  border-top: 1px solid var(--border);
+  padding-top: 0.85rem;
+}
+
+.agent-role-duties {
+  margin-top: 0.35rem;
+}
+
+.agent-role-duties summary {
+  cursor: pointer;
+  color: var(--ink-muted);
+  font-size: 0.875rem;
+}
+
+.agent-role-duties p {
+  margin-top: 0.4rem;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}
+
+.agent-profile-checklist-items {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.agent-profile-checklist-item {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.65rem;
+  padding: 0.55rem 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.agent-profile-checklist-item > span:first-child {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.agent-profile-checklist-item > .badge,
+.agent-profile-task-row > .badge {
+  flex: none;
+  white-space: nowrap;
+}
+
+.agent-profile-task-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.55rem 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.agent-profile-task {
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  text-align: start;
+  font: inherit;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+
+.agent-profile-task:hover {
+  color: var(--accent-ink);
+  text-decoration: underline;
+}
+
+/* --- Search --- */
+.search-welcome {
+  display: grid;
+  gap: 1.05rem;
+  max-width: 62rem;
+  padding: clamp(1rem, 2.2vw, 1.5rem);
+  background: linear-gradient(135deg, var(--surface), var(--surface-subtle));
+}
+
+.search-welcome-heading {
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+}
+
+.search-welcome-heading h2 {
+  margin: 0 0 0.25rem;
+  font-size: 1.15rem;
+}
+
+.search-welcome-heading p,
+.search-privacy {
+  margin: 0;
+}
+
+.search-welcome-icon {
+  display: grid;
+  place-items: center;
+  width: 2.75rem;
+  height: 2.75rem;
+  flex: none;
+}
+
+.search-welcome-icon .icon {
+  width: 1.3rem;
+  height: 1.3rem;
+}
+
+.search-sources {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.search-sources > span {
+  padding: 0.3rem 0.65rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 0.84rem;
+}
+
+.graphify-status-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex: none;
+}
+
+.graphify-help {
+  margin: -0.25rem 0 0.25rem;
+  max-width: 72ch;
+}
+
+#view-search .search-results-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.9rem;
+  max-width: 62rem;
+}
+
+#view-search .search-results-grid .stack-list {
+  gap: 0;
+}
+
+#view-search .search-result-row {
+  padding: 0.75rem 0.1rem;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.2rem 0.85rem;
+}
+
+#view-search .search-result-row > .btn {
+  grid-column: 2;
+  grid-row: 1 / span 3;
+  align-self: center;
+}
+
+#view-search .search-result-row > .search-result-excerpt {
+  grid-column: 1;
+  margin: 0;
+}
+
+/* --- Settings --- */
+.project-details {
+  max-width: 100%;
+}
+
+.project-details summary {
+  cursor: pointer;
+  color: var(--ink-muted);
+}
+
+.project-details code {
+  overflow-wrap: anywhere;
+}
+
+.project-details[open] {
+  display: grid;
+  gap: 0.35rem;
+}
+
+#settings-panel-access {
+  display: grid;
+  grid-template-columns: minmax(9.5rem, 12.5rem) minmax(0, 1fr);
+  align-items: start;
+  gap: 1rem;
+}
+
+.access-section-links {
+  display: grid;
+  gap: 0.2rem;
+  align-content: start;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.access-section-links .btn {
+  justify-content: flex-start;
+  background: transparent;
+  border-color: transparent;
+  color: var(--ink-muted);
+}
+
+.access-section-links .btn:hover {
+  background: var(--surface-subtle);
+  color: var(--ink);
+}
+
+.access-section-links [aria-pressed="true"] {
+  color: var(--accent-ink);
+  background: var(--accent-soft);
+  border-color: transparent;
+  font-weight: 600;
+}
+
+.access-section-select-wrap {
+  display: none;
+}
+
+.settings-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  min-width: 0;
+}
+
+.settings-stack > section {
+  scroll-margin-top: 8rem;
+}
+
+.settings-stack > section[tabindex="-1"]:focus {
+  outline: none;
+}
+
+.settings-disclosure {
+  padding-top: 0.7rem;
+  border-top: 1px solid var(--border);
+}
+
+#certificates-list > .list-item > .btn {
+  align-self: flex-start;
+}
+
+.member-identity {
+  margin-top: 0.25rem;
+}
+
+.member-identity code {
+  display: block;
+  margin-top: 0.35rem;
+  overflow-wrap: anywhere;
+}
+
+#members-list .member-identity,
+#members-list .list-item-row + details {
+  margin-inline-start: 0.1rem;
+}
+
+.role-editor-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: end;
+  gap: 0.75rem 1rem;
+}
+
+.role-editor-grid > .field {
+  min-width: 0;
+}
+
+.role-editor-grid > .role-permissions,
+.role-editor-grid > .role-editor-actions,
+.role-editor-grid > .role-reset-field,
+.role-editor-grid > .role-editor-status {
+  grid-column: 1 / -1;
+}
+
+.role-permissions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.4rem 1rem;
+  min-width: 0;
+  margin: 0;
+}
+
+.role-permissions legend,
+.role-permissions .role-readonly-note {
+  grid-column: 1 / -1;
+}
+
+.role-permissions .role-readonly-note {
+  margin: 0 0 0.2rem;
+}
+
+#history-events-list {
+  margin-top: 0.9rem;
+}
+
+.role-permissions label {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.role-editor-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.role-reset-field {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.5rem;
+}
+
+.role-reset-field .field {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.settings-add-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 0.5rem;
+  margin-block-end: 0.5rem;
+}
+
+.settings-action-disclosure {
+  min-width: 0;
+}
+
+.settings-action-disclosure > summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.42rem;
+  min-height: 2rem;
+  padding: 0.3rem 0.65rem;
+  font-size: 0.8125rem;
+  color: var(--ink);
+  background: var(--surface-subtle);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.settings-action-disclosure > summary:hover {
+  border-color: var(--border-strong);
+  background: var(--surface-hover);
+}
+
+.settings-action-disclosure[open] {
+  flex: 1 1 100%;
+  padding-block-end: 0.75rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.settings-action-disclosure[open] > summary {
+  margin-block-end: 0.6rem;
+}
+
+.settings-action-disclosure form {
+  max-width: 38rem;
+}
+
+.repository-settings-row {
+  display: grid;
+  grid-template-columns: minmax(8rem, 0.4fr) minmax(0, 1fr);
+  gap: 0.4rem 1rem;
+  align-items: baseline;
+  padding: 0.65rem 0.15rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.repository-settings-row > * {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.workspace-checkout-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 0.5rem 1rem;
+  padding: 0.85rem 0.15rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.workspace-checkout-info {
+  display: grid;
+  gap: 0.3rem;
+  min-width: 0;
+}
+
+.workspace-checkout-title {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+.workspace-checkout-title .badge {
+  flex: none;
+}
+
+.workspace-checkout-branch {
+  margin-inline-start: 0.05rem;
+}
+
+.workspace-checkout-details > summary {
+  width: fit-content;
+  color: var(--ink-muted);
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+
+.workspace-checkout-detail-body {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.25rem 0.6rem;
+  margin: 0.4rem 0 0 0.1rem;
+  min-width: 0;
+}
+
+.workspace-checkout-detail-body code {
+  overflow-wrap: anywhere;
+}
+
+.workspace-checkout-row > .btn {
+  justify-self: end;
+}
+
+.integration-settings-row {
+  padding: 0.65rem 0.15rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.integration-settings-row > summary {
+  cursor: pointer;
+  font-weight: 650;
+  overflow-wrap: anywhere;
+}
+
+.integration-settings-evidence {
+  margin: 0.5rem 0 0 1.25rem;
+  overflow-wrap: anywhere;
+}

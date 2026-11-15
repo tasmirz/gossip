@@ -60,6 +60,39 @@ func TestProjectSyncFramesAreBoundedContinuousAndProjectScoped(t *testing.T) {
 	}
 }
 
+func TestSyncInboxReturnsBoundedVisiblePreviewsAndDeltas(t *testing.T) {
+	s, _, project, owner, worker := setup(t)
+	ctx := context.Background()
+	other, err := s.AddPrincipal(ctx, project.ID, owner.Token, "Other worker", "worker")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := strings.Repeat("x", 300)
+	if _, err = s.SendMessageWithID(ctx, project.ID, owner.Token, "", "", "shared", body, "room-message"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.SendMessageWithID(ctx, project.ID, owner.Token, other.PrincipalID, "", "private", "not for worker", "private-message"); err != nil {
+		t.Fatal(err)
+	}
+	first, err := s.SyncInbox(ctx, project.ID, worker.Token, 0, 0, 25)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Plan == nil || len(first.InboxMessages) != 1 || first.InboxHasMore {
+		t.Fatalf("unexpected inbox snapshot: %+v", first)
+	}
+	if len([]rune(first.InboxMessages[0].Preview)) != 241 || first.InboxMessages[0].Recipient != "" {
+		t.Fatalf("message preview was not bounded or was a private DM: %+v", first.InboxMessages[0])
+	}
+	second, err := s.SyncInbox(ctx, project.ID, worker.Token, first.NextEventCursor, first.NextInboxCursor, 25)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.Plan != nil || len(second.Tasks.Tasks) != 0 || len(second.InboxMessages) != 0 {
+		t.Fatalf("incremental inbox repeated full snapshot or old messages: %+v", second)
+	}
+}
+
 func TestReplicaReceiptsBindProjectPrincipalAndCertificate(t *testing.T) {
 	s, _, project, owner, worker := setup(t)
 	ctx := context.Background()

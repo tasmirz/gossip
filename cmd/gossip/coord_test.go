@@ -261,6 +261,13 @@ func TestCoordRemoteAccessCommands(t *testing.T) {
 	}
 }
 
+func TestCoordUIRejectsNonLoopbackBeforeOpeningDashboard(t *testing.T) {
+	err := runCoordUI([]string{"--listen", "0.0.0.0", "--port", "0", "--db", filepath.Join(t.TempDir(), "unused.db")})
+	if err == nil || !strings.Contains(err.Error(), "local browser dashboard") {
+		t.Fatalf("expected loopback-only rejection, got %v", err)
+	}
+}
+
 func TestCoordFRPConfigUsesPrivateTCPProxy(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "frpc.toml")
 	if err := runCoordFRP([]string{"--server", "frps.example", "--server-port", "7000", "--token", "frp-secret", "--local-port", "8443", "--remote-port", "18443", "--config-file", path}); err != nil {

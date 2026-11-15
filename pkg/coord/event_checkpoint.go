@@ -44,10 +44,10 @@ func (s *Store) AcknowledgeEvents(ctx context.Context, project, token string, se
 	}
 	var exists int
 	if err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM events e WHERE e.project_id=? AND e.seq=?
-		AND (?='owner' OR e.kind NOT LIKE 'certificate.%')
+		AND (?='owner' OR (e.kind NOT LIKE 'certificate.%' AND e.kind<>'dm.inspected'))
 		AND (e.kind NOT IN ('message.sent','message.acknowledged') OR EXISTS (
 			SELECT 1 FROM messages m WHERE m.id=e.entity_id AND m.project_id=e.project_id
-			AND (m.recipient IS NULL OR m.recipient=? OR m.sender=?)))`, project, sequence, actor.Role, actor.ID, actor.ID).Scan(&exists); err != nil {
+			AND `+visibleMessageSQL("m")+`))`, project, sequence, actor.Role, actor.Role, actor.ID, actor.ID, actor.ID, actor.ID).Scan(&exists); err != nil {
 		return 0, err
 	}
 	if exists == 0 {

@@ -46,7 +46,7 @@ func main() {
 
 	cmd := os.Args[1]
 	switch cmd {
-	case "coord-init", "coord-add", "coord-access", "coord-pair", "coord-frp", "coord-mcp", "coord-mcp-bootstrap", "coord-bootstrap-key", "coord-ui", "coord-serve", "coord-daemon", "coord-migrate", "coord-remote":
+	case "coord-init", "coord-add", "coord-access", "coord-pair", "coord-frp", "coord-mcp", "coord-mcp-bootstrap", "coord-bootstrap-key", "coord-ui", "coord-serve", "coord-daemon", "coord-migrate", "coord-remote", "coord-connection", "file-edit":
 		var err error
 		switch cmd {
 		case "coord-init":
@@ -75,6 +75,10 @@ func main() {
 			err = runCoordMigrate(os.Args[2:])
 		case "coord-remote":
 			err = runCoordRemote(os.Args[2:])
+		case "file-edit":
+			err = runFileEdit(os.Args[2:])
+		case "coord-connection":
+			err = runCoordConnection(os.Args[2:])
 		}
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Coordination error: %v\n", err)

@@ -601,7 +601,7 @@ func TestAdversarial_WebUI401Vs403SessionWiping(t *testing.T) {
 	appJS := rec.Body.String()
 
 	// A valid project session survives a 403 action denial; only 401 expires credentials.
-	if !strings.Contains(appJS, "response.status===401&&projectPath){expireProjectSession") || !strings.Contains(appJS, "e.status===403&&state.project?.project_id===project.project_id") {
+	if !strings.Contains(appJS, "response.status === 401 && projectPath && state.project === project") || !strings.Contains(appJS, "e.status === 403 && state.project === project") {
 		t.Fatalf("app.js does not distinguish invalid credentials from project permission denial")
 	}
 

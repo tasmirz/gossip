@@ -9,7 +9,7 @@
   "mcpServers": {
     "gossip": {
       "command": "/absolute/path/to/gossip",
-      "args": ["coord-mcp", "--credential-file", "/private/path/to/project-credential.json"]
+      "args": ["coord-mcp"]
     }
   }
 }

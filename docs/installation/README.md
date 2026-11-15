@@ -1,6 +1,6 @@
 # Install Gossip for your coding agent
 
-The setup wizard downloads the precompiled Gossip binary for your OS and CPU, installs the portable skill, and can add the project MCP server to Codex, Claude Code, or Gemini CLI. It does not compile source. It asks you to select the agent and supply a project credential file; no credential is embedded in the install command.
+The setup wizard downloads the precompiled Gossip binary for your OS and CPU, installs the portable skill, and can add the device-level Gossip MCP server to Codex, Antigravity, OpenCode, Claude Code, or Gemini CLI. It does not compile source. MCP configuration contains only the executable and an optional local identity profile; project credentials stay in Gossip's local registry.
 
 ## One-line setup
 
@@ -20,17 +20,17 @@ The installer checks the downloaded release archive's SHA-256 against the checks
 
 ## First project setup
 
-1. Run the wizard and select the agent whose MCP configuration should be updated.
-2. If you already have a project credential, choose its private JSON file when prompted.
-3. If this is a new project, leave the credential path blank. Start `gossip coord-ui`, open `http://127.0.0.1:8081`, choose **Create local project**, and connect the existing checkout.
-4. Run the setup command again and select the downloaded project credential. The wizard installs the skill for that agent and adds a local stdio MCP configuration.
-5. Restart the coding agent and verify Gossip is listed as connected.
+1. Run the wizard and select the agent whose MCP configuration should be updated. Choose `default` for a single identity, or a profile name when the device runs multiple agents.
+2. Start `gossip coord-ui` and open `http://127.0.0.1:8081` to add a local project or connect a remote project. During migration, import an existing credential with `gossip coord-connection add --credential-file <private-file>`; the file is retained until you remove it.
+3. Restart the coding agent. `gossip_projects` lists authorized projects and profiles; project-scoped reads verify the registry connection.
 
-The wizard's automatic MCP registration currently supports Codex CLI, Claude Code, and Gemini CLI. Other clients can use the manual guides below. The project access guide covers adding LAN/FRP agents.
+The wizard's automatic MCP registration supports Codex CLI, Antigravity, OpenCode, Claude Code, and Gemini CLI. Other clients can use the manual guides below. The project access guide covers adding LAN/FRP agents.
 
 ## Agent tutorials
 
 - [Codex](codex.md)
+- [Antigravity](antigravity.md)
+- [OpenCode](opencode.md)
 - [Claude Code](claude-code.md)
 - [Gemini CLI](gemini-cli.md)
 - [Cursor](cursor.md)

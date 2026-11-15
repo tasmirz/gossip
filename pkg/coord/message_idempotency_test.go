@@ -3,9 +3,10 @@ package coord_test
 import (
 	"context"
 	"errors"
-	"github.com/tasmirz/gossip/pkg/coord"
 	"sync"
 	"testing"
+
+	"github.com/tasmirz/gossip/pkg/coord"
 )
 
 func TestMessageRetriesAreAtomicAndProjectScoped(t *testing.T) {
@@ -74,5 +75,61 @@ func TestMessageRetriesAreAtomicAndProjectScoped(t *testing.T) {
 	}
 	if count != 1 {
 		t.Fatalf("message events: %d", count)
+	}
+}
+
+func TestConversationMessagesFilterBeforePagination(t *testing.T) {
+	s, _, p, owner, worker := setup(t)
+	ctx := context.Background()
+	other, err := s.AddPrincipal(ctx, p.ID, owner.Token, "other", "worker")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = s.SendMessage(ctx, p.ID, owner.Token, "", "", "", "room one")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = s.SendMessage(ctx, p.ID, owner.Token, worker.PrincipalID, "", "", "owner to worker")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = s.SendMessage(ctx, p.ID, worker.Token, other.PrincipalID, "", "", "private worker pair")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = s.SendMessage(ctx, p.ID, worker.Token, owner.PrincipalID, "", "", "worker to owner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	room, err := s.ConversationMessages(ctx, p.ID, owner.Token, "", 0, 0, 1, true)
+	if err != nil || len(room) != 1 || room[0].Body != "room one" {
+		t.Fatalf("room filter/pagination: %#v err=%v", room, err)
+	}
+	dm, err := s.ConversationMessages(ctx, p.ID, owner.Token, worker.PrincipalID, 0, 0, 1, true)
+	if err != nil || len(dm) != 1 || dm[0].Body != "worker to owner" {
+		t.Fatalf("DM filter/pagination: %#v err=%v", dm, err)
+	}
+	if _, err := s.AcknowledgeMessage(ctx, p.ID, owner.Token, dm[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	for _, viewer := range []struct {
+		token, peer  string
+		acknowledged bool
+	}{
+		{owner.Token, worker.PrincipalID, true},
+		{worker.Token, owner.PrincipalID, false},
+	} {
+		page, err := s.ConversationMessages(ctx, p.ID, viewer.token, viewer.peer, 0, 0, 1, true)
+		if err != nil || len(page) != 1 || page[0].ID != dm[0].ID || page[0].AcknowledgedByMe != viewer.acknowledged {
+			t.Fatalf("viewer-scoped acknowledgment: %#v, %v", page, err)
+		}
+	}
+	if _, err = s.ConversationMessages(ctx, p.ID, owner.Token, other.PrincipalID, 0, 0, 20, true); err != nil {
+		t.Fatal(err)
+	}
+	for _, message := range dm {
+		if message.Body == "private worker pair" {
+			t.Fatal("nonparticipant direct message leaked")
+		}
 	}
 }

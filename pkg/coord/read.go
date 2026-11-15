@@ -24,7 +24,7 @@ func (s *Store) RecentEvents(ctx context.Context, project, token string, limit i
 		return nil, err
 	}
 	rows, err := tx.QueryContext(ctx, `SELECT e.seq,e.actor,e.kind,e.entity_id,e.payload,e.created_at FROM events e WHERE e.project_id=?
-		AND (?='owner' OR e.kind NOT LIKE 'certificate.%')
+		AND (?='owner' OR (e.kind NOT LIKE 'certificate.%' AND e.kind<>'dm.inspected'))
 		AND (e.kind NOT IN ('message.sent','message.acknowledged') OR EXISTS (
 			SELECT 1 FROM messages m WHERE m.id=e.entity_id AND m.project_id=e.project_id
 			AND (m.recipient IS NULL OR m.recipient=? OR m.sender=?)))
@@ -53,6 +53,9 @@ func (s *Store) RecentEvents(ctx context.Context, project, token string, limit i
 }
 
 type Plan struct {
+	Status       string `json:"status,omitempty"`
+	PlanID       string `json:"plan_id,omitempty"`
+	PlanTitle    string `json:"plan_title,omitempty"`
 	Revision     int    `json:"revision"`
 	Body         string `json:"body"`
 	Author       string `json:"author"`
@@ -61,6 +64,8 @@ type Plan struct {
 }
 
 type Principal struct {
+	ProjectRole string `json:"project_role,omitempty"`
+	ParentID    string `json:"parent_id,omitempty"`
 	ID          string `json:"id"`
 	Name        string `json:"name"`
 	Role        string `json:"role"`
@@ -78,7 +83,11 @@ func (s *Store) ListPrincipals(ctx context.Context, project, token string) ([]Pr
 	if _, err = authorizeProjectRead(ctx, tx, project, token); err != nil {
 		return nil, err
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT p.id,p.name,p.role,j.id,j.name FROM principals p JOIN projects j ON j.id=p.project_id WHERE p.project_id=? AND p.revoked=0 ORDER BY p.name,p.id`, project)
+	rows, err := tx.QueryContext(ctx, `SELECT p.id,p.name,p.role,j.id,j.name,COALESCE(r.name,a.role_id,p.role),COALESCE(l.parent_id,'')
+ FROM principals p JOIN projects j ON j.id=p.project_id
+ LEFT JOIN project_role_assignments a ON a.project_id=p.project_id AND a.principal_id=p.id
+ LEFT JOIN project_roles r ON r.project_id=a.project_id AND r.id=a.role_id
+ LEFT JOIN agent_parent_links l ON l.project_id=p.project_id AND l.child_id=p.id WHERE p.project_id=? AND p.revoked=0 ORDER BY p.name,p.id`, project)
 	if err != nil {
 		return nil, err
 	}
@@ -86,7 +95,7 @@ func (s *Store) ListPrincipals(ctx context.Context, project, token string) ([]Pr
 	out := []Principal{}
 	for rows.Next() {
 		var p Principal
-		if err = rows.Scan(&p.ID, &p.Name, &p.Role, &p.ProjectID, &p.ProjectName); err != nil {
+		if err = rows.Scan(&p.ID, &p.Name, &p.Role, &p.ProjectID, &p.ProjectName, &p.ProjectRole, &p.ParentID); err != nil {
 			return nil, err
 		}
 		out = append(out, p)
@@ -106,7 +115,11 @@ func (s *Store) WhoAmI(ctx context.Context, project, token string) (Principal, e
 	if err != nil {
 		return p, err
 	}
-	err = tx.QueryRowContext(ctx, `SELECT p.id,p.name,p.role,j.id,j.name FROM principals p JOIN projects j ON j.id=p.project_id WHERE p.id=? AND j.id=?`, id.ID, project).Scan(&p.ID, &p.Name, &p.Role, &p.ProjectID, &p.ProjectName)
+	err = tx.QueryRowContext(ctx, `SELECT p.id,p.name,p.role,j.id,j.name,COALESCE(r.name,a.role_id,p.role),COALESCE(l.parent_id,'')
+ FROM principals p JOIN projects j ON j.id=p.project_id
+ LEFT JOIN project_role_assignments a ON a.project_id=p.project_id AND a.principal_id=p.id
+ LEFT JOIN project_roles r ON r.project_id=a.project_id AND r.id=a.role_id
+ LEFT JOIN agent_parent_links l ON l.project_id=p.project_id AND l.child_id=p.id WHERE p.id=? AND j.id=?`, id.ID, project).Scan(&p.ID, &p.Name, &p.Role, &p.ProjectID, &p.ProjectName, &p.ProjectRole, &p.ParentID)
 	return p, err
 }
 
@@ -121,11 +134,56 @@ func (s *Store) CurrentPlan(ctx context.Context, project, token string) (Plan, e
 	if err != nil {
 		return p, err
 	}
-	err = tx.QueryRowContext(ctx, `SELECT p.revision,p.body,p.author,p.created_at,EXISTS(SELECT 1 FROM plan_acknowledgments a WHERE a.project_id=p.project_id AND a.principal_id=? AND a.revision=p.revision) FROM plans p JOIN projects j ON j.id=p.project_id AND j.plan_revision=p.revision WHERE p.project_id=?`, actor.ID, project).Scan(&p.Revision, &p.Body, &p.Author, &p.CreatedAt, &p.Acknowledged)
+	err = tx.QueryRowContext(ctx, `SELECT p.revision,p.body,p.author,p.created_at,EXISTS(SELECT 1 FROM plan_acknowledgments a WHERE a.project_id=p.project_id AND a.principal_id=? AND a.revision=p.revision)  ,CASE WHEN EXISTS(SELECT 1 FROM plan_completions c WHERE c.project_id=p.project_id AND c.revision=p.revision) THEN 'done' ELSE 'active' END,p.plan_id,t.title
+	 FROM plans p JOIN projects j ON j.id=p.project_id AND j.plan_revision=p.revision LEFT JOIN plan_threads t ON t.id=p.plan_id WHERE p.project_id=?`, actor.ID, project).Scan(&p.Revision, &p.Body, &p.Author, &p.CreatedAt, &p.Acknowledged, &p.Status, &p.PlanID, &p.PlanTitle)
 	if errors.Is(err, sql.ErrNoRows) {
 		return p, ErrNotFound
 	}
 	return p, err
+}
+
+// CompletePlan records completion without changing the current revision or task state.
+func (s *Store) CompletePlan(ctx context.Context, project, token string, revision int) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	actor, err := authorizePermission(ctx, tx, project, token, PermissionPlanEdit)
+	if err != nil {
+		return err
+	}
+	var planID string
+	if revision < 1 {
+		return ErrConflict
+	}
+	if err = tx.QueryRowContext(ctx, `SELECT plan_id FROM plans WHERE project_id=? AND revision=?`, project, revision).Scan(&planID); errors.Is(err, sql.ErrNoRows) {
+		return ErrNotFound
+	} else if err != nil {
+		return err
+	}
+	var latest int
+	if err = tx.QueryRowContext(ctx, `SELECT MAX(revision) FROM plans WHERE project_id=? AND plan_id=?`, project, planID).Scan(&latest); err != nil {
+		return err
+	}
+	if revision != latest {
+		return ErrConflict
+	}
+	result, err := tx.ExecContext(ctx, `INSERT INTO plan_completions(project_id,revision,completed_by,completed_at)
+		VALUES(?,?,?,?) ON CONFLICT(project_id,revision) DO NOTHING`, project, revision, actor.ID, time.Now().UnixMilli())
+	if err != nil {
+		return err
+	}
+	changed, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if changed > 0 {
+		if err := event(ctx, tx, project, actor.ID, "plan.completed", project, map[string]int{"revision": revision}); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 // AcknowledgePlan records that this principal has seen the current revision.
@@ -192,6 +250,17 @@ func (s *Store) ListTasks(ctx context.Context, project, token string, limit int)
 }
 
 func (s *Store) GetReport(ctx context.Context, project, token, id string) (Report, error) {
+	return s.readReport(ctx, project, token, id, "", 0)
+}
+
+func (s *Store) GetAttemptReport(ctx context.Context, project, token, taskID string, attempt int) (Report, error) {
+	if taskID == "" || attempt < 1 {
+		return Report{}, errors.New("task and valid attempt number required")
+	}
+	return s.readReport(ctx, project, token, "", taskID, attempt)
+}
+
+func (s *Store) readReport(ctx context.Context, project, token, id, taskID string, attempt int) (Report, error) {
 	var r Report
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -201,7 +270,8 @@ func (s *Store) GetReport(ctx context.Context, project, token, id string) (Repor
 	if _, err = authorizeProjectRead(ctx, tx, project, token); err != nil {
 		return r, err
 	}
-	err = tx.QueryRowContext(ctx, `SELECT r.id,r.task_id,r.attempt,r.author,r.body,r.digest,r.baseline,COALESCE(e.candidate_id,''),COALESCE(e.digest,''),COALESCE(e.baseline,'') FROM reports r JOIN tasks t ON t.id=r.task_id LEFT JOIN report_review_evidence e ON e.report_id=r.id WHERE r.id=? AND t.project_id=?`, id, project).Scan(&r.ID, &r.TaskID, &r.Attempt, &r.Author, &r.Body, &r.Digest, &r.Baseline, &r.SourceCandidateID, &r.SourceCandidateDigest, &r.SourceCandidateBase)
+	err = tx.QueryRowContext(ctx, `SELECT r.id,r.task_id,r.attempt,r.author,r.body,r.digest,r.baseline,COALESCE(e.candidate_id,''),COALESCE(e.digest,''),COALESCE(e.baseline,'') FROM reports r JOIN tasks t ON t.id=r.task_id LEFT JOIN report_review_evidence e ON e.report_id=r.id WHERE t.project_id=? AND ((?<>'' AND r.id=?) OR (?<>'' AND r.task_id=? AND r.attempt=?))
+ ORDER BY r.created_at DESC,r.id DESC LIMIT 1`, project, id, id, taskID, taskID, attempt).Scan(&r.ID, &r.TaskID, &r.Attempt, &r.Author, &r.Body, &r.Digest, &r.Baseline, &r.SourceCandidateID, &r.SourceCandidateDigest, &r.SourceCandidateBase)
 	if errors.Is(err, sql.ErrNoRows) {
 		return r, ErrNotFound
 	}

@@ -6,9 +6,7 @@
         "type": "local",
         "command": [
           "/path/to/gossip",
-          "coord-mcp",
-          "--credential-file",
-          "/private/path/to/project-credential.json"
+          "coord-mcp"
         ],
         "enabled": true
       }

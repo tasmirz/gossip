@@ -20,6 +20,7 @@ func TestMCPClientConfigsExposeCreateOnlyBootstrapByPrivateKeyPath(t *testing.T)
 	}
 	for _, name := range []string{
 		filepath.Join("examples", "mcp-clients", "codex", "mcp.json"),
+		filepath.Join("examples", "mcp-clients", "antigravity", "mcp_config.json"),
 		filepath.Join("examples", "mcp-clients", "gemini", "mcp_config.json"),
 		filepath.Join("examples", "mcp-clients", "claude-desktop", "claude_desktop_config.json"),
 		filepath.Join("examples", "mcp-clients", "cursor", "mcp.json"),
@@ -57,14 +58,18 @@ func TestMCPClientConfigsExposeCreateOnlyBootstrapByPrivateKeyPath(t *testing.T)
 				}
 			}
 			primary, hasPrimary := servers["gossip"]
-			primaryDB := ""
-			for i, arg := range primary.Args {
-				if arg == "--db" && i+1 < len(primary.Args) {
-					primaryDB = primary.Args[i+1]
+			primaryHasProjectCredential := false
+			primaryHasCredentialFile := false
+			for _, arg := range primary.Args {
+				if arg == "--credential-file" || arg == "--remote" || arg == "--tls-key" {
+					primaryHasProjectCredential = true
+				}
+				if strings.HasSuffix(strings.ToLower(arg), ".json") {
+					primaryHasCredentialFile = true
 				}
 			}
-			if !keyFlag || keyPath == "" || !credentialDir || bootstrapDB == "" || !hasPrimary || primaryDB != bootstrapDB {
-				t.Fatal("bootstrap config must use a private API key, credential directory, and the same explicit database as the project MCP server")
+			if !keyFlag || keyPath == "" || !credentialDir || bootstrapDB == "" || !hasPrimary || len(primary.Args) == 0 || primary.Args[0] != "coord-mcp" || primaryHasProjectCredential || primaryHasCredentialFile {
+				t.Fatal("configuration must keep bootstrap credentials private and start the primary MCP in project-credential-free registry mode")
 			}
 		})
 	}

@@ -36,17 +36,17 @@ Run the installed binary with `coord-ui`, for example:
 ~/.local/share/gossip/bin/gossip coord-ui
 ```
 
-Open `http://127.0.0.1:8081`, select **Create local project**, and choose the checkout. Gossip infers repository metadata and creates the project and initial workspace. Save the downloaded owner credential in a private file outside the repository. On Unix, restrict it with `chmod 600 /path/to/project-credential.json`.
+Open `http://127.0.0.1:8081`, select **Create local project**, and enter the full path to an existing checkout. Gossip infers repository metadata and creates the project and initial workspace. The owner credential is saved in the device registry; it is not downloaded automatically. Use **Export recovery credential** in the project header only when you want a separate backup. Do not open the UI's `index.html` with a `file://` URL; the dashboard requires its local HTTP server. See the [Luna dashboard walkthrough](../walkthrough-luna.md) for the everyday project flow.
 
 ## 4. Add the project MCP server
 
 Use the agent's documented CLI or configuration editor, following its dedicated tutorial. The common stdio command and arguments are:
 
 ```text
-/absolute/path/to/gossip coord-mcp --credential-file /private/path/to/project-credential.json
+/absolute/path/to/gossip coord-mcp
 ```
 
-The setup wizard can add this entry to Codex, Claude Code, or Gemini CLI. Cursor, VS Code Copilot, OpenCode, and Claude Desktop have manual walkthroughs. Preserve other MCP servers and do not paste the credential into a model prompt or commit it.
+The setup wizard can add this entry to Codex, Antigravity, OpenCode, Claude Code, or Gemini CLI. Cursor, VS Code Copilot, and Claude Desktop have manual walkthroughs. Preserve other MCP servers. The device registry under `~/.config/gossip` (or `$XDG_CONFIG_HOME/gossip`) stores project connections and credentials. Existing project credentials can be imported with `gossip coord-connection add --credential-file <private-file> [--profile <name>]`; source files are left in place.
 
 ## 5. Verify
 
@@ -58,3 +58,24 @@ Restart the agent client and confirm Gossip MCP reports connected. Ask it to rea
 - If an MCP server fails to start, check its absolute executable and credential paths, then use the client MCP status command.
 - To remove integration, use the agent's MCP remove command and delete the installed skill directory and binary. Removing a local credential revokes only that copy; use the project owner controls to revoke the project principal.
 - Full access boundaries and remote deployment are documented in [coordination preview](../coordination-preview.md).
+
+### Background inbox and host wake adapters
+
+The per-user dashboard service polls registered identities at startup and every
+two minutes. Registry MCP exposes pending items through `gossip_sync` with
+`operation: queued`. Use `dismiss_queued` with an item ID after handling it.
+Gossip leaves coordinator message acknowledgments to the agent.
+
+To connect a host that supports waking an agent, create a `wake` directory in
+Gossip's device configuration directory. For each profile, create a file named
+with the lowercase SHA-256 of the UTF-8 profile name followed by `.json`.
+Its contents are a JSON string containing the absolute path to an executable
+on this device. Keep the file private. The executable receives a JSON object
+on stdin with `batch_id`, `profile`, `home_id`, `project_id`, `principal_id`,
+and `item_ids`. A zero exit status confirms delivery. Use the batch ID to
+deduplicate retries. Without an adapter, the next agent check-in can read the queue.
+
+For local development on Linux or macOS, run `bash scripts/build.sh --restart`
+from the checkout. It replaces the installed executable behind
+`~/.local/bin/gossip`, restarts the dashboard, and waits for its health check.
+Set `GOSSIP_DEV_BIN` if your dashboard service uses a different executable path.

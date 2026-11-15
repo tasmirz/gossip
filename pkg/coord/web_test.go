@@ -372,6 +372,80 @@ func TestLocalProjectSetupCreatesSessionAndReturnsCredential(t *testing.T) {
 	}
 }
 
+func TestRegistryDashboardStoresProjectAndExportsRecoveryOnlyOnRequest(t *testing.T) {
+	s, _, _, _, _ := setup(t)
+	registry, err := coord.OpenDeviceRegistry(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer registry.Close()
+	h := coord.NewWebHandlerWithRegistry(s, registry, "default", s.InstanceID())
+	checkout := initLocalGitCheckout(t, "org/registry-checkout")
+	body, _ := json.Marshal(map[string]string{"name": "", "local_path": checkout, "request_id": "setup-request-123"})
+	req := httptest.NewRequest(http.MethodPost, "http://localhost:8081/api/projects/create", bytes.NewReader(body))
+	req.RemoteAddr = "127.0.0.1:12345"
+	req.Header.Set("Origin", "http://localhost:8081")
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("create: %d %s", rec.Code, rec.Body.String())
+	}
+	var result struct {
+		Project    coord.Principal `json:"project"`
+		Credential json.RawMessage `json:"credential"`
+		Saved      bool            `json:"credential_saved"`
+	}
+	if err = json.Unmarshal(rec.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if !result.Saved || len(result.Credential) != 0 {
+		t.Fatalf("credential was not saved privately: %s", rec.Body.String())
+	}
+	connections, err := registry.List(context.Background())
+	if err != nil || len(connections) != 1 {
+		t.Fatalf("registry connections=%d err=%v", len(connections), err)
+	}
+	if _, err = registry.Token(connections[0]); err != nil {
+		t.Fatalf("credential not recoverable locally: %v", err)
+	}
+	// A new dashboard process can restore local projects without another import.
+	h2 := coord.NewWebHandlerWithRegistry(s, registry, "default", s.InstanceID())
+	projectsReq := httptest.NewRequest(http.MethodGet, "http://localhost:8081/api/projects", nil)
+	projectsReq.RemoteAddr = "127.0.0.1:12345"
+	projectsRec := httptest.NewRecorder()
+	h2.ServeHTTP(projectsRec, projectsReq)
+	var projects []coord.Principal
+	if err = json.Unmarshal(projectsRec.Body.Bytes(), &projects); projectsRec.Code != http.StatusOK || err != nil {
+		t.Fatalf("registry restore failed: status=%d body=%s err=%v", projectsRec.Code, projectsRec.Body.String(), err)
+	}
+	foundCreated := false
+	for _, p := range projects {
+		if p.ProjectID == result.Project.ProjectID {
+			foundCreated = true
+			break
+		}
+	}
+	if !foundCreated || len(projects) != 2 {
+		t.Fatalf("expected 2 local DB projects including %s, got %+v", result.Project.ProjectID, projects)
+	}
+	cookies := projectsRec.Result().Cookies()
+	if len(cookies) != 1 {
+		t.Fatalf("registry restore did not establish a session: %v", cookies)
+	}
+	exportReq := httptest.NewRequest(http.MethodPost, "http://localhost:8081/api/projects/"+result.Project.ProjectID+"/recovery-credential", nil)
+	exportReq.RemoteAddr = "127.0.0.1:12345"
+	exportReq.Header.Set("Origin", "http://localhost:8081")
+	exportReq.Header.Set("Content-Type", "application/json")
+	exportReq.AddCookie(cookies[0])
+	exportRec := httptest.NewRecorder()
+	h2.ServeHTTP(exportRec, exportReq)
+	var exported map[string]string
+	if err = json.Unmarshal(exportRec.Body.Bytes(), &exported); exportRec.Code != http.StatusOK || err != nil || exported["token"] == "" {
+		t.Fatalf("explicit recovery export failed: status=%d body=%s err=%v", exportRec.Code, exportRec.Body.String(), err)
+	}
+}
+
 func initLocalGitCheckout(t *testing.T, remote string) string {
 	t.Helper()
 	root := filepath.Join(t.TempDir(), "checkout")
@@ -458,7 +532,7 @@ func TestWebProjectAccessErrorsDistinguishMissingCredentialFromRoleDenial(t *tes
 	assetResponse := httptest.NewRecorder()
 	h.ServeHTTP(assetResponse, assetRequest)
 	app := assetResponse.Body.String()
-	if assetResponse.Code != http.StatusOK || !strings.Contains(app, "response.status===401&&projectPath){expireProjectSession") || !strings.Contains(app, "e.status===403&&state.project?.project_id===project.project_id") {
+	if assetResponse.Code != http.StatusOK || !strings.Contains(app, "response.status === 401 && projectPath && state.project === project") || !strings.Contains(app, "e.status === 403 && state.project === project") {
 		t.Fatalf("browser does not distinguish invalid credentials from permission denial: status=%d", assetResponse.Code)
 	}
 }

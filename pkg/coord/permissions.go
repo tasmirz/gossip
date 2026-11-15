@@ -51,6 +51,7 @@ func grantInitialPermissions(ctx context.Context, tx *sql.Tx, project, actor, pr
 }
 
 type PermissionGrant struct {
+	Source      string `json:"source,omitempty"`
 	ProjectID   string `json:"project_id"`
 	PrincipalID string `json:"principal_id"`
 	Permission  string `json:"permission"`
@@ -98,22 +99,20 @@ func authorizePermission(ctx context.Context, tx *sql.Tx, project, token, permis
 		return actor, err
 	}
 	if permission != PermissionProjectRead {
-		var canRead int
-		err = tx.QueryRowContext(ctx, `SELECT 1 FROM principal_permissions WHERE project_id=? AND principal_id=? AND permission=?`, project, actor.ID, PermissionProjectRead).Scan(&canRead)
-		if errors.Is(err, sql.ErrNoRows) {
-			return identity{}, ErrUnauthorized
-		}
+		allowed, err := effectiveProjectPermission(ctx, tx, project, actor.ID, PermissionProjectRead)
 		if err != nil {
 			return identity{}, err
 		}
+		if !allowed {
+			return identity{}, ErrUnauthorized
+		}
 	}
-	var exists int
-	err = tx.QueryRowContext(ctx, `SELECT 1 FROM principal_permissions WHERE project_id=? AND principal_id=? AND permission=?`, project, actor.ID, permission).Scan(&exists)
-	if errors.Is(err, sql.ErrNoRows) {
-		return identity{}, ErrUnauthorized
-	}
+	allowed, err := effectiveProjectPermission(ctx, tx, project, actor.ID, permission)
 	if err != nil {
 		return identity{}, err
+	}
+	if !allowed {
+		return identity{}, ErrUnauthorized
 	}
 	return actor, nil
 }
@@ -148,6 +147,19 @@ func (s *Store) GrantPermission(ctx context.Context, project, ownerToken, princi
 	}
 	if role == "owner" {
 		return grant, errors.New("owners already have implicit project authority")
+	}
+	var assigned bool
+	if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM project_role_assignments WHERE project_id=? AND principal_id=?)`, project, principalID).Scan(&assigned); err != nil {
+		return grant, err
+	}
+	if assigned {
+		if err := saveRoleOverride(ctx, tx, project, principalID, permission, true); err != nil {
+			return grant, err
+		}
+		if err := event(ctx, tx, project, actor.ID, "permission.granted", principalID, map[string]string{"permission": permission, "source": "override"}); err != nil {
+			return grant, err
+		}
+		return PermissionGrant{ProjectID: project, PrincipalID: principalID, Permission: permission, GrantedBy: actor.ID, GrantedAt: time.Now().UnixMilli(), Source: "override"}, tx.Commit()
 	}
 	now := time.Now().UnixMilli()
 	res, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO principal_permissions(project_id,principal_id,permission,granted_by,granted_at) VALUES(?,?,?,?,?)`, project, principalID, permission, actor.ID, now)
@@ -184,7 +196,7 @@ func (s *Store) ListPermissions(ctx context.Context, project, token string) ([]P
 	if err != nil {
 		return nil, err
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT g.project_id,g.principal_id,g.permission,g.granted_by,g.granted_at FROM principal_permissions g JOIN principals p ON p.id=g.principal_id AND p.project_id=g.project_id AND p.revoked=0 WHERE g.project_id=? AND (?='owner' OR g.principal_id=?) ORDER BY g.principal_id,g.permission LIMIT 200`, project, actor.Role, actor.ID)
+	rows, err := tx.QueryContext(ctx, `SELECT g.project_id,g.principal_id,g.permission,g.granted_by,g.granted_at FROM principal_permissions g JOIN principals p ON p.id=g.principal_id AND p.project_id=g.project_id AND p.revoked=0 WHERE g.project_id=? AND NOT EXISTS(SELECT 1 FROM project_role_assignments a WHERE a.project_id=g.project_id AND a.principal_id=g.principal_id) AND (?='owner' OR g.principal_id=?) ORDER BY g.principal_id,g.permission LIMIT 200`, project, actor.Role, actor.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -197,7 +209,52 @@ func (s *Store) ListPermissions(ctx context.Context, project, token string) ([]P
 		}
 		out = append(out, grant)
 	}
-	return out, rows.Err()
+	if err = rows.Err(); err != nil {
+		return nil, err
+	}
+	if err = rows.Close(); err != nil {
+		return nil, err
+	}
+	rows, err = tx.QueryContext(ctx, `SELECT a.principal_id FROM project_role_assignments a JOIN principals p ON p.id=a.principal_id AND p.project_id=a.project_id AND p.revoked=0 WHERE a.project_id=? AND (?='owner' OR a.principal_id=?) ORDER BY a.principal_id`, project, actor.Role, actor.ID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var principals []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		principals = append(principals, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	for _, id := range principals {
+		for _, permission := range projectActions {
+			allowed, err := effectiveProjectPermission(ctx, tx, project, id, permission)
+			if err != nil {
+				return nil, err
+			}
+			if !allowed {
+				continue
+			}
+			var overridden bool
+			if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM project_permission_overrides WHERE project_id=? AND principal_id=? AND permission=?)`, project, id, permission).Scan(&overridden); err != nil {
+				return nil, err
+			}
+			source := "role"
+			if overridden {
+				source = "override"
+			}
+			out = append(out, PermissionGrant{ProjectID: project, PrincipalID: id, Permission: permission, Source: source})
+		}
+	}
+	return out, nil
 }
 
 func (s *Store) RevokePermission(ctx context.Context, project, ownerToken, principalID, permission string) error {
@@ -212,6 +269,19 @@ func (s *Store) RevokePermission(ctx context.Context, project, ownerToken, princ
 	actor, err := authenticate(ctx, tx, project, ownerToken, "owner")
 	if err != nil {
 		return err
+	}
+	var assigned bool
+	if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM project_role_assignments WHERE project_id=? AND principal_id=?)`, project, principalID).Scan(&assigned); err != nil {
+		return err
+	}
+	if assigned {
+		if err := saveRoleOverride(ctx, tx, project, principalID, permission, false); err != nil {
+			return err
+		}
+		if err := event(ctx, tx, project, actor.ID, "permission.revoked", principalID, map[string]string{"permission": permission, "source": "override"}); err != nil {
+			return err
+		}
+		return tx.Commit()
 	}
 	res, err := tx.ExecContext(ctx, `DELETE FROM principal_permissions WHERE project_id=? AND principal_id=? AND permission=?`, project, principalID, permission)
 	if err != nil {

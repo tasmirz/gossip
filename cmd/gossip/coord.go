@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/tls"
@@ -22,6 +23,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -291,6 +293,7 @@ func runCoordMCP(args []string) error {
 	fs := flag.NewFlagSet("coord-mcp", flag.ContinueOnError)
 	db := fs.String("db", coordDefaultDB(), "local coordination database")
 	file := fs.String("credential-file", "", "project credential file")
+	profile := fs.String("profile", "default", "local Gossip identity profile in registry mode")
 	remote := fs.String("remote", "", "HTTPS origin for a mutually authenticated home node")
 	socket := fs.String("socket", "", "private local coordination daemon socket")
 	ca := fs.String("tls-ca", "", "trusted server CA certificate")
@@ -310,6 +313,9 @@ func runCoordMCP(args []string) error {
 	}
 	if _, err := coord.HostReportedCapabilities(hostCapabilityNames); err != nil {
 		return err
+	}
+	if *file == "" && *remote == "" && *socket == "" {
+		return runRegistryCoordMCP(*db, *profile, hostCapabilityNames)
 	}
 	c, err := readCoordCredential(*file)
 	if err != nil {
@@ -368,6 +374,294 @@ func runCoordMCP(args []string) error {
 	}
 	defer adapter.Close()
 	return server.ServeStdio(adapter.Server)
+}
+
+// coord-connection imports legacy project credentials into the per-device
+// registry. Source credential files are intentionally left in place.
+func runCoordConnection(args []string) error {
+	if len(args) == 0 {
+		return errors.New("usage: gossip coord-connection add|list|remove")
+	}
+	action := args[0]
+	fs := flag.NewFlagSet("coord-connection "+action, flag.ContinueOnError)
+	dbPath := fs.String("db", coordDefaultDB(), "local coordination database")
+	credentialFile := fs.String("credential-file", "", "existing private project credential to import")
+	profile := fs.String("profile", "default", "local identity profile")
+	name := fs.String("name", "", "display name")
+	homeID := fs.String("home-id", "", "stable coordinator identity (required for remote connections)")
+	endpoint := fs.String("endpoint", "", "HTTPS mTLS home endpoint; blank uses the local coordinator")
+	ca := fs.String("tls-ca", "", "trusted home CA certificate path")
+	cert := fs.String("tls-cert", "", "client certificate path")
+	key := fs.String("tls-key", "", "client private key path")
+	checkout := fs.String("checkout", "", "optional local checkout mapping")
+	projectID := fs.String("project-id", "", "project ID for remove")
+	principalID := fs.String("principal-id", "", "principal ID for remove")
+	if err := fs.Parse(args[1:]); err != nil {
+		return err
+	}
+	registryDir, err := coord.DefaultGossipConfigDir()
+	if err != nil {
+		return err
+	}
+	registry, err := coord.OpenDeviceRegistry(registryDir)
+	if err != nil {
+		return err
+	}
+	defer registry.Close()
+	ctx := context.Background()
+	switch action {
+	case "list":
+		connections, err := registry.List(ctx)
+		if err != nil {
+			return err
+		}
+		for _, c := range connections {
+			fmt.Printf("%s\t%s\t%s\t%s\t%s\n", c.Profile, c.Name, c.ProjectID, c.PrincipalID, c.Endpoint)
+		}
+		return nil
+	case "remove":
+		if *homeID == "" || *projectID == "" || *principalID == "" {
+			return errors.New("remove requires --home-id, --project-id, and --principal-id")
+		}
+		if *profile == "" {
+			*profile = "default"
+		}
+		return registry.Remove(ctx, *profile, *homeID, *projectID, *principalID)
+	case "add":
+		if *credentialFile == "" {
+			return errors.New("add requires --credential-file")
+		}
+		credential, err := readCoordCredential(*credentialFile)
+		if err != nil {
+			return err
+		}
+		var backend coord.Backend
+		if *endpoint == "" {
+			local, err := coord.Open(*dbPath)
+			if err != nil {
+				return err
+			}
+			defer local.Close()
+			backend = local
+			if *homeID == "" {
+				*homeID = local.InstanceID()
+			}
+		} else {
+			if *homeID == "" {
+				return errors.New("remote import requires --home-id from the trusted home invitation")
+			}
+			if *ca == "" || *cert == "" || *key == "" {
+				return errors.New("remote import requires --tls-ca, --tls-cert, and --tls-key")
+			}
+			remote, err := coord.NewRemote(*endpoint, *ca, *cert, *key, "")
+			if err != nil {
+				return err
+			}
+			backend = remote
+		}
+		valid, err := backend.CredentialValid(ctx, credential.ProjectID, credential.Token)
+		if err != nil {
+			return fmt.Errorf("verify project connection: %w", err)
+		}
+		if !valid {
+			return errors.New("project credential was rejected; connection was not saved")
+		}
+		frame, err := backend.SyncProject(ctx, credential.ProjectID, credential.Token, 0, 1)
+		if err != nil {
+			return fmt.Errorf("verify project-scoped read: %w", err)
+		}
+		if frame.HomeInstanceID == "" {
+			return errors.New("home did not report a stable identity; connection was not saved")
+		}
+		if *homeID != "" && *homeID != frame.HomeInstanceID {
+			return errors.New("trusted home identity does not match the connected coordinator")
+		}
+		*homeID = frame.HomeInstanceID
+		if *name == "" {
+			*name = credential.ProjectID
+		}
+		if *profile == "" {
+			*profile = "default"
+		}
+		c := coord.DeviceConnection{Profile: *profile, HomeID: *homeID, ProjectID: credential.ProjectID, PrincipalID: credential.PrincipalID, Name: *name, Endpoint: *endpoint, CAFile: *ca, CertFile: *cert, KeyFile: *key, Checkout: *checkout}
+		if err = registry.Put(ctx, c, credential.Token); err != nil {
+			return err
+		}
+		fmt.Printf("Imported %s as profile %s after a project-scoped read. The source credential file remains unchanged.\n", *name, *profile)
+		return nil
+	default:
+		return errors.New("usage: gossip coord-connection add|list|remove")
+	}
+}
+
+func runRegistryCoordMCP(dbPath, defaultProfile string, hostCapabilities []string) error {
+	registryDir, err := coord.DefaultGossipConfigDir()
+	if err != nil {
+		return err
+	}
+	registry, err := coord.OpenDeviceRegistry(registryDir)
+	if err != nil {
+		return fmt.Errorf("open local Gossip registry: %w", err)
+	}
+	defer registry.Close()
+	connections, err := registry.List(context.Background())
+	if err != nil {
+		return err
+	}
+	if len(connections) == 0 {
+		return errors.New("no project connections are configured; add one in the Gossip dashboard or import with `gossip coord-connection add`")
+	}
+	local, err := coord.Open(dbPath)
+	if err != nil {
+		return err
+	}
+	defer local.Close()
+	type registryBackend interface {
+		coord.Backend
+		WhoAmI(context.Context, string, string) (coord.Principal, error)
+	}
+	type cachedAdapter struct {
+		adapter *coord.MCPAdapter
+		backend registryBackend
+		token   string
+	}
+	var mu sync.Mutex
+	cache := map[string]cachedAdapter{}
+	closeAll := func() {
+		mu.Lock()
+		defer mu.Unlock()
+		for _, v := range cache {
+			v.adapter.Close()
+			if r, ok := v.backend.(interface{ CloseIdleConnections() }); ok {
+				r.CloseIdleConnections()
+			}
+		}
+	}
+	defer closeAll()
+	keyFor := func(c coord.DeviceConnection) string {
+		return c.Profile + "\x00" + c.HomeID + "\x00" + c.ProjectID + "\x00" + c.PrincipalID
+	}
+	open := func(c coord.DeviceConnection, token string) (cachedAdapter, error) {
+		key := keyFor(c)
+		mu.Lock()
+		defer mu.Unlock()
+		if a, ok := cache[key]; ok {
+			return a, nil
+		}
+		var backend registryBackend
+		if c.Endpoint == "" {
+			backend = local
+		} else {
+			backend, err = coord.NewRemote(c.Endpoint, c.CAFile, c.CertFile, c.KeyFile, "")
+			if err != nil {
+				return cachedAdapter{}, fmt.Errorf("connect to %s: %w", c.Name, err)
+			}
+		}
+		valid, e := backend.CredentialValid(context.Background(), c.ProjectID, token)
+		if e != nil {
+			return cachedAdapter{}, e
+		}
+		if !valid {
+			return cachedAdapter{}, fmt.Errorf("stored project credential for %q is revoked or invalid", c.Name)
+		}
+		frame, e := backend.SyncProject(context.Background(), c.ProjectID, token, 0, 1)
+		if e != nil {
+			return cachedAdapter{}, fmt.Errorf("verify project-scoped read for %q: %w", c.Name, e)
+		}
+		if frame.HomeInstanceID != c.HomeID {
+			return cachedAdapter{}, fmt.Errorf("trusted home identity changed for %q; remove or re-pair the connection", c.Name)
+		}
+		var box *coord.Outbox
+		if c.Endpoint != "" {
+			box, e = coord.OpenOutbox(coordDefaultOutboxPath(coordCredential{ProjectID: c.ProjectID, PrincipalID: c.PrincipalID, Token: token}), c.Endpoint, c.ProjectID, c.PrincipalID, token, backend)
+			if e != nil {
+				return cachedAdapter{}, e
+			}
+		}
+		adapter, e := coord.NewMCPAdapterWithHostCapabilities(backend, c.ProjectID, token, box, hostCapabilities)
+		if e != nil {
+			if box != nil {
+				box.Close()
+			}
+			return cachedAdapter{}, e
+		}
+		v := cachedAdapter{adapter: adapter, backend: backend, token: token}
+		cache[key] = v
+		return v, nil
+	}
+	resolve := func(ctx context.Context, profile, project, checkout string) (*server.MCPServer, error) {
+		c, token, e := registry.Resolve(ctx, profile, project, checkout)
+		if e != nil {
+			return nil, e
+		}
+		v, e := open(c, token)
+		if e != nil {
+			return nil, e
+		}
+		return v.adapter.Server, nil
+	}
+	projects := func(ctx context.Context) (any, error) {
+		items, e := registry.List(ctx)
+		if e != nil {
+			return nil, e
+		}
+		type status struct {
+			coord.DeviceConnection
+			State string            `json:"state"`
+			Inbox coord.InboxStatus `json:"inbox"`
+		}
+		out := make([]status, 0, len(items))
+		for _, c := range items {
+			token, te := registry.Token(c)
+			state := "unavailable"
+			if te == nil {
+				_, oe := open(c, token)
+				if oe == nil {
+					state = "ready"
+				}
+			}
+			c.SecretID = ""
+			entry := status{DeviceConnection: c, State: state}
+			if state == "ready" {
+				entry.Inbox, e = registry.InboxStatus(ctx, c)
+				if e != nil {
+					return nil, e
+				}
+			}
+			out = append(out, entry)
+		}
+		return out, nil
+	}
+	inbox := func(ctx context.Context, profile, project, checkout, dismiss string) (any, error) {
+		c, token, err := registry.Resolve(ctx, profile, project, checkout)
+		if err != nil {
+			return nil, err
+		}
+		adapter, err := open(c, token)
+		if err != nil {
+			return nil, err
+		}
+		actor, err := adapter.backend.WhoAmI(ctx, c.ProjectID, token)
+		if err != nil {
+			return nil, err
+		}
+		if actor.ID != c.PrincipalID {
+			return nil, coord.ErrUnauthorized
+		}
+		return registry.ServiceInbox(ctx, c, dismiss)
+	}
+	srv := coord.RegistryMCPServer(defaultProfile, projects, resolve, inbox)
+	coord.AddFileReservationTool(srv, defaultProfile, func(ctx context.Context, profile, project, checkout, op, handle string, paths []string) ([]coord.FileReservation, error) {
+		c, token, err := registry.Resolve(ctx, profile, project, checkout)
+		if err != nil {
+			return nil, err
+		}
+		if err := verifyFileIdentity(ctx, dbPath, c, token); err != nil {
+			return nil, err
+		}
+		return registry.FileReservations(ctx, c, op, handle, paths)
+	})
+	return server.ServeStdio(srv)
 }
 
 func runCoordBootstrapKey(args []string) error {
@@ -569,6 +863,7 @@ func runCoordServe(args []string) error {
 	certFile := fs.String("tls-cert", "", "server certificate")
 	keyFile := fs.String("tls-key", "", "server private key")
 	clientCA := fs.String("client-ca", "", "trusted client CA certificate")
+	clientCAKey := fs.String("client-ca-key", "", "private client CA key enabling invitation enrollment")
 	bootstrapKeyFile := fs.String("bootstrap-api-key-file", "", "optional private create-only API key for remote project creation")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -610,6 +905,32 @@ func runCoordServe(args []string) error {
 		if err != nil {
 			return err
 		}
+	}
+	if *clientCAKey != "" {
+		info, err := os.Lstat(*clientCAKey)
+		if err != nil {
+			return err
+		}
+		if err = validatePrivateCredentialInfo(info); err != nil {
+			return fmt.Errorf("client CA key: %w", err)
+		}
+		signingPair, err := tls.LoadX509KeyPair(*clientCA, *clientCAKey)
+		if err != nil {
+			return err
+		}
+		if len(signingPair.Certificate) != 1 {
+			return errors.New("enrollment requires one client CA certificate")
+		}
+		ca, err := x509.ParseCertificate(signingPair.Certificate[0])
+		if err != nil {
+			return err
+		}
+		signer, ok := signingPair.PrivateKey.(crypto.Signer)
+		if !ok || !ca.IsCA || ca.KeyUsage&x509.KeyUsageCertSign == 0 {
+			return errors.New("enrollment requires a certificate-signing CA")
+		}
+		config.ClientAuth = tls.VerifyClientCertIfGiven
+		handler = coord.EnrollmentHandler(s, handler, ca, signer)
 	}
 	listener, err := tls.Listen("tcp", *listen, config)
 	if err != nil {
@@ -679,10 +1000,12 @@ func runCoordFRP(args []string) error {
 
 func runCoordUI(args []string) error {
 	fs := flag.NewFlagSet("coord-ui", flag.ContinueOnError)
+	serviceCheck := fs.Bool("service-capability", false, "report installer service capability")
 	db := fs.String("db", coordDefaultDB(), "local coordination database")
 	port := fs.Int("port", 8081, "dashboard port")
 	listen := fs.String("listen", "127.0.0.1", "dashboard listen address")
 	socket := fs.String("socket", "", "private local coordination daemon socket")
+	profile := fs.String("profile", "default", "local Gossip agent profile for this dashboard")
 	tlsCert := fs.String("tls-cert", "", "HTTPS server certificate (required off loopback)")
 	tlsKey := fs.String("tls-key", "", "HTTPS server private key")
 	clientCA := fs.String("client-ca", "", "trusted human client CA for mutual TLS")
@@ -691,8 +1014,20 @@ func runCoordUI(args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	if *serviceCheck {
+		fmt.Println("gossip-inbox-v1")
+		return nil
+	}
 	if *port < 0 || *port > 65535 {
 		return errors.New("invalid dashboard port")
+	}
+	ip := net.ParseIP(*listen)
+	loopback := strings.EqualFold(*listen, "localhost") || (ip != nil && ip.IsLoopback())
+	if !loopback {
+		return errors.New("coord-ui serves a local browser dashboard only; use coord-serve for authenticated LAN or FRP peer RPC")
+	}
+	if *tlsCert != "" || *tlsKey != "" || *clientCA != "" || len(hosts) != 0 {
+		return errors.New("HTTPS dashboard mode is disabled; open the loopback dashboard and pair remote peers through Gossip")
 	}
 	var backend coord.WebBackend
 	if *socket != "" {
@@ -710,43 +1045,42 @@ func runCoordUI(args []string) error {
 		backend = store
 	}
 	address := net.JoinHostPort(*listen, strconv.Itoa(*port))
-	ip := net.ParseIP(*listen)
-	loopback := strings.EqualFold(*listen, "localhost") || (ip != nil && ip.IsLoopback())
-	secure := *tlsCert != "" || *tlsKey != "" || *clientCA != ""
-	if !loopback && !secure {
-		return errors.New("non-loopback dashboard requires HTTPS mutual TLS and enrolled client certificates")
-	}
-	if secure && (*tlsCert == "" || *tlsKey == "" || *clientCA == "" || len(hosts) == 0) {
-		return errors.New("HTTPS dashboard requires server cert/key, client CA, and --host")
-	}
 	listener, err := net.Listen("tcp", address)
 	if err != nil {
 		return err
 	}
 	defer listener.Close()
+	fmt.Fprintf(os.Stderr, "Coordination dashboard: http://%s\n", listener.Addr())
 	var handler http.Handler = coord.NewWebHandler(backend)
-	scheme := "http"
-	if secure {
-		cert, e := tls.LoadX509KeyPair(*tlsCert, *tlsKey)
-		if e != nil {
-			return e
+	if *socket == "" {
+		registry, regErr := coord.OpenDeviceRegistry("")
+		if regErr != nil {
+			return fmt.Errorf("open local Gossip device registry: %w", regErr)
 		}
-		ca, e := os.ReadFile(*clientCA)
-		if e != nil {
-			return e
+		defer registry.Close()
+		homeID := ""
+		if local, ok := backend.(interface{ InstanceID() string }); ok {
+			homeID = local.InstanceID()
 		}
-		pool := x509.NewCertPool()
-		if !pool.AppendCertsFromPEM(ca) {
-			return errors.New("invalid client CA")
-		}
-		config := &tls.Config{MinVersion: tls.VersionTLS13, Certificates: []tls.Certificate{cert}, ClientCAs: pool, ClientAuth: tls.RequireAndVerifyClientCert}
-		listener = tls.NewListener(listener, config)
-		handler = coord.NewWebHandlerWithCertificateGrants(backend, hosts)
-		scheme = "https"
-	} else if !loopback {
-		return errors.New("dashboard must listen on loopback or use mutual TLS")
+		handler = coord.NewWebHandlerWithRegistry(backend, registry, *profile, homeID)
+		pollCtx, stopPoll := context.WithCancel(context.Background())
+		pollDone := make(chan struct{})
+		go func() {
+			defer close(pollDone)
+			registry.RunInboxWorker(pollCtx, backend.(*coord.Store))
+		}()
+		defer func() { stopPoll(); <-pollDone }()
+		dashboard := handler
+		handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodGet && r.URL.Path == "/healthz" && r.Host == listener.Addr().String() {
+				w.Header().Set("Cache-Control", "no-store")
+				w.Header().Set("Gossip-Service-Pid", strconv.Itoa(os.Getpid()))
+				fmt.Fprint(w, "gossip-inbox-v1")
+				return
+			}
+			dashboard.ServeHTTP(w, r)
+		})
 	}
-	fmt.Fprintf(os.Stderr, "Coordination dashboard: %s://%s\n", scheme, listener.Addr())
 	web := &http.Server{Handler: handler, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second}
 	return web.Serve(listener)
 }

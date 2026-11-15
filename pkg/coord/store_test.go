@@ -754,6 +754,13 @@ func TestReworkPreservesReportAndFencesOldReview(t *testing.T) {
 	if err != nil || saved.Body != "first report" {
 		t.Fatalf("original report: %+v %v", saved, err)
 	}
+	saved, err = s.GetAttemptReport(ctx, p.ID, owner.Token, task.ID, attempt.Attempt)
+	if err != nil || saved.ID != report.ID || saved.Digest != report.Digest {
+		t.Fatalf("report for original attempt: %+v %v", saved, err)
+	}
+	if _, err := s.GetAttemptReport(ctx, p.ID, owner.Token, task.ID, next.Attempt); !errors.Is(err, coord.ErrNotFound) {
+		t.Fatalf("new attempt returned the previous report: %v", err)
+	}
 	events, err := s.ReadEvents(ctx, p.ID, worker.Token, 0, 100)
 	if err != nil {
 		t.Fatal(err)

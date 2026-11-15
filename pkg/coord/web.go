@@ -22,7 +22,7 @@ import (
 	"time"
 )
 
-//go:embed ui/*
+//go:embed ui/* ui/css/* ui/js/*
 var webAssets embed.FS
 
 type browserSession struct {
@@ -37,6 +37,7 @@ type WebBackend interface {
 	Backend
 	RemoteAccessEnabled(context.Context) (bool, error)
 	CreateProjectWithWorkspace(context.Context, string, string, string, string, GitObservation) (Project, Credential, Repository, Workspace, error)
+	CreatePreparedProjectWithWorkspace(context.Context, string, string, string, string, string, GitObservation, Credential) (Project, Credential, Repository, Workspace, error)
 	EventRetentionStatus(context.Context, string, string) (EventRetention, error)
 	WhoAmI(context.Context, string, string) (Principal, error)
 	FindRepositoriesByRemote(context.Context, string, string, string) ([]Repository, error)
@@ -45,6 +46,7 @@ type WebBackend interface {
 	TaskCounts(context.Context, string, string) (map[string]int, error)
 	RecentEvents(context.Context, string, string, int) ([]Event, error)
 	RecentMessages(context.Context, string, string, int) ([]Message, error)
+	ConversationMessages(context.Context, string, string, string, int64, int64, int, bool) ([]Message, error)
 	ListLegacyImports(context.Context, string, string) ([]LegacyImport, error)
 	ReadLegacyRecords(context.Context, string, string, string, string, string, int) ([]LegacyRecord, error)
 	ReadLegacyRecordChunk(context.Context, string, string, string, string, string, int, int) (LegacyRecordChunk, error)
@@ -53,6 +55,13 @@ type WebBackend interface {
 
 type WebHandler struct {
 	store                    WebBackend
+	localStore               LocalDashboardBackend
+	queryStore               DashboardQueryBackend
+	channelStore             ChannelBackend
+	registry                 *DeviceRegistry
+	profile                  string
+	homeID                   string
+	localAuthority           bool
 	mu                       sync.Mutex
 	sessions                 map[string]*browserSession
 	allowedHosts             map[string]bool
@@ -82,7 +91,27 @@ type ProjectOverview struct {
 }
 
 func NewWebHandler(store WebBackend) *WebHandler {
-	return &WebHandler{store: store, sessions: map[string]*browserSession{}, allowedHosts: map[string]bool{}, clientProjects: map[string]map[string]bool{}}
+	qs, _ := store.(DashboardQueryBackend)
+	cs, _ := store.(ChannelBackend)
+	return &WebHandler{store: store, queryStore: qs, channelStore: cs, sessions: map[string]*browserSession{}, allowedHosts: map[string]bool{}, clientProjects: map[string]map[string]bool{}}
+}
+
+// NewWebHandlerWithRegistry gives the loopback dashboard explicit local
+// device-owner access when using the default human profile and read-only
+// access to joined remote connections stored privately in the registry.
+func NewWebHandlerWithRegistry(store WebBackend, registry *DeviceRegistry, profile, homeID string) *WebHandler {
+	h := NewWebHandler(store)
+	h.registry, h.profile, h.homeID = registry, profile, homeID
+	if h.profile == "" {
+		h.profile = "default"
+	}
+	if h.profile == "default" {
+		if lb, ok := store.(LocalDashboardBackend); ok {
+			h.localStore = lb
+			h.localAuthority = true
+		}
+	}
+	return h
 }
 
 // NewWebHandlerWithHosts enables an explicit HTTPS deployment host allowlist.
@@ -168,17 +197,70 @@ func localHost(hostport string) bool {
 	ip := net.ParseIP(host)
 	return ip != nil && ip.IsLoopback()
 }
+func isSingleSegmentAsset(reqPath, prefix, ext string) bool {
+	if !strings.HasPrefix(reqPath, prefix) || !strings.HasSuffix(reqPath, ext) {
+		return false
+	}
+	name := strings.TrimPrefix(reqPath, prefix)
+	return name != "" && !strings.Contains(name, "/") && !strings.Contains(name, "..")
+}
+
 func sameOrigin(r *http.Request) bool {
 	o := r.Header.Get("Origin")
 	u, err := url.Parse(o)
 	return err == nil && ((u.Scheme == "http" && r.TLS == nil) || (u.Scheme == "https" && r.TLS != nil)) && strings.EqualFold(u.Host, r.Host) && u.User == nil && u.Path == "" && u.RawQuery == "" && u.Fragment == ""
 }
+
+func hasForwardedHeaders(r *http.Request) bool {
+	for _, name := range []string{"Forwarded", "X-Forwarded-For", "X-Forwarded-Host", "X-Forwarded-Proto", "X-Forwarded-Port", "X-Real-Ip", "Via"} {
+		if strings.TrimSpace(r.Header.Get(name)) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func hasCrossSiteBrowserRequest(r *http.Request) bool {
+	if sfs := strings.ToLower(strings.TrimSpace(r.Header.Get("Sec-Fetch-Site"))); sfs != "" {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			if sfs != "same-origin" {
+				return true
+			}
+		} else if sfs != "same-origin" && sfs != "none" {
+			return true
+		}
+	}
+	if strings.HasPrefix(r.URL.Path, "/api/") && r.Header.Get("Origin") != "" && !sameOrigin(r) {
+		return true
+	}
+	return false
+}
+
+func (h *WebHandler) hasLocalDashboardAccess(r *http.Request) bool {
+	return h.localAuthority &&
+		h.localStore != nil &&
+		!h.dynamicCertificateGrants &&
+		h.profile == "default" &&
+		r.TLS == nil &&
+		localHost(r.Host) &&
+		loopbackPeer(r.RemoteAddr) &&
+		!hasForwardedHeaders(r) &&
+		!hasCrossSiteBrowserRequest(r)
+}
+
 func (h *WebHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Referrer-Policy", "no-referrer")
+	w.Header().Set("Cross-Origin-Resource-Policy", "same-origin")
+	w.Header().Set("X-Frame-Options", "DENY")
 	w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; base-uri 'none'; frame-ancestors 'none'; form-action 'self'")
 	if !h.hostAllowed(r) {
 		http.Error(w, "invalid host", http.StatusForbidden)
+		return
+	}
+	if r.TLS == nil && hasForwardedHeaders(r) {
+		http.Error(w, "forwarded requests are not allowed on the local dashboard", http.StatusForbidden)
 		return
 	}
 	if r.TLS != nil {
@@ -192,6 +274,10 @@ func (h *WebHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "client certificate is not enrolled", http.StatusForbidden)
 			return
 		}
+	}
+	if strings.HasPrefix(r.URL.Path, "/api/") && hasCrossSiteBrowserRequest(r) {
+		http.Error(w, "cross-site API request forbidden", http.StatusForbidden)
+		return
 	}
 	if r.Method != "GET" && r.Method != "HEAD" && (!sameOrigin(r) || !strings.HasPrefix(r.Header.Get("Content-Type"), "application/json")) {
 		http.Error(w, "same-origin JSON required", http.StatusForbidden)
@@ -213,6 +299,7 @@ func (h *WebHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if r.TLS != nil {
 			scheme = "https"
 		}
+		w.Header().Set("X-Frame-Options", "SAMEORIGIN")
 		w.Header().Set("Content-Security-Policy", "default-src 'none'; script-src "+scheme+"://"+r.Host+"; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'")
 		data, err := webAssets.ReadFile("ui/diagram.html")
 		if err != nil {
@@ -221,7 +308,9 @@ func (h *WebHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, _ = w.Write(data)
-	case (r.URL.Path == "/app.js" || r.URL.Path == "/app.css" || r.URL.Path == "/diagram.js" || r.URL.Path == "/mermaid.min.js") && r.Method == "GET":
+	case r.URL.Path == "/favicon.ico" && r.Method == "GET":
+		w.WriteHeader(http.StatusNoContent)
+	case r.Method == "GET" && (r.URL.Path == "/app.js" || r.URL.Path == "/app.css" || r.URL.Path == "/diagram.js" || r.URL.Path == "/mermaid.min.js" || isSingleSegmentAsset(r.URL.Path, "/css/", ".css") || isSingleSegmentAsset(r.URL.Path, "/js/", ".js")):
 		name := "ui" + r.URL.Path
 		data, err := webAssets.ReadFile(name)
 		if err != nil {
@@ -242,8 +331,22 @@ func (h *WebHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.logout(w, r)
 	case r.URL.Path == "/api/projects" && r.Method == "GET":
 		h.projects(w, r)
+	case r.URL.Path == "/api/dashboard/projects" && r.Method == "GET":
+		h.dashboardProjects(w, r)
+	case r.URL.Path == "/api/local/inspect-checkout" && r.Method == http.MethodPost:
+		h.inspectLocalCheckout(w, r)
+	case r.URL.Path == "/api/local/pick-checkout" && r.Method == http.MethodPost:
+		h.pickLocalCheckout(w, r)
+	case r.URL.Path == "/api/local/accept-invitation" && r.Method == http.MethodPost:
+		h.acceptInvitation(w, r)
+	case r.URL.Path == "/api/local/join-remote" && r.Method == http.MethodPost:
+		h.joinRemoteProject(w, r)
 	case r.URL.Path == "/api/projects/create" && r.Method == "POST":
 		h.createLocalProject(w, r)
+	case strings.HasPrefix(r.URL.Path, "/api/projects/") && strings.HasSuffix(r.URL.Path, "/recovery-credential") && r.Method == http.MethodPost:
+		h.exportRecoveryCredential(w, r)
+	case strings.HasPrefix(r.URL.Path, "/api/projects/") && strings.HasSuffix(r.URL.Path, "/local-owner") && r.Method == http.MethodPost:
+		h.selectLocalOwner(w, r)
 	case r.URL.Path == "/api/overview" && r.Method == "GET":
 		h.projectOverview(w, r)
 	case r.URL.Path == "/api/recognize" && r.Method == "POST":
@@ -283,6 +386,7 @@ func (h *WebHandler) createLocalProject(w http.ResponseWriter, r *http.Request) 
 	var req struct {
 		Name      string `json:"name"`
 		LocalPath string `json:"local_path"`
+		RequestID string `json:"request_id"`
 	}
 	if err := decodeBody(w, r, &req); err != nil {
 		jsonError(w, err)
@@ -310,36 +414,123 @@ func (h *WebHandler) createLocalProject(w http.ResponseWriter, r *http.Request) 
 		ownerName = current.Username
 	}
 	node, _ := os.Hostname()
-	project, credential, repository, workspace, err := h.store.CreateProjectWithWorkspace(r.Context(), projectName, ownerName, repositoryName, node, observation)
+	var project Project
+	var credential Credential
+	var repository Repository
+	var workspace Workspace
+	if h.registry != nil {
+		setupPayload := struct {
+			Name, OwnerName, RepositoryName, Node string
+			Observation                           GitObservation
+		}{projectName, ownerName, repositoryName, node, observation}
+		projectID, prepared, secretID, prepErr := h.registry.PrepareLocalProject(r.Context(), req.RequestID, setupPayload)
+		if prepErr != nil {
+			jsonError(w, prepErr)
+			return
+		}
+		project, credential, repository, workspace, err = h.store.CreatePreparedProjectWithWorkspace(r.Context(), projectID, projectName, ownerName, repositoryName, node, observation, prepared)
+		if err == nil {
+			homeID := h.homeID
+			if homeID == "" {
+				err = errors.New("local coordinator identity is unavailable")
+			} else {
+				err = h.registry.Put(r.Context(), DeviceConnection{Profile: h.profile, HomeID: homeID, ProjectID: project.ID, PrincipalID: credential.PrincipalID, Name: project.Name, Checkout: observation.Root, SecretID: secretID}, credential.Token)
+			}
+		}
+	} else {
+		project, credential, repository, workspace, err = h.store.CreateProjectWithWorkspace(r.Context(), projectName, ownerName, repositoryName, node, observation)
+	}
 	if err != nil {
 		jsonError(w, err)
 		return
 	}
 	p := Principal{ID: credential.PrincipalID, Name: ownerName, Role: "owner", ProjectID: project.ID, ProjectName: project.Name}
-	sessionID, session := h.session(r)
-	newSession := session == nil
-	if session == nil {
-		var idErr error
-		sessionID, idErr = newSessionID()
-		if idErr != nil {
-			http.Error(w, "session unavailable", http.StatusInternalServerError)
-			return
+	if h.localAuthority {
+		h.ensureDeviceSession(w, r)
+	} else {
+		sessionID, session := h.session(r)
+		newSession := session == nil
+		if session == nil {
+			var idErr error
+			sessionID, idErr = newSessionID()
+			if idErr != nil {
+				http.Error(w, "session unavailable", http.StatusInternalServerError)
+				return
+			}
+			session = &browserSession{projects: map[string]string{}, clientPin: ""}
 		}
-		session = &browserSession{projects: map[string]string{}, clientPin: ""}
-	}
-	session.projects[project.ID] = credential.Token
-	session.expires = time.Now().Add(12 * time.Hour)
-	{
+		session.projects[project.ID] = credential.Token
+		session.expires = time.Now().Add(12 * time.Hour)
 		h.mu.Lock()
 		h.sessions[sessionID] = session
 		h.mu.Unlock()
+		// A cookie may exist but point to an in-memory session lost when the
+		// dashboard restarted. Always replace it when creating a fresh session.
+		if newSession {
+			h.setSessionCookie(w, r, sessionID)
+		}
 	}
-	// A cookie may exist but point to an in-memory session lost when the
-	// dashboard restarted. Always replace it when creating a fresh session.
-	if newSession {
-		h.setSessionCookie(w, r, sessionID)
+	response := map[string]any{"project": p, "repository": repository, "workspace": workspace, "credential_saved": h.registry != nil}
+	// Preserve the legacy constructor behavior for embedded callers during the
+	// migration; the installed local dashboard always uses registry mode.
+	if h.registry == nil {
+		response["credential"] = map[string]string{"project_id": project.ID, "principal_id": credential.PrincipalID, "token": credential.Token}
 	}
-	jsonReply(w, map[string]any{"project": p, "repository": repository, "workspace": workspace, "credential": map[string]string{"project_id": project.ID, "principal_id": credential.PrincipalID, "token": credential.Token}})
+	jsonReply(w, response)
+}
+
+func (h *WebHandler) exportRecoveryCredential(w http.ResponseWriter, r *http.Request) {
+	if h.registry == nil || !h.hasLocalDashboardAccess(r) {
+		http.Error(w, "recovery export is available only from the local dashboard", http.StatusForbidden)
+		return
+	}
+	project := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/projects/"), "/recovery-credential")
+	if requestedHome := strings.TrimSpace(r.URL.Query().Get("home")); requestedHome != "" && requestedHome != h.homeID {
+		http.Error(w, "recovery export is only available for local projects owned on this device", http.StatusForbidden)
+		return
+	}
+	backend, _, _, token, callCtx, isRemote, statusCode, statusMsg := h.resolveProjectCall(r, project)
+	if statusCode != 0 {
+		http.Error(w, statusMsg, statusCode)
+		return
+	}
+	if isRemote {
+		http.Error(w, "recovery export is only available for local projects owned on this device", http.StatusForbidden)
+		return
+	}
+	principal, err := backend.WhoAmI(callCtx, project, token)
+	if err != nil {
+		jsonError(w, err)
+		return
+	}
+	if principal.Role != "owner" {
+		http.Error(w, "only the project owner can export its recovery credential", http.StatusForbidden)
+		return
+	}
+	if token == "" {
+		connections, err := h.registry.List(r.Context())
+		if err != nil {
+			jsonError(w, err)
+			return
+		}
+		for _, c := range connections {
+			if c.Profile == h.profile && c.HomeID == h.homeID && c.Endpoint == "" && c.ProjectID == project && c.PrincipalID == principal.ID {
+				saved, err := h.registry.Token(c)
+				if err != nil {
+					continue
+				}
+				if valid, err := h.store.CredentialValid(r.Context(), project, saved); err == nil && valid {
+					token = saved
+					break
+				}
+			}
+		}
+		if token == "" {
+			http.Error(w, "No saved recovery credential for this project", http.StatusNotFound)
+			return
+		}
+	}
+	jsonReply(w, map[string]string{"project_id": project, "principal_id": principal.ID, "token": token})
 }
 
 func (h *WebHandler) setSessionCookie(w http.ResponseWriter, r *http.Request, sid string) {
@@ -350,8 +541,8 @@ func clearSessionCookie(w http.ResponseWriter, r *http.Request) {
 	http.SetCookie(w, &http.Cookie{Name: "gossip_session", Value: "", Path: "/", HttpOnly: true, Secure: r.TLS != nil, SameSite: http.SameSiteStrictMode, MaxAge: -1})
 }
 
-// recognizeProject searches only projects already connected to this browser
-// session. A remote match is a suggestion, never project membership.
+// recognizeProject searches only projects visible to the caller (local device
+// projects on the loopback dashboard, or explicitly connected session projects).
 func (h *WebHandler) recognizeProject(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		RemoteURL string `json:"remote_url"`
@@ -365,34 +556,59 @@ func (h *WebHandler) recognizeProject(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, err)
 		return
 	}
-	_, session := h.session(r)
-	if session == nil || session.clientPin != webClientPin(r) {
-		jsonError(w, ErrUnauthorized)
-		return
-	}
 	suggestions := []ProjectSuggestion{}
-	for project, token := range session.projects {
-		if !h.clientProjectAllowed(r.Context(), session.clientPin, project) {
-			continue
-		}
-		principal, authErr := h.store.WhoAmI(r.Context(), project, token)
-		if errors.Is(authErr, ErrUnauthorized) {
-			continue
-		}
-		if authErr != nil {
+	if h.hasLocalDashboardAccess(r) {
+		localCtx := withLocalOwnerAuthority(r.Context(), h.homeID)
+		localProjects, lErr := h.localStore.ListLocalDashboardProjects(localCtx)
+		if lErr != nil {
 			http.Error(w, "project recognition unavailable", http.StatusInternalServerError)
 			return
 		}
-		repositories, listErr := h.store.FindRepositoriesByRemote(r.Context(), project, token, req.RemoteURL)
-		if errors.Is(listErr, ErrUnauthorized) {
-			continue
+		for _, lp := range localProjects {
+			if lp.Status != "ready" || lp.Owner == nil {
+				continue
+			}
+			repositories, listErr := h.store.FindRepositoriesByRemote(localCtx, lp.ProjectID, "", req.RemoteURL)
+			if errors.Is(listErr, ErrUnauthorized) {
+				continue
+			}
+			if listErr != nil {
+				http.Error(w, "project recognition unavailable", http.StatusInternalServerError)
+				return
+			}
+			for _, repository := range repositories {
+				suggestions = append(suggestions, ProjectSuggestion{ProjectID: lp.ProjectID, ProjectName: lp.ProjectName, RepositoryID: repository.ID, RepositoryName: repository.Name})
+			}
 		}
-		if listErr != nil {
-			http.Error(w, "project recognition unavailable", http.StatusInternalServerError)
+	} else {
+		_, session := h.session(r)
+		if session == nil || session.clientPin != webClientPin(r) {
+			jsonError(w, ErrUnauthorized)
 			return
 		}
-		for _, repository := range repositories {
-			suggestions = append(suggestions, ProjectSuggestion{ProjectID: project, ProjectName: principal.ProjectName, RepositoryID: repository.ID, RepositoryName: repository.Name})
+		for project, token := range session.projects {
+			if !h.clientProjectAllowed(r.Context(), session.clientPin, project) {
+				continue
+			}
+			principal, authErr := h.store.WhoAmI(r.Context(), project, token)
+			if errors.Is(authErr, ErrUnauthorized) {
+				continue
+			}
+			if authErr != nil {
+				http.Error(w, "project recognition unavailable", http.StatusInternalServerError)
+				return
+			}
+			repositories, listErr := h.store.FindRepositoriesByRemote(r.Context(), project, token, req.RemoteURL)
+			if errors.Is(listErr, ErrUnauthorized) {
+				continue
+			}
+			if listErr != nil {
+				http.Error(w, "project recognition unavailable", http.StatusInternalServerError)
+				return
+			}
+			for _, repository := range repositories {
+				suggestions = append(suggestions, ProjectSuggestion{ProjectID: project, ProjectName: principal.ProjectName, RepositoryID: repository.ID, RepositoryName: repository.Name})
+			}
 		}
 	}
 	sort.Slice(suggestions, func(i, j int) bool {
@@ -423,9 +639,9 @@ func jsonError(w http.ResponseWriter, err error) {
 // failures. Store methods use ErrUnauthorized for both an invalid credential
 // and a valid member lacking a capability, so validate the already-connected
 // credential before translating the latter to HTTP 403.
-func (h *WebHandler) projectError(w http.ResponseWriter, r *http.Request, project, token string, err error) {
+func (h *WebHandler) projectError(w http.ResponseWriter, backend WebBackend, ctx context.Context, project, token string, err error) {
 	if errors.Is(err, ErrUnauthorized) {
-		valid, authErr := h.store.CredentialValid(r.Context(), project, token)
+		valid, authErr := backend.CredentialValid(ctx, project, token)
 		if authErr == nil && valid {
 			http.Error(w, "this project role is not allowed to perform that action", http.StatusForbidden)
 			return
@@ -481,6 +697,21 @@ func (h *WebHandler) session(r *http.Request) (string, *browserSession) {
 		copy.projects[id] = token
 	}
 	return c.Value, copy
+}
+
+func (h *WebHandler) ensureDeviceSession(w http.ResponseWriter, r *http.Request) {
+	sid, s := h.session(r)
+	if s != nil && sid != "" {
+		return
+	}
+	newID, err := newSessionID()
+	if err != nil {
+		return
+	}
+	h.mu.Lock()
+	h.sessions[newID] = &browserSession{projects: map[string]string{}, clientPin: "", expires: time.Now().Add(12 * time.Hour)}
+	h.mu.Unlock()
+	h.setSessionCookie(w, r, newID)
 }
 func (h *WebHandler) login(w http.ResponseWriter, r *http.Request) {
 	var req struct {
@@ -542,7 +773,456 @@ func (h *WebHandler) logout(w http.ResponseWriter, r *http.Request) {
 	http.SetCookie(w, &http.Cookie{Name: "gossip_session", Value: "", Path: "/", HttpOnly: true, Secure: r.TLS != nil, SameSite: http.SameSiteStrictMode, MaxAge: -1})
 	jsonReply(w, map[string]bool{"logged_out": true})
 }
+
+type DashboardProjectLocal struct {
+	ProjectID      string      `json:"project_id"`
+	ProjectName    string      `json:"project_name"`
+	HomeID         string      `json:"home_id"`
+	Status         string      `json:"status"`
+	Owner          *Principal  `json:"owner,omitempty"`
+	Candidates     []Principal `json:"candidates,omitempty"`
+	PlanRevision   int         `json:"plan_revision"`
+	LastActivityAt int64       `json:"last_activity_at,omitempty"`
+}
+
+type DashboardProjectRemote struct {
+	ProjectID     string `json:"project_id"`
+	ProjectName   string `json:"project_name"`
+	HomeID        string `json:"home_id"`
+	PrincipalID   string `json:"principal_id"`
+	PrincipalName string `json:"principal_name,omitempty"`
+	Role          string `json:"role,omitempty"`
+	Endpoint      string `json:"endpoint"`
+	Status        string `json:"status"` // "connected", "unauthorized", "offline"
+	Error         string `json:"error,omitempty"`
+}
+
+type DashboardProjectsResponse struct {
+	LocalAccess bool                     `json:"local_access"`
+	HomeID      string                   `json:"home_id,omitempty"`
+	Profile     string                   `json:"profile,omitempty"`
+	Local       []DashboardProjectLocal  `json:"local"`
+	Remote      []DashboardProjectRemote `json:"remote"`
+}
+
+func (h *WebHandler) remoteConnections(ctx context.Context) ([]DeviceConnection, error) {
+	if h.registry == nil {
+		return nil, nil
+	}
+	connections, err := h.registry.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]DeviceConnection, 0)
+	for _, c := range connections {
+		if c.Profile != h.profile || c.Endpoint == "" {
+			continue
+		}
+		out = append(out, c)
+	}
+	return out, nil
+}
+
+func (h *WebHandler) resolveProjectCall(r *http.Request, projectID string) (backend WebBackend, queryBackend DashboardQueryBackend, targetHome string, token string, ctx context.Context, isRemote bool, statusCode int, statusMsg string) {
+	ctx = r.Context()
+	requestedHome := strings.TrimSpace(r.URL.Query().Get("home"))
+	_, s := h.session(r)
+	if s != nil && s.clientPin != webClientPin(r) {
+		return nil, nil, "", "", ctx, false, http.StatusForbidden, "this client certificate is not authorized for the selected project"
+	}
+	if !h.hasLocalDashboardAccess(r) {
+		if s == nil {
+			return nil, nil, "", "", ctx, false, http.StatusUnauthorized, "no project credential is connected to this browser; connect a credential for this project"
+		}
+		tok, ok := s.projects[projectID]
+		if !ok {
+			return nil, nil, "", "", ctx, false, http.StatusUnauthorized, "this project is not connected to the browser; connect its project credential first"
+		}
+		if !h.clientProjectAllowed(ctx, webClientPin(r), projectID) {
+			return nil, nil, "", "", ctx, false, http.StatusForbidden, "this client certificate is not authorized for the selected project"
+		}
+		return h.store, h.queryStore, "", tok, ctx, false, 0, ""
+	}
+
+	resolveRemoteConn := func(c DeviceConnection) (WebBackend, DashboardQueryBackend, string, string, context.Context, bool, int, string) {
+		tok, err := h.registry.Token(c)
+		if err != nil || tok == "" {
+			return nil, nil, "", "", ctx, true, http.StatusUnauthorized, "saved remote credential is unavailable"
+		}
+		remote, err := NewRemote(c.Endpoint, c.CAFile, c.CertFile, c.KeyFile, "")
+		if err != nil {
+			return nil, nil, "", "", ctx, true, http.StatusBadGateway, "remote connection is misconfigured: " + err.Error()
+		}
+		return remote, nil, c.HomeID, tok, r.Context(), true, 0, ""
+	}
+
+	if requestedHome != "" && requestedHome != h.homeID {
+		conns, err := h.remoteConnections(ctx)
+		if err != nil {
+			return nil, nil, "", "", ctx, true, http.StatusInternalServerError, "remote connections unavailable"
+		}
+		for _, c := range conns {
+			if c.HomeID == requestedHome && c.ProjectID == projectID {
+				return resolveRemoteConn(c)
+			}
+		}
+		return nil, nil, "", "", ctx, true, http.StatusUnauthorized, "remote project connection is not configured for this home"
+	}
+
+	if s != nil {
+		if explicitToken, ok := s.projects[projectID]; ok && explicitToken != "" {
+			return h.store, h.queryStore, h.homeID, explicitToken, ctx, false, 0, ""
+		}
+	}
+
+	localCtx := withLocalOwnerAuthority(ctx, h.homeID)
+	localProjects, err := h.localStore.ListLocalDashboardProjects(localCtx)
+	if err != nil {
+		return nil, nil, "", "", ctx, false, http.StatusInternalServerError, "local coordinator database unavailable"
+	}
+	for _, lp := range localProjects {
+		if lp.ProjectID == projectID {
+			if lp.Status != "ready" {
+				return nil, nil, "", "", ctx, false, http.StatusConflict, "this local project needs device-owner selection before opening"
+			}
+			return h.store, h.queryStore, h.homeID, "", localCtx, false, 0, ""
+		}
+	}
+
+	conns, err := h.remoteConnections(ctx)
+	if err == nil {
+		var matched []DeviceConnection
+		for _, c := range conns {
+			if c.ProjectID == projectID {
+				matched = append(matched, c)
+			}
+		}
+		if len(matched) == 1 {
+			return resolveRemoteConn(matched[0])
+		}
+		if len(matched) > 1 {
+			return nil, nil, "", "", ctx, true, http.StatusConflict, "multiple remote homes share this project ID; select one from Projects"
+		}
+	}
+	return nil, nil, "", "", ctx, false, http.StatusNotFound, "project not found on this device"
+}
+
+func (h *WebHandler) dashboardProjects(w http.ResponseWriter, r *http.Request) {
+	if !h.hasLocalDashboardAccess(r) {
+		sid, s := h.session(r)
+		if s == nil {
+			jsonReply(w, DashboardProjectsResponse{LocalAccess: false, Local: []DashboardProjectLocal{}, Remote: []DashboardProjectRemote{}})
+			return
+		}
+		if s.clientPin != webClientPin(r) {
+			clearSessionCookie(w, r)
+			h.mu.Lock()
+			delete(h.sessions, sid)
+			h.mu.Unlock()
+			jsonReply(w, DashboardProjectsResponse{LocalAccess: false, Local: []DashboardProjectLocal{}, Remote: []DashboardProjectRemote{}})
+			return
+		}
+		out := DashboardProjectsResponse{LocalAccess: false, Local: []DashboardProjectLocal{}, Remote: []DashboardProjectRemote{}}
+		for projectID, tok := range s.projects {
+			if !h.clientProjectAllowed(r.Context(), s.clientPin, projectID) {
+				continue
+			}
+			p, err := h.store.WhoAmI(r.Context(), projectID, tok)
+			if err != nil {
+				continue
+			}
+			ownerCopy := p
+			out.Local = append(out.Local, DashboardProjectLocal{
+				ProjectID:   p.ProjectID,
+				ProjectName: p.ProjectName,
+				Status:      "ready",
+				Owner:       &ownerCopy,
+			})
+		}
+		jsonReply(w, out)
+		return
+	}
+
+	h.ensureDeviceSession(w, r)
+	localCtx := withLocalOwnerAuthority(r.Context(), h.homeID)
+	localProjects, err := h.localStore.ListLocalDashboardProjects(localCtx)
+	if err != nil {
+		jsonError(w, err)
+		return
+	}
+	resp := DashboardProjectsResponse{
+		LocalAccess: true,
+		HomeID:      h.homeID,
+		Profile:     h.profile,
+		Local:       make([]DashboardProjectLocal, 0, len(localProjects)),
+		Remote:      []DashboardProjectRemote{},
+	}
+	for _, lp := range localProjects {
+		resp.Local = append(resp.Local, DashboardProjectLocal{
+			ProjectID:      lp.ProjectID,
+			ProjectName:    lp.ProjectName,
+			HomeID:         h.homeID,
+			Status:         lp.Status,
+			Owner:          lp.Owner,
+			Candidates:     lp.Candidates,
+			PlanRevision:   lp.PlanRevision,
+			LastActivityAt: lp.LastActivityAt,
+		})
+	}
+	conns, err := h.remoteConnections(r.Context())
+	if err == nil {
+		for _, c := range conns {
+			item := DashboardProjectRemote{
+				ProjectID:   c.ProjectID,
+				ProjectName: c.Name,
+				HomeID:      c.HomeID,
+				PrincipalID: c.PrincipalID,
+				Endpoint:    c.Endpoint,
+				Status:      "offline",
+			}
+			tok, tokErr := h.registry.Token(c)
+			if tokErr != nil || tok == "" {
+				item.Status = "unauthorized"
+				item.Error = "credential unavailable in device registry"
+				resp.Remote = append(resp.Remote, item)
+				continue
+			}
+			remote, remErr := NewRemote(c.Endpoint, c.CAFile, c.CertFile, c.KeyFile, "")
+			if remErr != nil {
+				item.Error = remErr.Error()
+				resp.Remote = append(resp.Remote, item)
+				continue
+			}
+			checkCtx, cancel := context.WithTimeout(r.Context(), 1500*time.Millisecond)
+			who, whoErr := remote.WhoAmI(checkCtx, c.ProjectID, tok)
+			cancel()
+			if whoErr != nil {
+				if errors.Is(whoErr, ErrUnauthorized) {
+					item.Status = "unauthorized"
+				} else {
+					item.Status = "offline"
+				}
+				item.Error = whoErr.Error()
+			} else {
+				item.Status = "connected"
+				if who.ProjectName != "" {
+					item.ProjectName = who.ProjectName
+				}
+				item.PrincipalName = who.Name
+				item.Role = who.Role
+			}
+			resp.Remote = append(resp.Remote, item)
+		}
+	}
+	jsonReply(w, resp)
+}
+
+func (h *WebHandler) inspectLocalCheckout(w http.ResponseWriter, r *http.Request) {
+	if !h.hasLocalDashboardAccess(r) {
+		http.Error(w, "checkout inspection is available only from the local dashboard", http.StatusForbidden)
+		return
+	}
+	var req struct {
+		LocalPath string `json:"local_path"`
+	}
+	if err := decodeBody(w, r, &req); err != nil {
+		jsonError(w, err)
+		return
+	}
+	observation, err := InspectGitWorkspace(r.Context(), strings.TrimSpace(req.LocalPath))
+	if err != nil {
+		jsonError(w, err)
+		return
+	}
+	repositoryName := filepath.Base(observation.Root)
+	if len(observation.RemoteHints) > 0 {
+		parts := strings.Split(observation.RemoteHints[0], "/")
+		if len(parts) > 0 && parts[len(parts)-1] != "" {
+			repositoryName = parts[len(parts)-1]
+		}
+	}
+	localCtx := withLocalOwnerAuthority(r.Context(), h.homeID)
+	matches, err := h.localStore.FindLocalProjectsByCheckout(localCtx, observation.Root, observation.RemoteHints)
+	if err != nil {
+		jsonError(w, err)
+		return
+	}
+	jsonReply(w, map[string]any{
+		"observation":      observation,
+		"repository_name":  repositoryName,
+		"suggested_name":   repositoryName,
+		"existing_matches": matches,
+	})
+}
+
+func (h *WebHandler) pickLocalCheckout(w http.ResponseWriter, r *http.Request) {
+	if !h.hasLocalDashboardAccess(r) {
+		http.Error(w, "folder picking is available only from the local dashboard", http.StatusForbidden)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
+	defer cancel()
+	path, selected, err := chooseLocalDirectory(ctx)
+	if err != nil {
+		jsonError(w, err)
+		return
+	}
+	jsonReply(w, map[string]any{"selected": selected, "local_path": path})
+}
+
+func (h *WebHandler) selectLocalOwner(w http.ResponseWriter, r *http.Request) {
+	if !h.hasLocalDashboardAccess(r) {
+		http.Error(w, "local owner selection is available only from the local dashboard", http.StatusForbidden)
+		return
+	}
+	project := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/projects/"), "/local-owner")
+	var req struct {
+		PrincipalID string `json:"principal_id"`
+	}
+	if err := decodeBody(w, r, &req); err != nil {
+		jsonError(w, err)
+		return
+	}
+	localCtx := withLocalOwnerAuthority(r.Context(), h.homeID)
+	p, err := h.localStore.SelectLocalDashboardOwner(localCtx, project, req.PrincipalID)
+	if err != nil {
+		jsonError(w, err)
+		return
+	}
+	jsonReply(w, p)
+}
+
+func (h *WebHandler) joinRemoteProject(w http.ResponseWriter, r *http.Request) {
+	if !h.hasLocalDashboardAccess(r) || h.registry == nil {
+		http.Error(w, "joining remote projects is available only from the local dashboard", http.StatusForbidden)
+		return
+	}
+	var req struct {
+		Name        string `json:"name"`
+		Endpoint    string `json:"endpoint"`
+		HomeID      string `json:"home_id"`
+		ProjectID   string `json:"project_id"`
+		PrincipalID string `json:"principal_id"`
+		Token       string `json:"token"`
+		CAFile      string `json:"ca_file"`
+		CertFile    string `json:"cert_file"`
+		KeyFile     string `json:"key_file"`
+		Checkout    string `json:"checkout"`
+	}
+	if err := decodeBody(w, r, &req); err != nil {
+		jsonError(w, err)
+		return
+	}
+	req.Endpoint = strings.TrimSpace(req.Endpoint)
+	req.ProjectID = strings.TrimSpace(req.ProjectID)
+	req.PrincipalID = strings.TrimSpace(req.PrincipalID)
+	req.HomeID = strings.TrimSpace(req.HomeID)
+	if req.Endpoint == "" || req.ProjectID == "" || req.PrincipalID == "" || req.Token == "" || req.CAFile == "" || req.CertFile == "" || req.KeyFile == "" {
+		http.Error(w, "endpoint, project_id, principal_id, token, ca_file, cert_file, and key_file are required", http.StatusBadRequest)
+		return
+	}
+	remote, err := NewRemote(req.Endpoint, req.CAFile, req.CertFile, req.KeyFile, "")
+	if err != nil {
+		jsonError(w, err)
+		return
+	}
+	checkCtx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	valid, err := remote.CredentialValid(checkCtx, req.ProjectID, req.Token)
+	if err != nil {
+		http.Error(w, "remote verification failed: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	if !valid {
+		http.Error(w, "remote project credential was rejected", http.StatusUnauthorized)
+		return
+	}
+	frame, err := remote.SyncProject(checkCtx, req.ProjectID, req.Token, 0, 1)
+	if err != nil {
+		http.Error(w, "remote project read failed: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	if frame.HomeInstanceID == "" {
+		http.Error(w, "remote coordinator did not report a stable home identity", http.StatusBadGateway)
+		return
+	}
+	if req.HomeID != "" && req.HomeID != frame.HomeInstanceID {
+		http.Error(w, "remote home identity does not match expected home_id", http.StatusConflict)
+		return
+	}
+	who, err := remote.WhoAmI(checkCtx, req.ProjectID, req.Token)
+	if err != nil {
+		http.Error(w, "remote identity verification failed: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	if who.ID != req.PrincipalID {
+		http.Error(w, "credential belongs to a different principal", http.StatusConflict)
+		return
+	}
+	name := strings.TrimSpace(req.Name)
+	if name == "" {
+		if who.ProjectName != "" {
+			name = who.ProjectName
+		} else {
+			name = req.ProjectID
+		}
+	}
+	conn := DeviceConnection{
+		Profile:     h.profile,
+		HomeID:      frame.HomeInstanceID,
+		ProjectID:   req.ProjectID,
+		PrincipalID: who.ID,
+		Name:        name,
+		Endpoint:    req.Endpoint,
+		CAFile:      req.CAFile,
+		CertFile:    req.CertFile,
+		KeyFile:     req.KeyFile,
+		Checkout:    strings.TrimSpace(req.Checkout),
+	}
+	if err := h.registry.Put(r.Context(), conn, req.Token); err != nil {
+		jsonError(w, err)
+		return
+	}
+	jsonReply(w, map[string]any{
+		"project_id":   req.ProjectID,
+		"project_name": name,
+		"home_id":      frame.HomeInstanceID,
+		"principal_id": who.ID,
+		"status":       "connected",
+	})
+}
+
 func (h *WebHandler) projects(w http.ResponseWriter, r *http.Request) {
+	if h.hasLocalDashboardAccess(r) {
+		h.ensureDeviceSession(w, r)
+		localCtx := withLocalOwnerAuthority(r.Context(), h.homeID)
+		localProjects, err := h.localStore.ListLocalDashboardProjects(localCtx)
+		if err != nil {
+			jsonError(w, err)
+			return
+		}
+		out := []Principal{}
+		seen := map[string]bool{}
+		for _, lp := range localProjects {
+			if lp.Status != "ready" || lp.Owner == nil {
+				continue
+			}
+			out = append(out, *lp.Owner)
+			seen[lp.ProjectID] = true
+		}
+		if _, s := h.session(r); s != nil {
+			for project, tok := range s.projects {
+				if seen[project] || tok == "" {
+					continue
+				}
+				if p, err := h.store.WhoAmI(r.Context(), project, tok); err == nil {
+					out = append(out, p)
+				}
+			}
+		}
+		jsonReply(w, out)
+		return
+	}
 	sid, s := h.session(r)
 	if s == nil {
 		jsonReply(w, []Principal{})
@@ -573,6 +1253,55 @@ func (h *WebHandler) projects(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *WebHandler) projectOverview(w http.ResponseWriter, r *http.Request) {
+	if h.hasLocalDashboardAccess(r) {
+		localCtx := withLocalOwnerAuthority(r.Context(), h.homeID)
+		localProjects, err := h.localStore.ListLocalDashboardProjects(localCtx)
+		if err != nil {
+			http.Error(w, "project overview unavailable", http.StatusInternalServerError)
+			return
+		}
+		out := make([]ProjectOverview, 0, len(localProjects))
+		for _, lp := range localProjects {
+			if lp.Status != "ready" || lp.Owner == nil {
+				continue
+			}
+			counts, err := h.store.TaskCounts(localCtx, lp.ProjectID, "")
+			if err != nil {
+				continue
+			}
+			plan, planErr := h.store.CurrentPlan(localCtx, lp.ProjectID, "")
+			if planErr != nil && !errors.Is(planErr, ErrNotFound) {
+				continue
+			}
+			events, err := h.store.RecentEvents(localCtx, lp.ProjectID, "", 3)
+			if err != nil {
+				continue
+			}
+			presence, err := h.store.ListAgentPresence(localCtx, lp.ProjectID, "")
+			if err != nil {
+				continue
+			}
+			activeAgents := 0
+			for _, agent := range presence {
+				if agent.Online {
+					activeAgents++
+				}
+			}
+			out = append(out, ProjectOverview{
+				ProjectID:    lp.ProjectID,
+				ProjectName:  lp.ProjectName,
+				PrincipalID:  lp.Owner.ID,
+				Principal:    lp.Owner.Name,
+				Role:         lp.Owner.Role,
+				ActiveAgents: activeAgents,
+				PlanRevision: plan.Revision,
+				Counts:       counts,
+				RecentEvents: events,
+			})
+		}
+		jsonReply(w, out)
+		return
+	}
 	sid, session := h.session(r)
 	// An empty browser session is a normal state after loading the dashboard or
 	// restarting it. Match /api/projects and let the UI render its empty state;
@@ -658,90 +1387,523 @@ func (h *WebHandler) project(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	project, action := parts[0], parts[1]
-	_, s := h.session(r)
-	if s == nil {
-		http.Error(w, "no project credential is connected to this browser; connect a credential for this project", http.StatusUnauthorized)
+	backend, queryBackend, _, token, ctx, isRemote, statusCode, statusMsg := h.resolveProjectCall(r, project)
+	if statusCode != 0 {
+		http.Error(w, statusMsg, statusCode)
 		return
 	}
-	token, ok := s.projects[project]
-	if !ok {
-		http.Error(w, "this project is not connected to the browser; connect its project credential first", http.StatusUnauthorized)
+	if action == "agent-dms" {
+		store, ok := backend.(*Store)
+		if !ok || isRemote {
+			http.NotFound(w, r)
+			return
+		}
+		switch r.Method {
+		case http.MethodGet:
+			before, _ := strconv.ParseInt(r.URL.Query().Get("before"), 10, 64)
+			items, err := store.AgentDMThreads(ctx, project, token, r.URL.Query().Get("agent"), before)
+			if err != nil {
+				jsonError(w, err)
+				return
+			}
+			jsonReply(w, items)
+		case http.MethodPost:
+			var input struct {
+				First  string `json:"first"`
+				Second string `json:"second"`
+				Before int64  `json:"before"`
+			}
+			if err := decodeBody(w, r, &input); err != nil {
+				jsonError(w, err)
+				return
+			}
+			items, err := store.InspectAgentDM(ctx, project, token, input.First, input.Second, input.Before)
+			if err != nil {
+				jsonError(w, err)
+				return
+			}
+			jsonReply(w, items)
+		default:
+			w.WriteHeader(http.StatusMethodNotAllowed)
+		}
 		return
 	}
-	ctx := r.Context()
-	if s.clientPin != webClientPin(r) || !h.clientProjectAllowed(ctx, webClientPin(r), project) {
-		http.Error(w, "this client certificate is not authorized for the selected project", http.StatusForbidden)
+	if action == "remote-invitations" {
+		store, ok := backend.(*Store)
+		if !ok || isRemote {
+			http.NotFound(w, r)
+			return
+		}
+		var value any
+		var err error
+		switch r.Method {
+		case http.MethodGet:
+			value, err = store.RemoteInvitations(ctx, project, token)
+		case http.MethodPost:
+			var req struct {
+				Operation string `json:"operation"`
+				ID        string `json:"id"`
+				Name      string `json:"name"`
+				Role      string `json:"role"`
+				Endpoint  string `json:"endpoint"`
+				ServerCA  string `json:"server_ca"`
+			}
+			if err = decodeBody(w, r, &req); err == nil {
+				switch req.Operation {
+				case "create":
+					if err = validateEnrollmentHome(req.Endpoint, req.ServerCA); err != nil {
+						break
+					}
+					var invite RemoteInvitation
+					var code string
+					invite, code, err = store.CreateRemoteInvitation(ctx, project, token, req.Name, req.Role)
+					value = map[string]any{"invitation": invite, "code": code, "endpoint": req.Endpoint, "server_ca": req.ServerCA, "home_id": store.InstanceID()}
+				case "approved", "denied", "cancelled":
+					err = store.DecideRemoteInvitation(ctx, project, token, req.ID, req.Operation)
+					value = map[string]bool{"ok": err == nil}
+				default:
+					err = errors.New("unknown invitation operation")
+				}
+			}
+		default:
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		if err != nil {
+			jsonError(w, err)
+			return
+		}
+		jsonReply(w, value)
 		return
+	}
+	if action == "project-roles" {
+		store, ok := backend.(*Store)
+		if !ok || isRemote {
+			http.NotFound(w, r)
+			return
+		}
+		var value any
+		var err error
+		switch r.Method {
+		case http.MethodGet:
+			value, err = store.ProjectRoles(ctx, project, token)
+		case http.MethodPost:
+			var req struct {
+				Operation  string      `json:"operation"`
+				Role       ProjectRole `json:"role"`
+				Principal  string      `json:"principal_id"`
+				Permission string      `json:"permission"`
+			}
+			if err = decodeBody(w, r, &req); err == nil {
+				switch req.Operation {
+				case "save":
+					value, err = store.SaveProjectRole(ctx, project, token, req.Role)
+				case "assign":
+					err = store.AssignProjectRole(ctx, project, token, req.Principal, req.Role.ID)
+				case "reset":
+					err = store.ResetPermissionOverride(ctx, project, token, req.Principal, req.Permission)
+				default:
+					err = errors.New("unknown project role operation")
+				}
+			}
+		default:
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		if err != nil {
+			jsonError(w, err)
+			return
+		}
+		if value == nil {
+			value = map[string]bool{"ok": true}
+		}
+		jsonReply(w, value)
+		return
+	}
+	if action == "context-links" {
+		store, ok := backend.(projectContextBackend)
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		switch r.Method {
+		case http.MethodGet:
+			links, err := store.ContextLinks(ctx, project, token, r.URL.Query().Get("target_kind"), r.URL.Query().Get("target_id"))
+			if err != nil {
+				jsonError(w, err)
+				return
+			}
+			jsonReply(w, links)
+		case http.MethodPost:
+			var link ContextLink
+			if err := decodeBody(w, r, &link); err != nil {
+				jsonError(w, err)
+				return
+			}
+			if err := store.LinkContext(ctx, project, token, link); err != nil {
+				jsonError(w, err)
+				return
+			}
+			jsonReply(w, link)
+		default:
+			w.WriteHeader(http.StatusMethodNotAllowed)
+		}
+		return
+	}
+	if action == "context" {
+		store, ok := backend.(projectContextBackend)
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		var value any
+		var err error
+		switch r.Method {
+		case http.MethodGet:
+			rev := 0
+			if raw := r.URL.Query().Get("revision"); raw != "" {
+				rev, err = strconv.Atoi(raw)
+			}
+			if err == nil {
+				value, err = store.ProjectContext(ctx, project, token, r.URL.Query().Get("id"), rev)
+			}
+		case http.MethodPost:
+			var input ContextRecord
+			if err = decodeBody(w, r, &input); err == nil {
+				value, err = store.PublishContext(ctx, project, token, input)
+			}
+		default:
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		if err != nil {
+			jsonError(w, err)
+			return
+		}
+		jsonReply(w, value)
+		return
+	}
+	if action == "personal-items" {
+		store, ok := backend.(personalItemsBackend)
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		switch r.Method {
+		case http.MethodGet:
+			items, err := store.PersonalItems(ctx, project, token)
+			if err != nil {
+				jsonError(w, err)
+				return
+			}
+			if !isRemote && queryBackend != nil {
+				if legacy, err := queryBackend.ListPersonalChecklists(ctx, project, token); err == nil {
+					items.Items = append(items.Items, legacy.Items...)
+				}
+			}
+			jsonReply(w, items)
+		case http.MethodPost:
+			var input PersonalItemInput
+			if err := decodeBody(w, r, &input); err != nil {
+				jsonError(w, err)
+				return
+			}
+			item, err := store.SavePersonalItem(ctx, project, token, input)
+			if err != nil {
+				jsonError(w, err)
+				return
+			}
+			jsonReply(w, item)
+		default:
+			w.WriteHeader(http.StatusMethodNotAllowed)
+		}
+		return
+	}
+	var channelBackend ChannelBackend
+	if !isRemote {
+		channelBackend = h.channelStore
 	}
 	if r.Method == "GET" {
 		var v any
 		var err error
 		after, _ := strconv.ParseInt(r.URL.Query().Get("after"), 10, 64)
 		switch action {
+		case "channels":
+			if channelBackend != nil {
+				v, err = channelBackend.ListChannels(ctx, project, token)
+			} else {
+				v = []ProjectChannel{}
+			}
+		case "identity":
+			v, err = backend.WhoAmI(ctx, project, token)
 		case "plan":
-			v, err = h.store.CurrentPlan(ctx, project, token)
+			v, err = backend.CurrentPlan(ctx, project, token)
+		case "plan-variants":
+			variants, ok := backend.(interface {
+				PlanVariants(context.Context, string, string, int) ([]PlanVariant, error)
+			})
+			if !ok {
+				http.NotFound(w, r)
+				return
+			}
+			revision, parseErr := strconv.Atoi(r.URL.Query().Get("revision"))
+			if parseErr != nil || revision < 1 {
+				err = errors.New("invalid plan revision")
+				break
+			}
+			v, err = variants.PlanVariants(ctx, project, token, revision)
+		case "plan-threads":
+			if planBackend, ok := backend.(interface {
+				ListPlanThreads(context.Context, string, string) ([]PlanThread, error)
+			}); ok {
+				v, err = planBackend.ListPlanThreads(ctx, project, token)
+			} else {
+				v = []PlanThread{}
+			}
+		case "plans":
+			if planBackend, ok := backend.(interface {
+				ListPlanHistory(context.Context, string, string) ([]Plan, error)
+			}); ok {
+				v, err = planBackend.ListPlanHistory(ctx, project, token)
+			} else {
+				var p Plan
+				p, err = backend.CurrentPlan(ctx, project, token)
+				if errors.Is(err, ErrNotFound) {
+					v, err = []Plan{}, nil
+				} else if err == nil {
+					v = []Plan{p}
+				}
+			}
+		case "search":
+			q := r.URL.Query().Get("q")
+			if queryBackend != nil {
+				v, err = queryBackend.SearchProject(ctx, project, token, q)
+			} else {
+				res := ProjectSearchResult{Query: q, Tasks: []Task{}, Plans: []Plan{}, Messages: []Message{}, Events: []Event{}}
+				if page, e := backend.SearchTasks(ctx, project, token, TaskFilter{Query: q, Limit: 40}); e == nil {
+					res.Tasks = page.Tasks
+				} else {
+					err = e
+					break
+				}
+				lq := strings.ToLower(strings.TrimSpace(q))
+				if lq != "" {
+					if p, e := backend.CurrentPlan(ctx, project, token); e == nil && strings.Contains(strings.ToLower(p.Body), lq) {
+						res.Plans = append(res.Plans, p)
+					}
+					if msgs, e := backend.ListMessages(ctx, project, token, 0, 100); e == nil {
+						for _, m := range msgs {
+							if strings.Contains(strings.ToLower(m.Body), lq) || strings.Contains(strings.ToLower(m.Subject), lq) {
+								res.Messages = append(res.Messages, m)
+							}
+						}
+					}
+					if evts, e := backend.RecentEvents(ctx, project, token, 100); e == nil {
+						for _, ev := range evts {
+							if strings.Contains(strings.ToLower(ev.Kind), lq) || strings.Contains(strings.ToLower(ev.EntityID), lq) || strings.Contains(strings.ToLower(string(ev.Payload)), lq) {
+								res.Events = append(res.Events, ev)
+							}
+						}
+					}
+				}
+				v = res
+			}
+			if err == nil {
+				if search, ok := backend.(projectContextBackend); ok {
+					if result, ok := v.(ProjectSearchResult); ok {
+						result.Context, err = search.SearchContext(ctx, project, token, q)
+						v = result
+					}
+				}
+			}
+		case "graphify":
+			q := r.URL.Query().Get("q")
+			if queryBackend != nil && !isRemote {
+				v, err = queryBackend.InspectGraphify(ctx, project, token, q)
+			} else {
+				_, err = backend.WhoAmI(ctx, project, token)
+				if err == nil {
+					v = GraphifyInspection{
+						Status:       "unavailable",
+						Reason:       "Graphify inspection is only available for local workspaces on this device.",
+						MatchedNodes: []GraphifyNodeHit{},
+					}
+				}
+			}
+		case "checklists":
+			if queryBackend != nil && !isRemote {
+				v, err = queryBackend.ListPersonalChecklists(ctx, project, token)
+			} else {
+				_, err = backend.WhoAmI(ctx, project, token)
+				if err == nil {
+					v = PersonalChecklistResponse{
+						Available: false,
+						Reason:    "Personal checklists are only inspected from local project workspaces.",
+						Items:     []PersonalChecklistEntry{},
+					}
+				}
+			}
 		case "tasks":
-			v, err = h.store.ListTasks(ctx, project, token, 200)
+			v, err = backend.ListTasks(ctx, project, token, 200)
 		case "task":
-			v, err = h.store.GetTask(ctx, project, token, r.URL.Query().Get("id"))
+			v, err = backend.GetTask(ctx, project, token, r.URL.Query().Get("id"))
 		case "attempt":
 			number, parseErr := strconv.Atoi(r.URL.Query().Get("number"))
 			if parseErr != nil || number < 1 {
 				err = errors.New("valid attempt number required")
 			} else {
-				v, err = h.store.GetAttempt(ctx, project, token, r.URL.Query().Get("id"), number)
+				v, err = backend.GetAttempt(ctx, project, token, r.URL.Query().Get("id"), number)
 			}
 		case "task-search":
-			v, err = h.store.SearchTasks(ctx, project, token, TaskFilter{Status: r.URL.Query().Get("status"), Kind: r.URL.Query().Get("kind"), Assignee: r.URL.Query().Get("assignee"), Query: r.URL.Query().Get("query"), Cursor: r.URL.Query().Get("cursor"), Limit: 50})
+			revision := 0
+			if raw := r.URL.Query().Get("revision"); raw != "" {
+				revision, err = strconv.Atoi(raw)
+				if err != nil || revision < 1 {
+					err = errors.New("invalid plan revision")
+					break
+				}
+			}
+			v, err = backend.SearchTasks(ctx, project, token, TaskFilter{Revision: revision, Status: r.URL.Query().Get("status"), Kind: r.URL.Query().Get("kind"), Assignee: r.URL.Query().Get("assignee"), Query: r.URL.Query().Get("query"), Cursor: r.URL.Query().Get("cursor"), Limit: 50})
 		case "task-counts":
-			v, err = h.store.TaskCounts(ctx, project, token)
+			v, err = backend.TaskCounts(ctx, project, token)
 		case "settings":
-			v, err = h.store.GetSettings(ctx, project, token)
+			v, err = backend.GetSettings(ctx, project, token)
 		case "budget":
-			v, err = h.store.GetBudget(ctx, project, token)
+			v, err = backend.GetBudget(ctx, project, token)
 		case "agents":
-			v, err = h.store.ListPrincipals(ctx, project, token)
+			v, err = backend.ListPrincipals(ctx, project, token)
 		case "presence":
-			v, err = h.store.ListAgentPresence(ctx, project, token)
+			v, err = backend.ListAgentPresence(ctx, project, token)
 		case "certificates":
-			v, err = h.store.ListCertificateGrants(ctx, project, token)
+			v, err = backend.ListCertificateGrants(ctx, project, token)
 		case "certificate-invitations":
-			v, err = h.store.ListCertificateInvitations(ctx, project, token)
+			v, err = backend.ListCertificateInvitations(ctx, project, token)
 		case "replicas":
-			v, err = h.store.ListProjectReplicas(ctx, project, token)
+			v, err = backend.ListProjectReplicas(ctx, project, token)
 		case "permissions":
-			v, err = h.store.ListPermissions(ctx, project, token)
+			v, err = backend.ListPermissions(ctx, project, token)
 		case "roles":
-			v, err = h.store.ListWorkRoles(ctx, project, token)
+			v, err = backend.ListWorkRoles(ctx, project, token)
 		case "role-presets":
-			_, err = h.store.WhoAmI(ctx, project, token)
+			_, err = backend.WhoAmI(ctx, project, token)
 			if err == nil {
 				v = WorkRolePresets()
 			}
 		case "repositories":
-			v, err = h.store.ListRepositories(ctx, project, token)
+			v, err = backend.ListRepositories(ctx, project, token)
 		case "workspaces":
-			v, err = h.store.ListWorkspaces(ctx, project, token)
+			v, err = backend.ListWorkspaces(ctx, project, token)
+		case "file-reservations":
+			v = []FileReservation{}
+			if h.registry == nil || isRemote {
+				break
+			}
+			var actor Principal
+			actor, err = backend.WhoAmI(ctx, project, token)
+			if err != nil {
+				break
+			}
+			var connections []DeviceConnection
+			connections, err = h.registry.List(r.Context())
+			if err != nil {
+				break
+			}
+			for _, c := range connections {
+				if c.Profile != h.profile || c.HomeID != h.homeID || c.ProjectID != project || c.PrincipalID != actor.ID || c.Endpoint != "" || c.Checkout == "" {
+					continue
+				}
+				var reservations []FileReservation
+				reservations, err = h.registry.FileReservations(r.Context(), c, "list", "", nil)
+				for i := range reservations {
+					reservations[i].Handle = ""
+				}
+				if err == nil {
+					v = reservations
+				}
+				break
+			}
+
 		case "events":
 			if r.URL.Query().Get("recent") == "1" {
-				v, err = h.store.RecentEvents(ctx, project, token, 100)
+				v, err = backend.RecentEvents(ctx, project, token, 100)
 			} else {
-				v, err = h.store.ReadEvents(ctx, project, token, after, 100)
+				v, err = backend.ReadEvents(ctx, project, token, after, 100)
 			}
 		case "retention":
-			v, err = h.store.EventRetentionStatus(ctx, project, token)
-		case "messages":
-			if r.URL.Query().Get("recent") == "1" {
-				v, err = h.store.RecentMessages(ctx, project, token, 100)
-			} else {
-				v, err = h.store.ListMessages(ctx, project, token, after, 100)
+			v, err = backend.EventRetentionStatus(ctx, project, token)
+		case "conversation-search":
+			searcher, ok := backend.(interface {
+				SearchConversations(context.Context, string, string, string) ([]Message, error)
+			})
+			if !ok {
+				http.NotFound(w, r)
+				return
 			}
+			v, err = searcher.SearchConversations(ctx, project, token, r.URL.Query().Get("q"))
+		case "conversation-message":
+			reader, ok := backend.(interface {
+				ConversationMessage(context.Context, string, string, string) (Message, error)
+			})
+			if !ok {
+				http.NotFound(w, r)
+				return
+			}
+			v, err = reader.ConversationMessage(ctx, project, token, r.URL.Query().Get("id"))
+		case "conversation-activity":
+			activityBackend, ok := backend.(interface {
+				ConversationActivity(context.Context, string, string) ([]ConversationActivity, error)
+			})
+			if !ok {
+				http.NotFound(w, r)
+				return
+			}
+			v, err = activityBackend.ConversationActivity(ctx, project, token)
+		case "messages":
+			before := int64(0)
+			if raw := r.URL.Query().Get("before"); raw != "" {
+				var parseErr error
+				before, parseErr = strconv.ParseInt(raw, 10, 64)
+				if parseErr != nil {
+					err = errors.New("invalid message cursor")
+					break
+				}
+			}
+			limit := 100
+			if raw := r.URL.Query().Get("limit"); raw != "" {
+				if parsed, e := strconv.Atoi(raw); e != nil {
+					err = errors.New("invalid message limit")
+					break
+				} else {
+					limit = parsed
+				}
+			}
+			if chID := strings.TrimSpace(r.URL.Query().Get("channel")); chID != "" {
+				if channelBackend == nil {
+					err = errors.New("group channels are unavailable on this backend")
+					break
+				}
+				v, err = channelBackend.ChannelMessages(ctx, project, token, chID, after, before, limit, r.URL.Query().Get("recent") == "1")
+				break
+			}
+			v, err = backend.ConversationMessages(ctx, project, token, r.URL.Query().Get("recipient"), after, before, limit, r.URL.Query().Get("recent") == "1")
 		case "acknowledgments":
-			v, err = h.store.MessageAcknowledgments(ctx, project, token, r.URL.Query().Get("id"))
+			v, err = backend.MessageAcknowledgments(ctx, project, token, r.URL.Query().Get("id"))
 		case "report":
-			v, err = h.store.GetReport(ctx, project, token, r.URL.Query().Get("id"))
+			if taskID := r.URL.Query().Get("task"); taskID != "" {
+				reportBackend, ok := backend.(interface {
+					GetAttemptReport(context.Context, string, string, string, int) (Report, error)
+				})
+				if !ok {
+					http.NotFound(w, r)
+					return
+				}
+				attempt, _ := strconv.Atoi(r.URL.Query().Get("attempt"))
+				v, err = reportBackend.GetAttemptReport(ctx, project, token, taskID, attempt)
+			} else {
+				v, err = backend.GetReport(ctx, project, token, r.URL.Query().Get("id"))
+			}
 		case "candidate":
-			v, err = h.store.GetCandidate(ctx, project, token, r.URL.Query().Get("id"))
+			v, err = backend.GetCandidate(ctx, project, token, r.URL.Query().Get("id"))
 		case "candidate-page":
 			offset, parseErr := strconv.Atoi(r.URL.Query().Get("offset"))
 			if parseErr != nil && r.URL.Query().Get("offset") != "" {
@@ -751,30 +1913,30 @@ func (h *WebHandler) project(w http.ResponseWriter, r *http.Request) {
 				if limitErr != nil || r.URL.Query().Get("limit") == "" {
 					limit = 4096
 				}
-				v, err = h.store.GetCandidatePage(ctx, project, token, r.URL.Query().Get("id"), offset, limit)
+				v, err = backend.GetCandidatePage(ctx, project, token, r.URL.Query().Get("id"), offset, limit)
 			}
 		case "candidates":
-			v, err = h.store.ListCandidates(ctx, project, token, r.URL.Query().Get("task_id"), 50)
+			v, err = backend.ListCandidates(ctx, project, token, r.URL.Query().Get("task_id"), 50)
 		case "integrations":
-			v, err = h.store.ListIntegrations(ctx, project, token, 100)
+			v, err = backend.ListIntegrations(ctx, project, token, 100)
 		case "legacy-imports":
-			v, err = h.store.ListLegacyImports(ctx, project, token)
+			v, err = backend.ListLegacyImports(ctx, project, token)
 		case "legacy-records":
 			limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
 			if limit < 1 || limit > 50 {
 				limit = 20
 			}
-			v, err = h.store.ReadLegacyRecords(ctx, project, token, r.URL.Query().Get("import_id"), r.URL.Query().Get("type"), r.URL.Query().Get("after"), limit)
+			v, err = backend.ReadLegacyRecords(ctx, project, token, r.URL.Query().Get("import_id"), r.URL.Query().Get("type"), r.URL.Query().Get("after"), limit)
 		case "legacy-record":
 			offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
 			maxChars, _ := strconv.Atoi(r.URL.Query().Get("max_chars"))
-			v, err = h.store.ReadLegacyRecordChunk(ctx, project, token, r.URL.Query().Get("import_id"), r.URL.Query().Get("type"), r.URL.Query().Get("id"), offset, maxChars)
+			v, err = backend.ReadLegacyRecordChunk(ctx, project, token, r.URL.Query().Get("import_id"), r.URL.Query().Get("type"), r.URL.Query().Get("id"), offset, maxChars)
 		default:
 			http.NotFound(w, r)
 			return
 		}
 		if err != nil {
-			h.projectError(w, r, project, token, err)
+			h.projectError(w, backend, ctx, project, token, err)
 			return
 		}
 		jsonReply(w, v)
@@ -785,44 +1947,51 @@ func (h *WebHandler) project(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Operation       string             `json:"operation"`
-		ID              string             `json:"id"`
-		Revision        int                `json:"revision"`
-		Title           string             `json:"title"`
-		Description     string             `json:"description"`
-		Kind            string             `json:"kind"`
-		Contract        ReportContract     `json:"contract"`
-		Dependencies    []string           `json:"dependencies"`
-		Body            string             `json:"body"`
-		Recipient       string             `json:"recipient"`
-		Subject         string             `json:"subject"`
-		ThreadID        string             `json:"thread_id"`
-		Attempt         int                `json:"attempt"`
-		Baseline        string             `json:"baseline"`
-		Digest          string             `json:"digest"`
-		RepositoryID    string             `json:"repository_id"`
-		RemoteURL       string             `json:"remote_url"`
-		WorkspaceID     string             `json:"workspace_id"`
-		Name            string             `json:"name"`
-		Role            string             `json:"role"`
-		PrincipalID     string             `json:"principal_id"`
-		Credential      string             `json:"credential_token"`
-		NodeLabel       string             `json:"node_label"`
-		LocalPath       string             `json:"local_path"`
-		Branch          string             `json:"branch"`
-		Head            string             `json:"head"`
-		Dirty           bool               `json:"dirty"`
-		Settings        Settings           `json:"settings"`
-		RequestID       string             `json:"request_id"`
-		Amount          int64              `json:"amount"`
-		ExpiresAt       int64              `json:"expires_at"`
-		ThroughSequence int64              `json:"through_sequence"`
-		Fingerprint     string             `json:"fingerprint"`
-		InvitationToken string             `json:"invitation_token"`
-		Permission      string             `json:"permission"`
-		CandidateIDs    []string           `json:"candidate_ids"`
-		Checks          []IntegrationCheck `json:"checks"`
-		Observation     GitObservation     `json:"observation"`
+		Operation        string             `json:"operation"`
+		ID               string             `json:"id"`
+		ParentID         string             `json:"parent_id"`
+		Revision         int                `json:"revision"`
+		ExpectedRevision int                `json:"expected_revision"`
+		Title            string             `json:"title"`
+		Description      string             `json:"description"`
+		Kind             string             `json:"kind"`
+		Contract         ReportContract     `json:"contract"`
+		Dependencies     []string           `json:"dependencies"`
+		Body             string             `json:"body"`
+		Recipient        string             `json:"recipient"`
+		Subject          string             `json:"subject"`
+		ThreadID         string             `json:"thread_id"`
+		Attempt          int                `json:"attempt"`
+		Baseline         string             `json:"baseline"`
+		Digest           string             `json:"digest"`
+		RepositoryID     string             `json:"repository_id"`
+		RemoteURL        string             `json:"remote_url"`
+		WorkspaceID      string             `json:"workspace_id"`
+		Name             string             `json:"name"`
+		Role             string             `json:"role"`
+		PrincipalID      string             `json:"principal_id"`
+		Credential       string             `json:"credential_token"`
+		NodeLabel        string             `json:"node_label"`
+		LocalPath        string             `json:"local_path"`
+		Branch           string             `json:"branch"`
+		Head             string             `json:"head"`
+		Dirty            bool               `json:"dirty"`
+		Settings         Settings           `json:"settings"`
+		RequestID        string             `json:"request_id"`
+		Amount           int64              `json:"amount"`
+		ExpiresAt        int64              `json:"expires_at"`
+		ThroughSequence  int64              `json:"through_sequence"`
+		Fingerprint      string             `json:"fingerprint"`
+		InvitationToken  string             `json:"invitation_token"`
+		Permission       string             `json:"permission"`
+		CandidateIDs     []string           `json:"candidate_ids"`
+		Checks           []IntegrationCheck `json:"checks"`
+		Observation      GitObservation     `json:"observation"`
+		ChannelID        string             `json:"channel_id"`
+		Topic            string             `json:"topic"`
+		Members          []string           `json:"members"`
+		AutoSuffix       bool               `json:"auto_suffix"`
+		Announce         bool               `json:"announce"`
 	}
 	if err := decodeBody(w, r, &req); err != nil {
 		jsonError(w, err)
@@ -831,24 +2000,76 @@ func (h *WebHandler) project(w http.ResponseWriter, r *http.Request) {
 	var v any
 	var err error
 	switch action {
+	case "plan-variants":
+		variants, ok := backend.(interface {
+			CreatePlanVariant(context.Context, string, string, int, string, string) (PlanVariant, error)
+		})
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		v, err = variants.CreatePlanVariant(ctx, project, token, req.Revision, req.Name, req.Body)
 	case "plan":
-		if req.Operation == "acknowledge" {
-			err = h.store.AcknowledgePlan(ctx, project, token, req.Revision)
+		if req.Operation == "delete_thread" {
+			planDelete, ok := backend.(interface {
+				DeletePlanThread(context.Context, string, string, string, int) error
+			})
+			if !ok {
+				http.NotFound(w, r)
+				return
+			}
+			err = planDelete.DeletePlanThread(ctx, project, token, req.ID, req.ExpectedRevision)
+			v = map[string]bool{"deleted": err == nil}
+		} else if req.Operation == "delete" {
+			planDelete, ok := backend.(interface {
+				DeletePlanRevision(context.Context, string, string, int, int) error
+			})
+			if !ok {
+				http.NotFound(w, r)
+				return
+			}
+			err = planDelete.DeletePlanRevision(ctx, project, token, req.Revision, req.ExpectedRevision)
+			v = map[string]bool{"deleted": err == nil}
+		} else if req.Operation == "complete" {
+			planBackend, ok := backend.(interface {
+				CompletePlan(context.Context, string, string, int) error
+			})
+			if !ok {
+				http.NotFound(w, r)
+				return
+			}
+			err = planBackend.CompletePlan(ctx, project, token, req.Revision)
+			v = map[string]bool{"completed": err == nil}
+		} else if req.Operation == "acknowledge" {
+			err = backend.AcknowledgePlan(ctx, project, token, req.Revision)
 			v = map[string]bool{"acknowledged": err == nil}
 		} else if req.Operation == "" || req.Operation == "publish" {
-			v, err = h.store.PublishPlan(ctx, project, token, req.Body, req.Revision)
+			v, err = backend.PublishPlan(ctx, project, token, req.Body, req.Revision)
 		} else {
 			err = errors.New("unknown plan operation")
 		}
+	case "plan-threads":
+		if req.Operation != "create" {
+			err = errors.New("unknown plan thread operation")
+			break
+		}
+		planBackend, ok := backend.(interface {
+			CreatePlan(context.Context, string, string, string, string, int) (Plan, error)
+		})
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		v, err = planBackend.CreatePlan(ctx, project, token, req.Name, req.Body, req.ExpectedRevision)
 	case "tasks":
 		switch req.Operation {
 		case "create":
-			v, err = h.store.CreateTaskWithID(ctx, project, token, req.RequestID, req.Revision, req.Title, req.Description, req.Kind, req.Contract, req.Dependencies)
+			v, err = backend.CreateTaskWithID(ctx, project, token, req.RequestID, req.Revision, req.Title, req.Description, req.Kind, req.Contract, req.Dependencies)
 		case "request_review":
-			err = h.store.RequestReview(ctx, project, token, req.ID, req.Attempt)
+			err = backend.RequestReview(ctx, project, token, req.ID, req.Attempt)
 			v = map[string]bool{"requested": err == nil}
 		case "claim":
-			settings, e := h.store.GetSettings(ctx, project, token)
+			settings, e := backend.GetSettings(ctx, project, token)
 			if e != nil {
 				err = e
 				break
@@ -857,13 +2078,13 @@ func (h *WebHandler) project(w http.ResponseWriter, r *http.Request) {
 			if lease > 300 {
 				lease = 300
 			}
-			v, err = h.store.ClaimTaskInWorkspace(ctx, project, token, req.ID, req.WorkspaceID, time.Duration(lease)*time.Second)
+			v, err = backend.ClaimTaskInWorkspace(ctx, project, token, req.ID, req.WorkspaceID, time.Duration(lease)*time.Second)
 		case "assign":
-			v, err = h.store.AssignTask(ctx, project, token, req.ID, req.Recipient)
+			v, err = backend.AssignTask(ctx, project, token, req.ID, req.Recipient)
 		case "block", "resolve", "cancel":
-			v, err = h.store.TransitionTask(ctx, project, token, req.ID, req.Operation, req.Body, req.Attempt)
+			v, err = backend.TransitionTask(ctx, project, token, req.ID, req.Operation, req.Body, req.Attempt)
 		case "renew":
-			settings, e := h.store.GetSettings(ctx, project, token)
+			settings, e := backend.GetSettings(ctx, project, token)
 			if e != nil {
 				err = e
 				break
@@ -872,33 +2093,38 @@ func (h *WebHandler) project(w http.ResponseWriter, r *http.Request) {
 			if lease > 300 {
 				lease = 300
 			}
-			v, err = h.store.RenewLease(ctx, project, token, req.ID, req.Attempt, time.Duration(lease)*time.Second)
+			v, err = backend.RenewLease(ctx, project, token, req.ID, req.Attempt, time.Duration(lease)*time.Second)
 		case "reconcile":
-			v, err = h.store.ReconcileTask(ctx, project, token, req.ID, req.Revision)
+			v, err = backend.ReconcileTask(ctx, project, token, req.ID, req.Revision)
 		default:
 			err = errors.New("unknown task operation")
 		}
 	case "agents":
+		if req.Operation == "parent" {
+			err = backend.SetAgentParent(ctx, project, token, req.ID, req.ParentID)
+			v = map[string]bool{"updated": err == nil}
+			break
+		}
 		if req.Operation == "invite" {
-			v, err = h.store.AddPreparedPrincipal(ctx, project, token, req.Name, req.Role, Credential{PrincipalID: req.PrincipalID, Token: req.Credential})
+			v, err = backend.AddPreparedPrincipal(ctx, project, token, req.Name, req.Role, Credential{PrincipalID: req.PrincipalID, Token: req.Credential})
 			break
 		}
 		if req.Operation == "invite_remote" {
-			v, err = h.store.AddPreparedRemotePrincipal(ctx, project, token, req.Name, req.Role, Credential{PrincipalID: req.PrincipalID, Token: req.Credential}, req.Fingerprint, req.ExpiresAt)
+			v, err = backend.AddPreparedRemotePrincipal(ctx, project, token, req.Name, req.Role, Credential{PrincipalID: req.PrincipalID, Token: req.Credential}, req.Fingerprint, req.ExpiresAt)
 			break
 		}
 		if req.Operation != "revoke" {
 			err = errors.New("unknown agent operation")
 			break
 		}
-		err = h.store.RevokePrincipal(ctx, project, token, req.ID)
+		err = backend.RevokePrincipal(ctx, project, token, req.ID)
 		v = map[string]bool{"revoked": err == nil}
 	case "certificates":
 		switch req.Operation {
 		case "grant":
-			v, err = h.store.AddCertificateGrantUntil(ctx, project, token, req.Fingerprint, req.ExpiresAt)
+			v, err = backend.AddCertificateGrantUntil(ctx, project, token, req.Fingerprint, req.ExpiresAt)
 		case "revoke":
-			err = h.store.RevokeCertificateGrant(ctx, project, token, req.Fingerprint)
+			err = backend.RevokeCertificateGrant(ctx, project, token, req.Fingerprint)
 			v = map[string]bool{"revoked": err == nil}
 		default:
 			err = errors.New("unknown certificate operation")
@@ -906,9 +2132,9 @@ func (h *WebHandler) project(w http.ResponseWriter, r *http.Request) {
 	case "certificate-invitations":
 		switch req.Operation {
 		case "create":
-			v, err = h.store.AddPreparedCertificateInvitation(ctx, project, token, req.ID, req.InvitationToken, req.Fingerprint, req.ExpiresAt)
+			v, err = backend.AddPreparedCertificateInvitation(ctx, project, token, req.ID, req.InvitationToken, req.Fingerprint, req.ExpiresAt)
 		case "revoke":
-			err = h.store.RevokeCertificateInvitation(ctx, project, token, req.ID)
+			err = backend.RevokeCertificateInvitation(ctx, project, token, req.ID)
 			v = map[string]bool{"revoked": err == nil}
 		default:
 			err = errors.New("unknown certificate invitation operation")
@@ -916,80 +2142,130 @@ func (h *WebHandler) project(w http.ResponseWriter, r *http.Request) {
 	case "permissions":
 		switch req.Operation {
 		case "grant":
-			v, err = h.store.GrantPermission(ctx, project, token, req.PrincipalID, req.Permission)
+			v, err = backend.GrantPermission(ctx, project, token, req.PrincipalID, req.Permission)
 		case "revoke":
-			err = h.store.RevokePermission(ctx, project, token, req.PrincipalID, req.Permission)
+			err = backend.RevokePermission(ctx, project, token, req.PrincipalID, req.Permission)
 			v = map[string]bool{"revoked": err == nil}
 		default:
 			err = errors.New("unknown permission operation")
 		}
+	case "channels":
+		if channelBackend == nil {
+			err = errors.New("group channels are unavailable on this backend")
+			break
+		}
+		switch req.Operation {
+		case "", "create":
+			v, err = channelBackend.CreateChannel(ctx, project, token, req.Name, req.Topic, req.Members, req.AutoSuffix, req.Announce)
+		case "ask_join":
+			v, err = channelBackend.RequestJoinChannel(ctx, project, token, req.ChannelID, req.Body, req.Announce)
+		case "invite":
+			v, err = channelBackend.InviteToChannel(ctx, project, token, req.ChannelID, req.Recipient, req.Body, req.Announce)
+		case "join", "approve", "decline", "leave", "remove":
+			v, err = channelBackend.RespondChannelMembership(ctx, project, token, req.ChannelID, req.Recipient, req.Operation)
+		default:
+			err = errors.New("unknown channel operation")
+		}
 	case "messages":
 		if req.Operation == "acknowledge" {
-			v, err = h.store.AcknowledgeMessage(ctx, project, token, req.ID)
+			v, err = backend.AcknowledgeMessage(ctx, project, token, req.ID)
 		} else if req.Operation == "" || req.Operation == "send" {
-			v, err = h.store.SendMessageWithID(ctx, project, token, req.Recipient, req.ThreadID, req.Subject, req.Body, req.RequestID)
+			threadID := req.ThreadID
+			if strings.TrimSpace(req.ChannelID) != "" && threadID == "" {
+				threadID = channelThreadID(req.ChannelID)
+			}
+			v, err = backend.SendMessageWithID(ctx, project, token, req.Recipient, threadID, req.Subject, req.Body, req.RequestID)
 		} else {
 			err = errors.New("unknown message operation")
 		}
 	case "repositories":
 		switch req.Operation {
 		case "add_hint":
-			v, err = h.store.AddRepositoryRemoteHint(ctx, project, token, req.RepositoryID, req.RemoteURL)
+			v, err = backend.AddRepositoryRemoteHint(ctx, project, token, req.RepositoryID, req.RemoteURL)
 		case "remove_hint":
-			err = h.store.RemoveRepositoryRemoteHint(ctx, project, token, req.RepositoryID, req.RemoteURL)
+			err = backend.RemoveRepositoryRemoteHint(ctx, project, token, req.RepositoryID, req.RemoteURL)
 			v = map[string]bool{"removed": err == nil}
 		case "":
-			v, err = h.store.CreateRepository(ctx, project, token, req.Name)
+			v, err = backend.CreateRepository(ctx, project, token, req.Name)
 		default:
 			err = errors.New("unknown repository operation")
 		}
 	case "workspaces":
 		if req.Operation == "update" {
-			v, err = h.store.UpdateWorkspace(ctx, project, token, req.WorkspaceID, req.Branch, req.Head, req.Dirty)
+			v, err = backend.UpdateWorkspace(ctx, project, token, req.WorkspaceID, req.Branch, req.Head, req.Dirty)
 		} else if req.Operation == "" || req.Operation == "register" {
-			v, err = h.store.RegisterWorkspace(ctx, project, token, req.RepositoryID, req.Name, req.NodeLabel, req.LocalPath, req.Branch, req.Head, req.Dirty)
+			v, err = backend.RegisterWorkspace(ctx, project, token, req.RepositoryID, req.Name, req.NodeLabel, req.LocalPath, req.Branch, req.Head, req.Dirty)
 		} else {
 			err = errors.New("unknown workspace operation")
 		}
 	case "integrations":
-		v, err = h.store.RecordIntegration(ctx, project, token, IntegrationSubmission{TaskID: req.ID, Attempt: req.Attempt, WorkspaceID: req.WorkspaceID, BaseRevision: req.Baseline, CombinedRevision: req.Head, Observation: req.Observation, CandidateIDs: req.CandidateIDs, Checks: req.Checks, Summary: req.Body, RequestID: req.RequestID})
+		v, err = backend.RecordIntegration(ctx, project, token, IntegrationSubmission{TaskID: req.ID, Attempt: req.Attempt, WorkspaceID: req.WorkspaceID, BaseRevision: req.Baseline, CombinedRevision: req.Head, Observation: req.Observation, CandidateIDs: req.CandidateIDs, Checks: req.Checks, Summary: req.Body, RequestID: req.RequestID})
 	case "events":
 		if req.Operation != "prune" {
 			err = errors.New("unknown event operation")
 		} else {
-			v, err = h.store.PruneProjectEvents(ctx, project, token, req.ThroughSequence)
+			v, err = backend.PruneProjectEvents(ctx, project, token, req.ThroughSequence)
 		}
 	case "reports":
-		v, err = h.store.SubmitReport(ctx, project, token, req.ID, req.Attempt, req.Baseline, req.Body)
+		if submitter, ok := backend.(interface {
+			SubmitReportWithID(context.Context, string, string, string, int, string, string, string) (Report, error)
+		}); ok && req.RequestID != "" {
+			v, err = submitter.SubmitReportWithID(ctx, project, token, req.ID, req.Attempt, req.Baseline, req.Body, req.RequestID)
+		} else {
+			v, err = backend.SubmitReport(ctx, project, token, req.ID, req.Attempt, req.Baseline, req.Body)
+		}
 	case "review":
 		if req.Operation == "rework" {
-			err = h.store.RequestRework(ctx, project, token, req.ID, req.Digest, req.Body)
+			err = backend.RequestRework(ctx, project, token, req.ID, req.Digest, req.Body)
 			v = map[string]bool{"rework_requested": err == nil}
 		} else if req.Operation == "" || req.Operation == "accept" {
-			err = h.store.AcceptReport(ctx, project, token, req.ID, req.Digest)
+			err = backend.AcceptReport(ctx, project, token, req.ID, req.Digest)
 			v = map[string]bool{"accepted": err == nil}
 		} else {
 			err = errors.New("unknown review operation")
 		}
 	case "roles":
-		v, err = h.store.SetWorkRole(ctx, project, token, req.Recipient, req.ID, req.Name, req.Body, req.ExpiresAt, req.Revision)
+		v, err = backend.SetWorkRole(ctx, project, token, req.Recipient, req.ID, req.Name, req.Body, req.ExpiresAt, req.Revision)
 	case "budget":
 		if req.Operation == "set" {
-			v, err = h.store.SetBudget(ctx, project, token, req.Revision, req.Amount)
+			v, err = backend.SetBudget(ctx, project, token, req.Revision, req.Amount)
 		} else if req.Operation == "reserve" {
-			v, err = h.store.ReserveBudget(ctx, project, token, req.ID, req.Amount)
+			v, err = backend.ReserveBudget(ctx, project, token, req.ID, req.Amount)
 		} else {
 			err = errors.New("unknown budget operation")
 		}
 	case "settings":
-		v, err = h.store.UpdateSettings(ctx, project, token, req.Settings)
+		v, err = backend.UpdateSettings(ctx, project, token, req.Settings)
 	default:
 		http.NotFound(w, r)
 		return
 	}
 	if err != nil {
-		h.projectError(w, r, project, token, err)
+		h.projectError(w, backend, ctx, project, token, err)
 		return
 	}
 	jsonReply(w, v)
+}
+
+func (h *WebHandler) acceptInvitation(w http.ResponseWriter, r *http.Request) {
+	if !h.hasLocalDashboardAccess(r) || h.registry == nil {
+		http.Error(w, "local dashboard required", http.StatusForbidden)
+		return
+	}
+	var input struct {
+		Bundle EnrollmentBundle `json:"bundle"`
+		Code   string           `json:"code"`
+	}
+	if err := decodeBody(w, r, &input); err != nil {
+		jsonError(w, err)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 40*time.Second)
+	defer cancel()
+	invite, err := h.registry.AcceptEnrollment(ctx, h.profile, input.Bundle, strings.TrimSpace(input.Code))
+	if err != nil {
+		jsonError(w, err)
+		return
+	}
+	jsonReply(w, invite)
 }

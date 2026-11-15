@@ -38,7 +38,7 @@ curl -fsSL https://raw.githubusercontent.com/tasmirz/gossip/main/scripts/setup.s
 irm https://raw.githubusercontent.com/tasmirz/gossip/main/scripts/setup.ps1 | iex
 ```
 
-The wizard downloads the matching prebuilt release, verifies its SHA-256, installs the skill, and can configure Codex, Claude Code, or Gemini CLI. It guides you to create/connect a local project before attaching its private credential. See [manual per-agent tutorials](docs/installation/README.md).
+The wizard downloads the matching prebuilt release, verifies its SHA-256, installs the skill, and can configure Codex, Antigravity, OpenCode, Claude Code, or Gemini CLI. It guides you to create/connect a local project before attaching its private credential. See [manual per-agent tutorials](docs/installation/README.md).
 
 ## How Gossip works
 

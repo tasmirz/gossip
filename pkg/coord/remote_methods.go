@@ -70,11 +70,37 @@ func (r *Remote) UpdateSettings(c context.Context, p, t string, settings Setting
 	return remoteCall[Settings](c, r, t, rpcRequest{Operation: "settings.update", Project: p, Settings: settings})
 }
 
+func (r *Remote) ListPlanHistory(c context.Context, p, t string) ([]Plan, error) {
+	return remoteCall[[]Plan](c, r, t, rpcRequest{Operation: "plan.history", Project: p})
+}
+
+func (r *Remote) ListPlanThreads(c context.Context, p, t string) ([]PlanThread, error) {
+	return remoteCall[[]PlanThread](c, r, t, rpcRequest{Operation: "plan.threads", Project: p})
+}
+
+func (r *Remote) CreatePlan(c context.Context, p, t, title, body string, expected int) (Plan, error) {
+	return remoteCall[Plan](c, r, t, rpcRequest{Operation: "plan.create", Project: p, Name: title, Body: body, ExpectedRevision: expected})
+}
+
+func (r *Remote) CompletePlan(c context.Context, p, t string, revision int) error {
+	_, err := remoteCall[bool](c, r, t, rpcRequest{Operation: "plan.complete", Project: p, Revision: revision})
+	return err
+}
+
 func (r *Remote) CurrentPlan(c context.Context, p, t string) (Plan, error) {
 	return remoteCall[Plan](c, r, t, rpcRequest{Operation: "plan.read", Project: p})
 }
 func (r *Remote) PublishPlan(c context.Context, p, t, b string, n int) (int, error) {
 	return remoteCall[int](c, r, t, rpcRequest{Operation: "plan.publish", Project: p, Body: b, Revision: n})
+}
+
+func (r *Remote) DeletePlanRevision(c context.Context, p, t string, revision, expected int) error {
+	_, err := remoteCall[bool](c, r, t, rpcRequest{Operation: "plan.delete", Project: p, Revision: revision, ExpectedRevision: expected})
+	return err
+}
+func (r *Remote) DeletePlanThread(c context.Context, p, t, planID string, expected int) error {
+	_, err := remoteCall[bool](c, r, t, rpcRequest{Operation: "plan.thread.delete", Project: p, ID: planID, ExpectedRevision: expected})
+	return err
 }
 func (r *Remote) AcknowledgePlan(c context.Context, p, t string, n int) error {
 	_, e := remoteCall[bool](c, r, t, rpcRequest{Operation: "plan.acknowledge", Project: p, Revision: n})
@@ -143,6 +169,13 @@ func (r *Remote) SubmitReportWithID(c context.Context, p, t, id string, n int, b
 	}
 	return report, err
 }
+func (r *Remote) SubmitForReview(c context.Context, p, t, id string, attempt int, baseline, reportBody, candidateID, candidateDigest, requestID string) (Report, CandidateReport, error) {
+	out, err := remoteCall[struct {
+		Report    Report          `json:"report"`
+		Candidate CandidateReport `json:"candidate"`
+	}](c, r, t, rpcRequest{Operation: "report.submit_for_review", Project: p, ID: id, Attempt: attempt, Baseline: baseline, Body: reportBody, CandidateID: candidateID, CandidateDigest: candidateDigest, RequestID: requestID})
+	return out.Report, out.Candidate, err
+}
 func (r *Remote) RecordAttemptUsage(c context.Context, p, t, id string, n int, requestID string, usage UsageReport) (UsageReport, error) {
 	return remoteCall[UsageReport](c, r, t, rpcRequest{Operation: "usage.record", Project: p, ID: id, Attempt: n, RequestID: requestID, Usage: &usage})
 }
@@ -154,6 +187,10 @@ func (r *Remote) RequestRework(c context.Context, p, t, id, digest, feedback str
 	_, e := remoteCall[bool](c, r, t, rpcRequest{Operation: "report.rework", Project: p, ID: id, Digest: digest, Body: feedback})
 	return e
 }
+func (r *Remote) GetAttemptReport(c context.Context, p, t, taskID string, attempt int) (Report, error) {
+	return remoteCall[Report](c, r, t, rpcRequest{Operation: "report.attempt", Project: p, ID: taskID, Attempt: attempt})
+}
+
 func (r *Remote) GetReport(c context.Context, p, t, id string) (Report, error) {
 	return remoteCall[Report](c, r, t, rpcRequest{Operation: "report.get", Project: p, ID: id})
 }
@@ -166,11 +203,17 @@ func (r *Remote) SendMessageWithID(c context.Context, p, t, to, thread, subject,
 func (r *Remote) ListMessages(c context.Context, p, t string, after int64, n int) ([]Message, error) {
 	return remoteCall[[]Message](c, r, t, rpcRequest{Operation: "message.list", Project: p, After: after, Limit: n})
 }
+func (r *Remote) ConversationMessages(c context.Context, p, t, recipient string, after, before int64, n int, recent bool) ([]Message, error) {
+	return remoteCall[[]Message](c, r, t, rpcRequest{Operation: "message.conversation", Project: p, Recipient: recipient, After: after, Before: before, Limit: n, Recent: recent})
+}
 func (r *Remote) ReadEvents(c context.Context, p, t string, after int64, n int) ([]Event, error) {
 	return remoteCall[[]Event](c, r, t, rpcRequest{Operation: "event.list", Project: p, After: after, Limit: n})
 }
 func (r *Remote) SyncProject(c context.Context, p, t string, after int64, n int) (ProjectSyncFrame, error) {
 	return remoteCall[ProjectSyncFrame](c, r, t, rpcRequest{Operation: "project.sync", Project: p, ReplicaID: r.replicaID, After: after, Limit: n})
+}
+func (r *Remote) SyncInbox(c context.Context, p, t string, eventAfter, messageAfter int64, n int) (ProjectSyncFrame, error) {
+	return remoteCall[ProjectSyncFrame](c, r, t, rpcRequest{Operation: "project.inbox", Project: p, ReplicaID: r.replicaID, After: eventAfter, MessageAfter: messageAfter, Limit: n})
 }
 func (r *Remote) ListProjectReplicas(c context.Context, p, t string) ([]ProjectReplica, error) {
 	return remoteCall[[]ProjectReplica](c, r, t, rpcRequest{Operation: "replica.list", Project: p})
@@ -197,6 +240,11 @@ func (r *Remote) TransitionTask(c context.Context, p, t, id, action, reason stri
 
 func (r *Remote) ListPrincipals(c context.Context, p, t string) ([]Principal, error) {
 	return remoteCall[[]Principal](c, r, t, rpcRequest{Operation: "principal.list", Project: p})
+}
+
+func (r *Remote) SetAgentParent(c context.Context, p, t, childID, parentID string) error {
+	_, err := remoteCall[map[string]bool](c, r, t, rpcRequest{Operation: "principal.parent", Project: p, ID: childID, ParentID: parentID})
+	return err
 }
 
 func (r *Remote) HeartbeatAgent(c context.Context, p, t, instanceID string) error {
@@ -277,6 +325,14 @@ func (r *Remote) CertificateAuthorized(c context.Context, p, fingerprint string)
 
 func (r *Remote) AssignTask(c context.Context, p, t, id, assignee string) (Task, error) {
 	return remoteCall[Task](c, r, t, rpcRequest{Operation: "task.assign", Project: p, ID: id, Recipient: assignee})
+}
+
+func (r *Remote) SearchConversations(c context.Context, p, t, query string) ([]Message, error) {
+	return remoteCall[[]Message](c, r, t, rpcRequest{Operation: "message.search", Project: p, Filter: TaskFilter{Query: query}})
+}
+
+func (r *Remote) ConversationMessage(c context.Context, p, t, id string) (Message, error) {
+	return remoteCall[Message](c, r, t, rpcRequest{Operation: "message.read", Project: p, ID: id})
 }
 
 func (r *Remote) AcknowledgeMessage(c context.Context, p, t, id string) (MessageAcknowledgment, error) {

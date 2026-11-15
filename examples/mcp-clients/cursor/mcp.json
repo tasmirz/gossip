@@ -1,13 +1,9 @@
 {
   "mcpServers": {
     "gossip": {
-      "command": "${workspaceFolder}/bin/gossip-mcp",
+      "command": "/absolute/path/to/gossip",
       "args": [
-        "coord-mcp",
-        "--db",
-        "${userHome}/.config/gossip/coord.db",
-        "--credential-file",
-        "${userHome}/.config/gossip/credentials/project.json"
+        "coord-mcp"
       ]
     },
     "gossip-project-bootstrap": {

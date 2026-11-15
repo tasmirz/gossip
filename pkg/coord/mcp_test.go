@@ -410,6 +410,27 @@ func TestMCPReadsProjectScopedLegacyHistory(t *testing.T) {
 	}
 }
 
+func TestMCPHistorySchemaDocumentsEveryReadOperation(t *testing.T) {
+	s, _, p, owner, _ := setup(t)
+	tool := coord.MCPServer(s, p.ID, owner.Token).GetTool("gossip_history")
+	if tool == nil {
+		t.Fatal("gossip_history tool missing")
+	}
+	opSchema, ok := tool.Tool.InputSchema.Properties["operation"].(map[string]any)
+	if !ok {
+		t.Fatalf("gossip_history operation schema missing or unexpected type: %T", tool.Tool.InputSchema.Properties["operation"])
+	}
+	desc, _ := opSchema["description"].(string)
+	for _, operation := range []string{"imports", "records", "record"} {
+		if !strings.Contains(desc, operation) {
+			t.Errorf("gossip_history operation description omits implemented operation %q: %q", operation, desc)
+		}
+	}
+	if !strings.Contains(desc, "read one record chunk") {
+		t.Errorf("gossip_history operation description does not explain the record operation: %q", desc)
+	}
+}
+
 func TestMCPSendSupportsRetryKey(t *testing.T) {
 	s, _, p, owner, _ := setup(t)
 	srv := coord.MCPServer(s, p.ID, owner.Token)

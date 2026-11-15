@@ -21,6 +21,7 @@ const (
 // that transaction's snapshot. NextEventCursor advances only over events the
 // caller is allowed to see.
 type ProjectSyncFrame struct {
+	ContextLinks         []ContextLink  `json:"context_links,omitempty"`
 	Plan                 *Plan          `json:"plan,omitempty"`
 	Tasks                TaskPage       `json:"tasks"`
 	Counts               map[string]int `json:"counts"`
@@ -32,6 +33,22 @@ type ProjectSyncFrame struct {
 	HomeInstanceID       string         `json:"home_instance_id"`
 	EventsMayContinue    bool           `json:"events_may_continue"`
 	ResetRequired        bool           `json:"reset_required"`
+	InboxMessages        []InboxMessage `json:"inbox_messages,omitempty"`
+	NextInboxCursor      int64          `json:"next_inbox_cursor,omitempty"`
+	InboxHasMore         bool           `json:"inbox_has_more,omitempty"`
+}
+
+// InboxMessage carries a bounded preview; full authorized bodies remain
+// available through gossip_read by message reference.
+type InboxMessage struct {
+	Sequence  int64  `json:"sequence"`
+	ID        string `json:"id"`
+	Sender    string `json:"sender"`
+	Recipient string `json:"recipient,omitempty"`
+	ThreadID  string `json:"thread_id"`
+	Subject   string `json:"subject"`
+	Preview   string `json:"preview"`
+	CreatedAt int64  `json:"created_at"`
 }
 
 // ProjectReplica records a remote MCP host that has synchronized this project.
@@ -51,7 +68,13 @@ type ProjectReplica struct {
 // delta. It is a read protocol for reconnecting caches; it does not grant a
 // replica authority to accept writes or complete attempts.
 func (s *Store) SyncProject(ctx context.Context, project, token string, after int64, limit int) (ProjectSyncFrame, error) {
-	return s.syncProject(ctx, project, token, "", "", after, limit)
+	return s.syncProject(ctx, project, token, "", "", after, limit, nil)
+}
+
+// SyncInbox combines project snapshot, visible events, and bounded message
+// previews in one home transaction for low-token routine check-ins.
+func (s *Store) SyncInbox(ctx context.Context, project, token string, eventAfter, messageAfter int64, limit int) (ProjectSyncFrame, error) {
+	return s.syncProject(ctx, project, token, "", "", eventAfter, limit, &messageAfter)
 }
 
 // SyncProjectFromReplica records a receipt in the same transaction as the
@@ -68,10 +91,24 @@ func (s *Store) SyncProjectFromReplica(ctx context.Context, project, token, repl
 	if err != nil {
 		return ProjectSyncFrame{}, err
 	}
-	return s.syncProject(ctx, project, token, replicaID, fingerprint, after, limit)
+	return s.syncProject(ctx, project, token, replicaID, fingerprint, after, limit, nil)
 }
 
-func (s *Store) syncProject(ctx context.Context, project, token, replicaID, fingerprint string, after int64, limit int) (ProjectSyncFrame, error) {
+func (s *Store) SyncInboxFromReplica(ctx context.Context, project, token, replicaID, fingerprint string, eventAfter, messageAfter int64, limit int) (ProjectSyncFrame, error) {
+	if !strings.HasPrefix(replicaID, "replica_") || len(replicaID) != len("replica_")+32 {
+		return ProjectSyncFrame{}, errors.New("invalid replica identity")
+	}
+	if _, err := hex.DecodeString(strings.TrimPrefix(replicaID, "replica_")); err != nil {
+		return ProjectSyncFrame{}, errors.New("invalid replica identity")
+	}
+	fingerprint, err := NormalizeCertificateFingerprint(fingerprint)
+	if err != nil {
+		return ProjectSyncFrame{}, err
+	}
+	return s.syncProject(ctx, project, token, replicaID, fingerprint, eventAfter, limit, &messageAfter)
+}
+
+func (s *Store) syncProject(ctx context.Context, project, token, replicaID, fingerprint string, after int64, limit int, messageAfter *int64) (ProjectSyncFrame, error) {
 	frame := ProjectSyncFrame{Tasks: TaskPage{Tasks: []Task{}}, Counts: map[string]int{}, Events: []Event{}, EventsAfter: after, HomeInstanceID: s.instanceID}
 	if after < 0 || limit < 1 || limit > 200 {
 		return frame, errors.New("invalid sync cursor or limit")
@@ -103,85 +140,127 @@ func (s *Store) syncProject(ctx context.Context, project, token, replicaID, fing
 			return frame, ErrConflict
 		}
 	}
-
-	var plan Plan
-	err = tx.QueryRowContext(ctx, `SELECT p.revision,p.body,p.author,p.created_at,EXISTS(SELECT 1 FROM plan_acknowledgments a WHERE a.project_id=p.project_id AND a.principal_id=? AND a.revision=p.revision) FROM plans p JOIN projects j ON j.id=p.project_id AND j.plan_revision=p.revision WHERE p.project_id=?`, actor.ID, project).Scan(&plan.Revision, &plan.Body, &plan.Author, &plan.CreatedAt, &plan.Acknowledged)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return frame, err
-	}
-	if err == nil {
-		frame.Plan = &plan
-	}
-	baseBytes := 1024
-	if frame.Plan != nil {
-		encodedPlan, marshalErr := json.Marshal(frame.Plan)
-		if marshalErr != nil {
-			return frame, marshalErr
+	includeSnapshot := messageAfter == nil || (after == 0 && *messageAfter == 0)
+	if messageAfter != nil {
+		if *messageAfter < 0 {
+			return frame, errors.New("invalid inbox message cursor")
 		}
-		baseBytes += len(encodedPlan)
-	}
-	if baseBytes >= maxSyncFrameBytes {
-		return frame, errors.New("plan exceeds sync transfer size limit")
+		frame.InboxMessages = []InboxMessage{}
+		rows, e := tx.QueryContext(ctx, `SELECT seq,id,sender,COALESCE(recipient,''),thread_id,subject,body,created_at FROM messages WHERE project_id=? AND seq>? AND (recipient IS NULL OR recipient=? OR sender=?) ORDER BY seq LIMIT ?`, project, *messageAfter, actor.ID, actor.ID, limit+1)
+		if e != nil {
+			return frame, e
+		}
+		for rows.Next() {
+			var m InboxMessage
+			var body string
+			if e = rows.Scan(&m.Sequence, &m.ID, &m.Sender, &m.Recipient, &m.ThreadID, &m.Subject, &body, &m.CreatedAt); e != nil {
+				rows.Close()
+				return frame, e
+			}
+			if len(frame.InboxMessages) == limit {
+				frame.InboxHasMore = true
+				break
+			}
+			runes := []rune(body)
+			if len(runes) > 240 {
+				body = string(runes[:240]) + "…"
+			}
+			m.Preview = body
+			frame.InboxMessages = append(frame.InboxMessages, m)
+			frame.NextInboxCursor = m.Sequence
+		}
+		if e = rows.Err(); e != nil {
+			rows.Close()
+			return frame, e
+		}
+		if e = rows.Close(); e != nil {
+			return frame, e
+		}
+		if len(frame.InboxMessages) == 0 {
+			frame.NextInboxCursor = *messageAfter
+		}
 	}
 
-	rows, err := tx.QueryContext(ctx, `SELECT status,COUNT(*) FROM tasks WHERE project_id=? GROUP BY status`, project)
-	if err != nil {
-		return frame, err
-	}
-	for rows.Next() {
-		var status string
-		var count int
-		if err = rows.Scan(&status, &count); err != nil {
+	baseBytes := 1024
+	taskBytes := 0
+	if includeSnapshot {
+		var plan Plan
+		err = tx.QueryRowContext(ctx, `SELECT p.revision,p.body,p.author,p.created_at,EXISTS(SELECT 1 FROM plan_acknowledgments a WHERE a.project_id=p.project_id AND a.principal_id=? AND a.revision=p.revision) FROM plans p JOIN projects j ON j.id=p.project_id AND j.plan_revision=p.revision WHERE p.project_id=?`, actor.ID, project).Scan(&plan.Revision, &plan.Body, &plan.Author, &plan.CreatedAt, &plan.Acknowledged)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return frame, err
+		}
+		if err == nil {
+			frame.Plan = &plan
+		}
+		if frame.Plan != nil {
+			encodedPlan, marshalErr := json.Marshal(frame.Plan)
+			if marshalErr != nil {
+				return frame, marshalErr
+			}
+			baseBytes += len(encodedPlan)
+		}
+		if baseBytes >= maxSyncFrameBytes {
+			return frame, errors.New("plan exceeds sync transfer size limit")
+		}
+
+		rows, err := tx.QueryContext(ctx, `SELECT status,COUNT(*) FROM tasks WHERE project_id=? GROUP BY status`, project)
+		if err != nil {
+			return frame, err
+		}
+		for rows.Next() {
+			var status string
+			var count int
+			if err = rows.Scan(&status, &count); err != nil {
+				rows.Close()
+				return frame, err
+			}
+			frame.Counts[status] = count
+		}
+		if err = rows.Err(); err != nil {
 			rows.Close()
 			return frame, err
 		}
-		frame.Counts[status] = count
-	}
-	if err = rows.Err(); err != nil {
-		rows.Close()
-		return frame, err
-	}
-	if err = rows.Close(); err != nil {
-		return frame, err
-	}
+		if err = rows.Close(); err != nil {
+			return frame, err
+		}
 
-	taskRows, err := tx.QueryContext(ctx, `SELECT `+taskColumns+` FROM tasks WHERE project_id=? ORDER BY rowid DESC LIMIT 201`, project)
-	if err != nil {
-		return frame, err
-	}
-	taskBytes := 0
-	for taskRows.Next() {
-		task, scanErr := scanTask(taskRows)
-		if scanErr != nil {
-			taskRows.Close()
-			return frame, scanErr
+		taskRows, err := tx.QueryContext(ctx, `SELECT `+taskColumns+` FROM tasks WHERE project_id=? ORDER BY rowid DESC LIMIT 201`, project)
+		if err != nil {
+			return frame, err
 		}
-		if len(frame.Tasks.Tasks) == 200 {
-			frame.Tasks.NextCursor = frame.Tasks.Tasks[len(frame.Tasks.Tasks)-1].ID
-			break
-		}
-		encodedTask, marshalErr := json.Marshal(task)
-		if marshalErr != nil {
-			taskRows.Close()
-			return frame, marshalErr
-		}
-		if taskBytes+len(encodedTask) > maxSyncTaskBytes {
-			if len(frame.Tasks.Tasks) == 0 {
+		for taskRows.Next() {
+			task, scanErr := scanTask(taskRows)
+			if scanErr != nil {
 				taskRows.Close()
-				return frame, errors.New("task exceeds sync transfer size limit")
+				return frame, scanErr
 			}
-			frame.Tasks.NextCursor = frame.Tasks.Tasks[len(frame.Tasks.Tasks)-1].ID
-			break
+			if len(frame.Tasks.Tasks) == 200 {
+				frame.Tasks.NextCursor = frame.Tasks.Tasks[len(frame.Tasks.Tasks)-1].ID
+				break
+			}
+			encodedTask, marshalErr := json.Marshal(task)
+			if marshalErr != nil {
+				taskRows.Close()
+				return frame, marshalErr
+			}
+			if taskBytes+len(encodedTask) > maxSyncTaskBytes {
+				if len(frame.Tasks.Tasks) == 0 {
+					taskRows.Close()
+					return frame, errors.New("task exceeds sync transfer size limit")
+				}
+				frame.Tasks.NextCursor = frame.Tasks.Tasks[len(frame.Tasks.Tasks)-1].ID
+				break
+			}
+			frame.Tasks.Tasks = append(frame.Tasks.Tasks, task)
+			taskBytes += len(encodedTask)
 		}
-		frame.Tasks.Tasks = append(frame.Tasks.Tasks, task)
-		taskBytes += len(encodedTask)
-	}
-	if err = taskRows.Err(); err != nil {
-		taskRows.Close()
-		return frame, err
-	}
-	if err = taskRows.Close(); err != nil {
-		return frame, err
+		if err = taskRows.Err(); err != nil {
+			taskRows.Close()
+			return frame, err
+		}
+		if err = taskRows.Close(); err != nil {
+			return frame, err
+		}
 	}
 	eventBudget := maxSyncFrameBytes - baseBytes - taskBytes
 	if eventBudget > maxSyncEventBytes {
@@ -212,7 +291,7 @@ func (s *Store) syncProject(ctx context.Context, project, token, replicaID, fing
 		after = 0
 	}
 	eventRows, err := tx.QueryContext(ctx, `SELECT e.seq,e.actor,e.kind,e.entity_id,e.payload,e.created_at FROM events e WHERE e.project_id=? AND e.seq>? AND e.seq<=?
-		AND (?='owner' OR e.kind NOT LIKE 'certificate.%')
+		AND (?='owner' OR (e.kind NOT LIKE 'certificate.%' AND e.kind<>'dm.inspected'))
 		AND (e.kind NOT IN ('message.sent','message.acknowledged') OR EXISTS (
 			SELECT 1 FROM messages m WHERE m.id=e.entity_id AND m.project_id=e.project_id
 			AND (m.recipient IS NULL OR m.recipient=? OR m.sender=?)))
@@ -262,6 +341,12 @@ func (s *Store) syncProject(ctx context.Context, project, token, replicaID, fing
 	}
 	if !eventByteLimitHit && !frame.EventsMayContinue {
 		frame.NextEventCursor = frame.SnapshotSequence
+	}
+	if messageAfter != nil && (includeSnapshot || frame.ResetRequired) {
+		frame.ContextLinks, err = contextLinksTx(ctx, tx, project, "", "", 100)
+		if err != nil {
+			return frame, err
+		}
 	}
 	if replicaID != "" {
 		now := time.Now().UnixMilli()

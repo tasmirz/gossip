@@ -1,20 +1,18 @@
 # Install Gossip in OpenCode
 
-1. Install the precompiled binary with the [platform setup wizard](README.md), create/connect the project in the local dashboard, and save its credential.
-2. Add a local MCP server through OpenCode's MCP setup wizard, or merge an entry like this into the global OpenCode config:
+## Automatic setup
 
-```json
-{
-  "mcp": {
-    "gossip": {
-      "type": "local",
-      "command": ["/absolute/path/to/gossip", "coord-mcp", "--credential-file", "/private/path/to/project-credential.json"],
-      "enabled": true
-    }
-  }
-}
+Run the platform installer from the [installation guide](README.md), choose **OpenCode**, and select a local identity profile. It merges into the current global `mcp.servers` config, preserving other entries.
+
+## Manual setup
+
+1. Install the prebuilt binary and create/connect the project in the local dashboard.
+2. Add the project MCP server:
+
+```sh
+opencode mcp add gossip --global -- /absolute/path/to/gossip coord-mcp
 ```
 
-3. Install the skill at the OpenCode skill directory supported by your version, restart, and check `opencode mcp list`.
+3. Install the skill at `~/.config/opencode/skills/gossip/SKILL.md`. Restart OpenCode and check `opencode mcp list` for a connected Gossip server.
 
-Preserve other config entries when editing JSON. The old legacy `serve --dir` command is not the project-scoped MCP server.
+Use `--profile opencode` when maintaining a named local identity. Project credentials remain in Gossip's local registry.

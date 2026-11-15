@@ -2,12 +2,12 @@
 
 ## Automatic setup
 
-Run the platform installer from the [installation guide](README.md), choose **Gemini CLI**, and select the private project credential JSON file. It installs the skill in `~/.gemini/skills/gossip/` and adds a user-scoped stdio MCP entry.
+Run the platform installer from the [installation guide](README.md), choose **Gemini CLI**, and select a local identity profile. It installs the skill in `~/.gemini/skills/gossip/` and adds a user-scoped stdio MCP entry.
 
 ## Manual setup
 
 ```sh
-gemini mcp add --scope user gossip /absolute/path/to/gossip coord-mcp --credential-file /private/path/to/project-credential.json
+gemini mcp add --scope user gossip /absolute/path/to/gossip coord-mcp
 ```
 
-Put `skills/gossip/SKILL.md` in Gemini's user skill directory, restart Gemini CLI, and check `/mcp list`. If the local project does not exist, run `gossip coord-ui`, choose **Create local project**, and save its owner credential before adding the MCP server.
+Put `skills/gossip/SKILL.md` in Gemini's user skill directory, restart Gemini CLI, and check `/mcp list`. Add projects through the local Gossip dashboard; `gossip_projects` lists saved connections.

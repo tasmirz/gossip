@@ -22,9 +22,13 @@ import (
 // rpcRequest is an internal wire type. The project credential travels only in
 // the HTTP Authorization header, over a mutually authenticated TLS channel.
 type rpcRequest struct {
+	ContextLink         *ContextLink           `json:"context_link,omitempty"`
+	ContextRecord       *ContextRecord         `json:"context_record,omitempty"`
+	PersonalStatus      string                 `json:"personal_status,omitempty"`
 	Operation           string                 `json:"operation"`
 	Project             string                 `json:"project"`
 	ID                  string                 `json:"id,omitempty"`
+	ParentID            string                 `json:"parent_id,omitempty"`
 	WorkspaceID         string                 `json:"workspace_id,omitempty"`
 	RepositoryID        string                 `json:"repository_id,omitempty"`
 	RemoteURL           string                 `json:"remote_url,omitempty"`
@@ -38,6 +42,7 @@ type rpcRequest struct {
 	Head                string                 `json:"head,omitempty"`
 	Dirty               bool                   `json:"dirty,omitempty"`
 	Revision            int                    `json:"revision,omitempty"`
+	ExpectedRevision    int                    `json:"expected_revision,omitempty"`
 	Title               string                 `json:"title,omitempty"`
 	Description         string                 `json:"description,omitempty"`
 	Kind                string                 `json:"kind,omitempty"`
@@ -48,12 +53,17 @@ type rpcRequest struct {
 	Attempt             int                    `json:"attempt,omitempty"`
 	Baseline            string                 `json:"baseline,omitempty"`
 	Body                string                 `json:"body,omitempty"`
+	CandidateID         string                 `json:"candidate_id,omitempty"`
+	CandidateDigest     string                 `json:"candidate_digest,omitempty"`
 	Usage               *UsageReport           `json:"usage,omitempty"`
 	Digest              string                 `json:"digest,omitempty"`
 	Recipient           string                 `json:"recipient,omitempty"`
+	Recent              bool                   `json:"recent,omitempty"`
 	Thread              string                 `json:"thread,omitempty"`
 	Subject             string                 `json:"subject,omitempty"`
 	After               int64                  `json:"after,omitempty"`
+	Before              int64                  `json:"before,omitempty"`
+	MessageAfter        int64                  `json:"message_after,omitempty"`
 	PruneThrough        int64                  `json:"prune_through,omitempty"`
 	Limit               int                    `json:"limit,omitempty"`
 	MaxChars            int                    `json:"max_chars,omitempty"`
@@ -429,6 +439,19 @@ func rpcHandler(s *Store, requireTLS bool, pins map[[32]byte]map[string]bool, ce
 			v, err = s.RecentEvents(ctx, q.Project, token, q.Limit)
 		case "message.recent":
 			v, err = s.RecentMessages(ctx, q.Project, token, q.Limit)
+		case "plan.variants":
+			v, err = s.PlanVariants(ctx, q.Project, token, q.Revision)
+		case "plan.variant_create":
+			v, err = s.CreatePlanVariant(ctx, q.Project, token, q.Revision, q.Name, q.Body)
+		case "plan.history":
+			v, err = s.ListPlanHistory(ctx, q.Project, token)
+		case "plan.threads":
+			v, err = s.ListPlanThreads(ctx, q.Project, token)
+		case "plan.create":
+			v, err = s.CreatePlan(ctx, q.Project, token, q.Name, q.Body, q.ExpectedRevision)
+		case "plan.complete":
+			err = s.CompletePlan(ctx, q.Project, token, q.Revision)
+			v = true
 		case "plan.read":
 			v, err = s.CurrentPlan(ctx, q.Project, token)
 		case "role.list":
@@ -437,6 +460,9 @@ func rpcHandler(s *Store, requireTLS bool, pins map[[32]byte]map[string]bool, ce
 			v, err = s.SetWorkRole(ctx, q.Project, token, q.Recipient, q.ID, q.Name, q.Body, q.ExpiresAt, q.Revision)
 		case "principal.list":
 			v, err = s.ListPrincipals(ctx, q.Project, token)
+		case "principal.parent":
+			err = s.SetAgentParent(ctx, q.Project, token, q.ID, q.ParentID)
+			v = map[string]bool{"updated": err == nil}
 		case "agent.heartbeat":
 			err = s.HeartbeatAgentWithMetadata(ctx, q.Project, token, q.InstanceID, q.Capabilities, q.ClientInfo)
 			v = map[string]bool{"recorded": err == nil}
@@ -494,6 +520,12 @@ func rpcHandler(s *Store, requireTLS bool, pins map[[32]byte]map[string]bool, ce
 			v, err = s.UpdateSettings(ctx, q.Project, token, q.Settings)
 		case "plan.publish":
 			v, err = s.PublishPlan(ctx, q.Project, token, q.Body, q.Revision)
+		case "plan.delete":
+			err = s.DeletePlanRevision(ctx, q.Project, token, q.Revision, q.ExpectedRevision)
+			v = err == nil
+		case "plan.thread.delete":
+			err = s.DeletePlanThread(ctx, q.Project, token, q.ID, q.ExpectedRevision)
+			v = err == nil
 		case "plan.acknowledge":
 			err = s.AcknowledgePlan(ctx, q.Project, token, q.Revision)
 			v = true
@@ -564,6 +596,15 @@ func rpcHandler(s *Store, requireTLS bool, pins map[[32]byte]map[string]bool, ce
 			}
 			report.Body = ""
 			v = report
+		case "report.submit_for_review":
+			report, candidate, submitErr := s.SubmitForReview(ctx, q.Project, token, q.ID, q.Attempt, q.Baseline, q.Body, q.CandidateID, q.CandidateDigest, q.RequestID)
+			err = submitErr
+			report.Body = ""
+			candidate.Body = ""
+			v = struct {
+				Report    Report          `json:"report"`
+				Candidate CandidateReport `json:"candidate"`
+			}{report, candidate}
 		case "usage.record":
 			if q.Usage == nil {
 				err = errors.New("usage report is required")
@@ -576,6 +617,8 @@ func rpcHandler(s *Store, requireTLS bool, pins map[[32]byte]map[string]bool, ce
 		case "report.rework":
 			err = s.RequestRework(ctx, q.Project, token, q.ID, q.Digest, q.Body)
 			v = true
+		case "report.attempt":
+			v, err = s.GetAttemptReport(ctx, q.Project, token, q.ID, q.Attempt)
 		case "report.get":
 			v, err = s.GetReport(ctx, q.Project, token, q.ID)
 		case "report.page":
@@ -584,6 +627,37 @@ func rpcHandler(s *Store, requireTLS bool, pins map[[32]byte]map[string]bool, ce
 			v, err = s.SendMessageWithID(ctx, q.Project, token, q.Recipient, q.Thread, q.Subject, q.Body, q.RequestID)
 		case "message.list":
 			v, err = s.ListMessages(ctx, q.Project, token, q.After, q.Limit)
+		case "context.links", "context.link":
+			if q.ContextLink == nil {
+				err = errors.New("context link required")
+			} else if q.Operation == "context.links" {
+				v, err = s.ContextLinks(ctx, q.Project, token, q.ContextLink.TargetKind, q.ContextLink.TargetID)
+			} else {
+				err = s.LinkContext(ctx, q.Project, token, *q.ContextLink)
+				v = err == nil
+			}
+		case "context.search":
+			v, err = s.SearchContext(ctx, q.Project, token, q.Body)
+		case "context.list":
+			v, err = s.ProjectContext(ctx, q.Project, token, q.ID, q.Revision)
+		case "context.publish":
+			if q.ContextRecord == nil {
+				err = errors.New("context record required")
+			} else {
+				v, err = s.PublishContext(ctx, q.Project, token, *q.ContextRecord)
+			}
+		case "personal.list":
+			v, err = s.PersonalItems(ctx, q.Project, token)
+		case "personal.save":
+			v, err = s.SavePersonalItem(ctx, q.Project, token, PersonalItemInput{ID: q.ID, Title: q.Title, Status: q.PersonalStatus, Notes: q.Body})
+		case "message.search":
+			v, err = s.SearchConversations(ctx, q.Project, token, q.Filter.Query)
+		case "message.read":
+			v, err = s.ConversationMessage(ctx, q.Project, token, q.ID)
+		case "message.activity":
+			v, err = s.ConversationActivity(ctx, q.Project, token)
+		case "message.conversation":
+			v, err = s.ConversationMessages(ctx, q.Project, token, q.Recipient, q.After, q.Before, q.Limit, q.Recent)
 		case "message.acknowledge":
 			v, err = s.AcknowledgeMessage(ctx, q.Project, token, q.ID)
 		case "message.acknowledgments":
@@ -598,6 +672,13 @@ func rpcHandler(s *Store, requireTLS bool, pins map[[32]byte]map[string]bool, ce
 			} else {
 				fingerprint := sha256.Sum256(r.TLS.PeerCertificates[0].Raw)
 				v, err = s.SyncProjectFromReplica(ctx, q.Project, token, q.ReplicaID, hex.EncodeToString(fingerprint[:]), q.After, q.Limit)
+			}
+		case "project.inbox":
+			if r.TLS == nil || len(r.TLS.PeerCertificates) == 0 {
+				err = ErrUnauthorized
+			} else {
+				fingerprint := sha256.Sum256(r.TLS.PeerCertificates[0].Raw)
+				v, err = s.SyncInboxFromReplica(ctx, q.Project, token, q.ReplicaID, hex.EncodeToString(fingerprint[:]), q.After, q.MessageAfter, q.Limit)
 			}
 		case "replica.list":
 			v, err = s.ListProjectReplicas(ctx, q.Project, token)

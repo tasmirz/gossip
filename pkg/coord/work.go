@@ -198,6 +198,9 @@ func (s *Store) createTask(ctx context.Context, project, token, requestID string
 	if err != nil {
 		return zero, err
 	}
+	if _, err = tx.ExecContext(ctx, `INSERT INTO task_plan_links(project_id,task_id,revision) VALUES(?,?,?)`, project, id, revision); err != nil {
+		return zero, err
+	}
 	if requestID != "" {
 		if _, err = tx.ExecContext(ctx, `INSERT INTO task_requests(project_id,principal_id,request_id,payload_digest,task_id,created_at) VALUES(?,?,?,?,?,?)`, project, actor.ID, requestID, requestDigest[:], id, time.Now().UnixMilli()); err != nil {
 			return zero, err
@@ -325,7 +328,12 @@ func (s *Store) GetTask(ctx context.Context, project, token, id string) (Task, e
 	if _, err = authorizeProjectRead(ctx, tx, project, token); err != nil {
 		return Task{}, err
 	}
-	return scanTask(tx.QueryRowContext(ctx, `SELECT `+taskColumns+` FROM tasks WHERE project_id=? AND id=?`, project, id))
+	task, err := scanTask(tx.QueryRowContext(ctx, `SELECT `+taskColumns+` FROM tasks WHERE project_id=? AND id=?`, project, id))
+	if err != nil {
+		return Task{}, err
+	}
+	task.ContextLinks, err = contextLinksTx(ctx, tx, project, "task", id, 200)
+	return task, err
 }
 
 // ClaimTask atomically reserves eligible work. Each claim increments a fencing
@@ -695,6 +703,135 @@ func (s *Store) submitReport(ctx context.Context, project, token, taskID string,
 	return r, nil
 }
 
+// SubmitForReview atomically pins an already captured candidate by exact ID and
+// digest, requests review, and submits its report. Repeating requestID with the
+// same payload returns the same references; changing any input conflicts.
+func (s *Store) SubmitForReview(ctx context.Context, project, token, taskID string, attempt int, baseline, reportBody, candidateID, candidateDigest, requestID string) (Report, CandidateReport, error) {
+	var report Report
+	var candidate CandidateReport
+	if requestID == "" || len(requestID) > 128 || !utf8.ValidString(requestID) {
+		return report, candidate, errors.New("submit_for_review requires a stable request ID")
+	}
+	if candidateID == "" || len(candidateID) > 128 || len(candidateDigest) != 64 || strings.TrimSpace(baseline) == "" || len(baseline) > 4096 {
+		return report, candidate, errors.New("candidate ID, exact SHA-256 digest, and baseline are required")
+	}
+	if strings.TrimSpace(reportBody) == "" || !utf8.ValidString(reportBody) || len(reportBody) > 1024*1024 {
+		return report, candidate, errors.New("report body required within size limits")
+	}
+	reportID, err := randomID("report_")
+	if err != nil {
+		return report, candidate, err
+	}
+	payloadBytes, err := json.Marshal(struct {
+		TaskID          string `json:"task_id"`
+		Attempt         int    `json:"attempt"`
+		Baseline        string `json:"baseline"`
+		Report          string `json:"report"`
+		CandidateID     string `json:"candidate_id"`
+		CandidateDigest string `json:"candidate_digest"`
+	}{taskID, attempt, baseline, reportBody, candidateID, candidateDigest})
+	if err != nil {
+		return report, candidate, err
+	}
+	payloadHash := sha256.Sum256(payloadBytes)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return report, candidate, err
+	}
+	defer tx.Rollback()
+	actor, err := authorizePermission(ctx, tx, project, token, PermissionResultSubmit)
+	if err != nil {
+		return report, candidate, err
+	}
+	var previousDigest, previousReport string
+	err = tx.QueryRowContext(ctx, `SELECT payload_digest,report_id FROM report_requests WHERE project_id=? AND principal_id=? AND request_id=?`, project, actor.ID, requestID).Scan(&previousDigest, &previousReport)
+	if err == nil {
+		if previousDigest != hex.EncodeToString(payloadHash[:]) {
+			return report, candidate, ErrConflict
+		}
+		err = tx.QueryRowContext(ctx, `SELECT r.id,r.task_id,r.attempt,r.author,r.body,r.digest,r.baseline,COALESCE(e.candidate_id,''),COALESCE(e.digest,''),COALESCE(e.baseline,'') FROM reports r LEFT JOIN report_review_evidence e ON e.report_id=r.id WHERE r.id=?`, previousReport).Scan(&report.ID, &report.TaskID, &report.Attempt, &report.Author, &report.Body, &report.Digest, &report.Baseline, &report.SourceCandidateID, &report.SourceCandidateDigest, &report.SourceCandidateBase)
+		if err != nil {
+			return Report{}, CandidateReport{}, err
+		}
+		err = tx.QueryRowContext(ctx, `SELECT id,task_id,attempt,author,baseline,digest,created_at FROM candidate_reports WHERE id=?`, report.SourceCandidateID).Scan(&candidate.ID, &candidate.TaskID, &candidate.Attempt, &candidate.Author, &candidate.Baseline, &candidate.Digest, &candidate.CreatedAt)
+		return report, candidate, err
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return report, candidate, err
+	}
+	if err = tx.QueryRowContext(ctx, `SELECT c.id,c.task_id,c.attempt,c.author,c.baseline,c.body,c.digest,c.created_at FROM candidate_reports c JOIN tasks t ON t.id=c.task_id WHERE c.id=? AND c.task_id=? AND c.attempt=? AND c.author=? AND t.project_id=?`, candidateID, taskID, attempt, actor.ID, project).Scan(&candidate.ID, &candidate.TaskID, &candidate.Attempt, &candidate.Author, &candidate.Baseline, &candidate.Body, &candidate.Digest, &candidate.CreatedAt); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return report, candidate, ErrNotFound
+		}
+		return report, candidate, err
+	}
+	if candidate.Digest != candidateDigest || candidate.Baseline != baseline {
+		return report, candidate, ErrConflict
+	}
+	if err = validateSourceDiff(candidate.Body); err != nil {
+		return report, candidate, err
+	}
+	now := time.Now().UnixMilli()
+	var rawContract string
+	err = tx.QueryRowContext(ctx, `SELECT report_contract FROM tasks WHERE id=? AND project_id=? AND status='running' AND owner=? AND attempt=? AND lease_until>? AND plan_revision=(SELECT plan_revision FROM projects WHERE id=?)`, taskID, project, actor.ID, attempt, now, project).Scan(&rawContract)
+	if errors.Is(err, sql.ErrNoRows) {
+		return report, candidate, ErrConflict
+	}
+	if err != nil {
+		return report, candidate, err
+	}
+	if err = validateAttemptBaseline(ctx, tx, project, taskID, attempt, actor.ID, baseline); err != nil {
+		return report, candidate, err
+	}
+	var contract ReportContract
+	if err = json.Unmarshal([]byte(rawContract), &contract); err != nil {
+		return report, candidate, err
+	}
+	if contract.ReviewType != "full_code" {
+		return report, candidate, errors.New("submit_for_review requires a task planned for full_code review")
+	}
+	if err = validateReportBody(contract, reportBody); err != nil {
+		return report, candidate, err
+	}
+	if _, err = tx.ExecContext(ctx, `INSERT INTO task_review_requests(task_id,attempt,principal_id,review_type,created_at) VALUES(?,?,?,?,?)`, taskID, attempt, actor.ID, contract.ReviewType, now); err != nil {
+		return report, candidate, err
+	}
+	if _, err = tx.ExecContext(ctx, `INSERT INTO review_request_candidates(task_id,attempt,candidate_id,digest,baseline) VALUES(?,?,?,?,?)`, taskID, attempt, candidate.ID, candidate.Digest, candidate.Baseline); err != nil {
+		return report, candidate, err
+	}
+	if err = event(ctx, tx, project, actor.ID, "review.requested", taskID, map[string]any{"task_id": taskID, "attempt": attempt, "review_type": contract.ReviewType, "candidate_id": candidate.ID, "candidate_digest": candidate.Digest, "candidate_baseline": candidate.Baseline}); err != nil {
+		return report, candidate, err
+	}
+	res, err := tx.ExecContext(ctx, `UPDATE tasks SET status='submitted',lease_until=0 WHERE id=? AND project_id=? AND status='running' AND owner=? AND attempt=? AND lease_until>? AND plan_revision=(SELECT plan_revision FROM projects WHERE id=?)`, taskID, project, actor.ID, attempt, now, project)
+	if err != nil {
+		return report, candidate, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return report, candidate, err
+	}
+	if n != 1 {
+		return report, candidate, ErrConflict
+	}
+	reportHash := sha256.Sum256([]byte(reportBody))
+	report = Report{ID: reportID, TaskID: taskID, Attempt: attempt, Author: actor.ID, Body: reportBody, Digest: hex.EncodeToString(reportHash[:]), Baseline: baseline, SourceCandidateID: candidate.ID, SourceCandidateDigest: candidate.Digest, SourceCandidateBase: candidate.Baseline}
+	if _, err = tx.ExecContext(ctx, `INSERT INTO reports(id,task_id,attempt,author,body,digest,baseline,created_at) VALUES(?,?,?,?,?,?,?,?)`, reportID, taskID, attempt, actor.ID, reportBody, report.Digest, baseline, now); err != nil {
+		return report, candidate, err
+	}
+	if _, err = tx.ExecContext(ctx, `INSERT INTO report_review_evidence(report_id,candidate_id,digest,baseline) VALUES(?,?,?,?)`, reportID, candidate.ID, candidate.Digest, candidate.Baseline); err != nil {
+		return report, candidate, err
+	}
+	if err = event(ctx, tx, project, actor.ID, "report.submitted", reportID, map[string]any{"task_id": taskID, "attempt": attempt, "digest": report.Digest, "source_candidate_id": candidate.ID, "source_candidate_digest": candidate.Digest}); err != nil {
+		return report, candidate, err
+	}
+	if _, err = tx.ExecContext(ctx, `INSERT INTO report_requests(project_id,principal_id,request_id,payload_digest,report_id,created_at) VALUES(?,?,?,?,?,?)`, project, actor.ID, requestID, hex.EncodeToString(payloadHash[:]), reportID, now); err != nil {
+		return report, candidate, err
+	}
+	if err = tx.Commit(); err != nil {
+		return Report{}, CandidateReport{}, err
+	}
+	return report, candidate, nil
+}
+
 // RequestRework returns a submitted task to the ready queue, preserving the report
 // and recording the review feedback in the same transaction.
 //
@@ -839,8 +976,8 @@ func (s *Store) ReadEvents(ctx context.Context, project, token string, after int
 		AND (?='owner' OR e.kind NOT LIKE 'certificate.%')
 		AND (e.kind NOT IN ('message.sent','message.acknowledged') OR EXISTS (
 			SELECT 1 FROM messages m WHERE m.id=e.entity_id AND m.project_id=e.project_id
-			AND (m.recipient IS NULL OR m.recipient=? OR m.sender=?)))
-		ORDER BY e.seq LIMIT ?`, project, after, actor.Role, actor.ID, actor.ID, limit)
+			AND `+visibleMessageSQL("m")+`))
+		ORDER BY e.seq LIMIT ?`, project, after, actor.Role, actor.Role, actor.ID, actor.ID, actor.ID, actor.ID, limit)
 	if err != nil {
 		return nil, err
 	}

@@ -75,6 +75,9 @@ func (s *Store) CreatePreparedProject(ctx context.Context, project, name, owner 
 	if _, err = tx.ExecContext(ctx, `INSERT INTO principals(id,project_id,name,role,token_hash) VALUES(?,?,?,?,?)`, c.PrincipalID, project, owner, "owner", hash[:]); err != nil {
 		return Project{}, err
 	}
+	if _, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO local_dashboard_owners(project_id,principal_id,updated_at) VALUES(?,?,?)`, project, c.PrincipalID, time.Now().UnixMilli()); err != nil {
+		return Project{}, err
+	}
 	if err = event(ctx, tx, project, c.PrincipalID, "project.created", project, map[string]string{"name": name}); err != nil {
 		return Project{}, err
 	}

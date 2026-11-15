@@ -1,165 +1,1924 @@
 'use strict';
-const $ = s => document.querySelector(s);
-const state = { projects: [], projectOverview: [], project: null, plan: null, tasks: [], agents: [], presence: [], certificateGrants: [], certificateInvitations: [], permissions: [], replicas: [], roles: [], rolePresets: [], repositories: [], workspaces: [], integrations: [], settings: null, budget: null, remoteAccessEnabled: null, projectReadDenied: false, settingsLoadedRevision: null, taskCursor: '', taskHistory: [], taskNext: '', counts: {}, messages: [], events: [], auditEvents: [], auditCursor: 0, auditHasMore: false, auditProject: '', auditGeneration: 0, legacyImports: [], legacyRecords: [], legacyImportID: '', legacyType: 'goal', legacyHasMore: false, selected: null, view: 'overview', generation: 0 };
-document.querySelector('nav').insertAdjacentHTML('afterbegin','<button class="nav" data-view="projects">◫ <span>All projects</span></button>');
-document.querySelector('nav').insertAdjacentHTML('beforeend','<button class="nav" data-view="history">▤ <span>History</span></button>');
-$('#activity-panel .panel-head').insertAdjacentHTML('beforeend','<button type="button" id="open-audit-history" class="button small">Browse audit history</button>');
-document.body.insertAdjacentHTML('beforeend','<dialog id="audit-dialog" class="audit-dialog"><div class="dialog-head"><div><div class="eyebrow">PROJECT AUDIT</div><h3 id="audit-title">Audit history</h3></div><button type="button" class="close" data-close="audit-dialog" aria-label="Close">×</button></div><p id="audit-scope" class="hint">Retained events, oldest first. Entries follow the selected project and your membership visibility.</p><input id="audit-filter" type="search" placeholder="Filter loaded events…" aria-label="Filter loaded audit events"><div id="audit-events" class="audit-events" aria-live="polite"></div><div class="dialog-actions"><button type="button" id="audit-more" class="button" hidden>Load more events</button></div></dialog>');
-$('.content-grid').insertAdjacentHTML('afterbegin','<section class="panel projects-panel" id="projects-panel"><div class="panel-head"><div><div class="eyebrow">CONNECTED PROJECTS</div><h3>Project overview</h3></div><span id="project-total" class="counter">0</span></div><div class="project-overview-toolbar"><input id="project-filter" type="search" placeholder="Filter connected projects…" aria-label="Filter connected projects"><button id="refresh-projects" class="button small">Refresh projects</button></div><div id="project-overview" class="project-overview-grid"><div class="empty">Connect a project credential to include it here.</div></div></section>');
-$('#agents').insertAdjacentHTML('afterend','<div class="panel-subhead">Remote synchronization receipts</div><div id="replicas" class="items"><div class="empty">Remote sync receipts are available to project owners.</div></div><p class="hint">These records show remote adapters that have synchronized this project. They report the last sync cursor and certificate; they do not grant access or transfer project authority.</p>');
-$('#workspaces-panel').insertAdjacentHTML('beforeend','<div class="panel-subhead">Integration history · checks reported by the integration host</div><div id="integrations" class="integration-list"><div class="empty">No combined revisions recorded.</div></div>');
-$('#settings-panel').insertAdjacentHTML('beforeend','<div class="panel-head"><div><div class="eyebrow">EVENT HISTORY</div><h3>Retention</h3></div></div><section id="event-retention" class="settings-form" hidden><p id="event-retention-status" role="status">Loading event history status…</p><form id="event-retention-form"><fieldset><label>Delete activity through sequence<input type="number" name="through_sequence" min="1" step="1" required></label><button class="button small">Prune event history</button></fieldset></form><p>Only activity events are removed. Tasks, reports, messages, and project state remain. Replicas behind this sequence rebuild their cache from the next snapshot.</p></section>');
-$('#settings-panel').insertAdjacentHTML('afterbegin','<section class="remote-access-card" aria-labelledby="remote-access-title"><div class="panel-head"><div><div class="eyebrow">HOST NETWORK ACCESS</div><h3 id="remote-access-title">Remote access kill switch</h3></div><span id="remote-access-status" class="pill" role="status">Checking…</span></div><p>Remote LAN and FRP requests are blocked by default. This dashboard reports the local state; change it from the home machine with <code>gossip coord-remote --action enable</code> or <code>--action disable</code>. If the daemon holds the database open, pass its private socket with <code>--socket</code>. Changes take effect on the next remote request.</p><button type="button" id="remote-access-refresh" class="button small quiet">Refresh status</button></section>');
-$('.content-grid').insertAdjacentHTML('beforeend','<section class="panel history-panel" id="history-panel"><div class="panel-head"><div><div class="eyebrow">IMPORTED PROJECT RECORDS</div><h3>Legacy history</h3></div><span class="pill">READ ONLY</span></div><p class="history-note">Archived records keep their original attribution as history. Old roles and task statuses do not restore project access or active work.</p><div class="task-filters"><select id="history-import" aria-label="Select history import"></select><select id="history-type" aria-label="Select record type"><option value="goal">Goals</option><option value="actor">Historical agents</option><option value="task">Tasks</option><option value="message">Messages</option><option value="workflow">Workflows</option><option value="sop_artifact">SOP artifacts</option><option value="artifact_file">Artifact files</option></select><button id="history-load" class="button small">Load records</button></div><div id="history-records" class="history-records"><div class="empty">Select an import and record type to browse archived history.</div></div><div class="task-pagination"><button id="history-more" class="button small" hidden>More records</button></div></section>');
-const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const date = ms => new Date(ms).toLocaleString([], {month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'});
-function renderAuditHistory(){const query=$('#audit-filter').value.trim().toLowerCase(),events=state.auditEvents.filter(event=>`${event.kind} ${event.actor} ${event.entity_id} ${event.sequence}`.toLowerCase().includes(query));$('#audit-events').innerHTML=events.length?events.map(event=>{const actor=state.agents.find(agent=>agent.id===event.actor)?.name||event.actor;return `<article class="audit-event"><span class="audit-sequence">#${Number(event.sequence)}</span><div><strong>${esc(event.kind.replaceAll('.',' · '))}</strong><small>${esc(actor)} · ${esc(event.entity_id||'project')} · ${esc(date(event.created_at))}</small></div></article>`;}).join(''):'<div class="empty">No matching retained events are loaded.</div>';$('#audit-more').hidden=!state.auditHasMore;}
-async function loadAuditHistoryPage(){const project=state.project;if(!project||project.project_id!==state.auditProject)return;const generation=state.auditGeneration,cursor=state.auditCursor,button=$('#audit-more');button.disabled=true;try{const page=await request(projectURL(project.project_id,`events?after=${cursor}`));if(generation!==state.auditGeneration||state.project?.project_id!==project.project_id)return;state.auditEvents.push(...page);if(page.length)state.auditCursor=Number(page[page.length-1].sequence);state.auditHasMore=page.length===100;renderAuditHistory();}catch(error){if(generation===state.auditGeneration)toast(error.message);}finally{button.disabled=false;}}
-$('#open-audit-history').addEventListener('click',()=>{if(!state.project)return;state.auditProject=state.project.project_id;state.auditGeneration++;state.auditEvents=[];state.auditCursor=0;state.auditHasMore=false;$('#audit-title').textContent=`${state.project.project_name} · audit history`;$('#audit-filter').value='';$('#audit-events').innerHTML='<div class="empty">Loading retained project events…</div>';$('#audit-more').hidden=true;$('#audit-dialog').showModal();void loadAuditHistoryPage();});
-$('#audit-more').addEventListener('click',loadAuditHistoryPage);$('#audit-filter').addEventListener('input',renderAuditHistory);
-$('#audit-dialog').addEventListener('close',()=>{state.auditGeneration++;state.auditProject='';});
-let toastTimer;
-const pendingInvites = new Map();
-const pendingPairInvites = new Map();
-function toast(message) { const node=$('#toast'); node.textContent=message; node.hidden=false; clearTimeout(toastTimer); toastTimer=setTimeout(()=>node.hidden=true,5000); }
-function setConnectionStatus(status,label) { const node=$('#connection-status'); if(!node)return; node.className=`live ${status}`;node.setAttribute('aria-label',`Project connection: ${label.toLowerCase()}`);node.innerHTML=`<span class="online-dot"></span> ${label}`; }
-function expireProjectSession(projectID) { if(!state.project||state.project.project_id!==projectID)return;state.projectReadDenied=false;state.generation++;for(const dialog of document.querySelectorAll('dialog[open]'))dialog.close();Object.assign(state,{projects:[],projectOverview:[],project:null,plan:null,tasks:[],agents:[],presence:[],certificateGrants:[],certificateInvitations:[],permissions:[],replicas:[],roles:[],rolePresets:[],repositories:[],workspaces:[],integrations:[],settings:null,budget:null,settingsLoadedRevision:null,taskCursor:'',taskHistory:[],taskNext:'',counts:{},messages:[],events:[],legacyImports:[],legacyRecords:[],legacyImportID:'',legacyHasMore:false,selected:null});pendingInvites.clear();pendingPairInvites.clear();$('#identity').textContent='No project connected';$('#new-task').disabled=true;setConnectionStatus('idle','DISCONNECTED');const params=new URLSearchParams(location.search);params.delete('project');history.replaceState(null,'',location.pathname+(params.size?`?${params}`:''));renderProjects();renderProjectOverview();renderReplicas();renderIntegrations();activateView(state.view);toast('Dashboard session expired. Reconnect the project credential to continue.');}
-async function request(url, options={}) { const response=await fetch(url,{...options,headers:{...(options.body?{'Content-Type':'application/json'}:{}),...(options.headers||{})},cache:'no-store'}); if (!response.ok) { const detail=(await response.text()).trim(), message=response.status===401&&detail.toLowerCase()==='unauthorized'?'This browser is not connected to that project. Connect its credential, and confirm it was created in the database used by this dashboard.':response.status===401&&detail.toLowerCase().includes('credential')?detail:response.status===403&&detail.toLowerCase().includes('role')?'Your project role cannot perform this action. Ask the project owner to create the repository or grant the required project permission.':detail||`Request failed (${response.status})`; const error=new Error(message); error.status=response.status; const projectPath=url.match(/^\/api\/projects\/([^/]+)\//); if(response.status===401&&projectPath){expireProjectSession(decodeURIComponent(projectPath[1]));} throw error; } return response.json(); }
-async function loadEventRetention(generation=state.generation){const section=$('#event-retention');if(!state.project||state.project.role!=='owner'){section.hidden=true;return;}try{const project=state.project,status=await request(projectURL(project.project_id,'retention'));if(generation!==state.generation||state.project!==project)return;section.hidden=false;$('#event-retention-status').textContent=status.pruned_through?`Events through sequence ${status.pruned_through} have been pruned. Current sequence: ${status.snapshot_sequence}.`:`No event history has been pruned. Current sequence: ${status.snapshot_sequence}.`;const input=$('#event-retention-form').elements.through_sequence;input.max=String(status.snapshot_sequence);input.value=status.snapshot_sequence>0?String(status.snapshot_sequence):'';$('#event-retention-form').querySelector('button').disabled=status.snapshot_sequence<=status.pruned_through;}catch(error){if(generation===state.generation)toast(`Could not load event retention status: ${error.message}`);}}
-const projectURL = (id, endpoint) => `/api/projects/${encodeURIComponent(id)}/${endpoint}`;
-async function connect(file) { if (!file) return; try { if(file.size>8192) throw new Error('Credential file is too large'); let credential; try { credential=JSON.parse(await file.text()); } catch { throw new Error('Choose a Gossip project credential JSON file. A checkout folder cannot be connected here: choose “Create local project”, then register the folder under Workspaces.'); } if(!credential||typeof credential.project_id!=='string'||!credential.project_id||typeof credential.token!=='string'||!credential.token) throw new Error('This file is not a Gossip project credential. To connect a checkout folder, choose “Create local project”, then register its path under Workspaces.'); const principal=await request('/api/login',{method:'POST',body:JSON.stringify({project_id:credential.project_id,token:credential.token})}); await loadProjects(); selectProject(principal.project_id); if(state.view==='projects')await loadProjectOverview(); toast('Project connected'); } catch(e) { toast(e.status===401?'Project credential rejected. It may be revoked or belong to another coordination database. Start coord-ui with the same --db or --socket used to create it. For a checkout folder, choose “Create local project”, then register its path under Workspaces.':e.message); } }
-for (const id of ['credential','credential-welcome']) $(('#'+id)).addEventListener('change',e=>{connect(e.target.files[0]);e.target.value='';});
-document.addEventListener('click',e=>{if(e.target.closest('[data-create-local-project]'))$('#local-project-dialog').showModal();});
-$('#local-project-form').addEventListener('submit',async e=>{e.preventDefault();const form=e.target;const button=form.querySelector('button[type=submit],button.primary');button.disabled=true;try{const created=await request('/api/projects/create',{method:'POST',body:JSON.stringify({name:form.elements.name.value.trim(),local_path:form.elements.local_path.value.trim()})});const blob=new Blob([JSON.stringify(created.credential,null,2)+'\n'],{type:'application/json'});const link=document.createElement('a');link.href=URL.createObjectURL(blob);link.download=`gossip-${created.project.project_name.replace(/[^a-z0-9._-]+/gi,'-').replace(/^-|-$/g,'')}-owner.json`;link.click();setTimeout(()=>URL.revokeObjectURL(link.href),1000);$('#local-project-dialog').close();form.reset();await loadProjects();selectProject(created.project.project_id);const branch=created.workspace.branch||'detached HEAD';toast(`Connected ${created.repository.name} as “${created.project.project_name}” · ${branch}. Owner credential downloaded.`);}catch(err){toast(err.message);}finally{button.disabled=false;}});
-async function loadProjects() { state.projects=await request('/api/projects'); renderProjects(); }
-function renderProjects() { $('#projects').innerHTML=state.projects.map(p=>`<button class="project ${p.project_id===state.project?.project_id?'selected':''}" data-project="${esc(p.project_id)}">${esc(p.project_name)}</button>`).join(''); }
-function renderAccessScope(){const project=state.project;if(!project)return;$('#access-project-name').textContent=project.project_name;$('#access-project-id').textContent=project.project_id;}
-function renderRolePresetGuidance(){const field=$('#role-form').elements.name,list=$('#role-preset-options'),guidance=$('#role-preset-guidance');list.innerHTML=state.rolePresets.map(p=>`<option value="${esc(p.name)}"></option>`).join('');const name=field.value.trim(),preset=state.rolePresets.find(p=>p.name.toLowerCase()===name.toLowerCase());if(!name){guidance.textContent='Choose a preset to preview its duties, or enter a custom role and describe its duties below.';return;}if(!preset){guidance.textContent='Custom project role. Add the duties, expected output, handoff format, and escalation guidance below.';return;}const sources=(preset.sources||[]).map(url=>{try{const parsed=new URL(url);if(parsed.protocol!=='https:')return '';return `<a href="${esc(parsed.href)}" target="_blank" rel="noopener noreferrer">${esc(parsed.hostname)}</a>`;}catch{return '';}}).filter(Boolean).join(' · ');guidance.innerHTML=`<strong>${esc(preset.name)} · v${esc(preset.version)}</strong><p>${esc(preset.duties)}</p><small>Expected output: ${esc(preset.expected_output)}<br>Handoff: ${esc(preset.handoff_format)}<br>Escalate: ${esc(preset.escalation)}<br>Provenance: ${esc(preset.provenance)}${sources?`<br>Guidance sources: ${sources}`:''}</small>`;}
-$('#role-form').elements.name.addEventListener('input',renderRolePresetGuidance);
-function renderIntegrations(){const host=$('#integrations');if(!host)return;host.innerHTML=state.integrations.length?[...state.integrations].map(record=>`<article class="integration-record"><div class="integration-head"><strong>${record.passed?'Checks passed':'Checks failed'}</strong><code>${esc(record.combined_revision.slice(0,12))}</code></div><p>${esc(record.summary)}</p><small>Base ${esc(record.base_revision.slice(0,12))} · ${record.candidate_ids.length} candidate inputs · ${esc(record.evidence_trust)} evidence · ${esc(date(record.created_at))}</small><ul>${record.checks.map(check=>`<li>${check.passed?'✓':'×'} ${esc(check.name)} · ${esc(check.revision.slice(0,12))}${check.evidence?` · ${esc(check.evidence)}`:''}</li>`).join('')}</ul></article>`).join(''):'<div class="empty">No combined revisions recorded.</div>'; }
-async function loadProjectOverview(){try{await loadProjects();if(!state.projects.length){state.projectOverview=[];renderProjectOverview();return;}const items=await request('/api/overview');state.projectOverview=items;renderProjectOverview();}catch(err){toast(err.message);}}
-function renderProjectOverview(){const query=$('#project-filter').value.trim().toLowerCase(),items=(state.projectOverview||[]).filter(p=>`${p.project_name} ${p.principal_name} ${p.role}`.toLowerCase().includes(query));$('#project-total').textContent=String(items.length);$('#project-overview').innerHTML=items.length?items.map(p=>`<button class="project-overview-card" data-open-project="${esc(p.project_id)}"><span class="project-overview-top"><strong>${esc(p.project_name)}</strong><span class="agent-label">${esc(p.role)}</span></span><small>${esc(p.principal_name)} · ${Number(p.active_agents)||0} agents online · plan ${p.plan_revision||'not published'}</small><span class="project-overview-counts">${Object.entries(p.counts||{}).map(([status,count])=>`<span>${esc(status.replaceAll('_',' '))}<b>${Number(count)||0}</b></span>`).join('')}</span><span class="project-overview-activity">${(p.recent_events||[]).slice(0,3).map(e=>`<span>${esc(e.kind.replaceAll('.',' · '))} · ${esc(date(e.created_at))}</span>`).join('')||'<span>No recent activity</span>'}</span><span class="project-open-hint">Open project →</span></button>`).join(''):`<div class="empty">${state.projects.length?'No connected projects match this filter.':'No projects are connected to this dashboard database. Choose a credential issued by this database, or create a local project; then register its checkout path under Workspaces.'}</div>`;}
-function renderReplicas(){const host=$('#replicas');if(!host)return;if(state.project?.role!=='owner'){host.innerHTML='<div class="empty">Remote sync receipts are available to project owners.</div>';return;}host.innerHTML=state.replicas.length?state.replicas.map(replica=>{const name=state.agents.find(agent=>agent.id===replica.principal_id)?.name||replica.principal_id;return `<div class="agent-row"><div><strong>${esc(name)} · remote adapter</strong><small title="${esc(replica.replica_id)}">Replica ${esc(replica.replica_id.slice(-12))} · certificate …${esc(replica.certificate_fingerprint.slice(-12))} · last sync ${esc(date(replica.last_seen_at))} · cursor ${Number(replica.last_event_cursor)} / ${Number(replica.snapshot_sequence)}</small></div></div>`;}).join(''):'<div class="empty">No remote adapter has synchronized this project yet.</div>';}
-async function loadProjectReplicas(){const project=state.project;if(!project||project.role!=='owner'){renderReplicas();return;}try{const replicas=await request(projectURL(project.project_id,'replicas'));if(state.project?.project_id!==project.project_id)return;state.replicas=replicas;renderReplicas();}catch(error){if(state.project?.project_id===project.project_id)$('#replicas').innerHTML=`<div class="empty">${esc(error.message)}</div>`;}}
-const filterStorageKey=projectID=>`gossip.task-filter.${projectID}`;
-const savedFilterKey=projectID=>`gossip.saved-task-filters.${projectID}`;
-function readSavedFilters(projectID=state.project?.project_id){try{const rows=JSON.parse(localStorage.getItem(savedFilterKey(projectID))||'[]');return Array.isArray(rows)?rows.filter(row=>row&&typeof row.id==='string'&&typeof row.name==='string'&&row.filters&&typeof row.filters==='object').slice(0,20):[];}catch{return[];}}
-function readProjectFilter(projectID){try{const f=JSON.parse(localStorage.getItem(filterStorageKey(projectID))||'{}');return f&&typeof f==='object'?f:{};}catch{return{};}}
-function sharedProjectFilter(projectID){const params=new URLSearchParams(location.search);if(params.get('project')!==projectID)return null;return{status:params.get('status')||'',kind:params.get('kind')||'',assignee:params.get('assignee')||'',query:(params.get('query')||'').slice(0,256)};}
-function syncProjectURL(){if(!state.project)return;const params=new URLSearchParams(location.search),filters=currentTaskFilter();params.set('project',state.project.project_id);for(const [key,value] of [['status',filters.status],['kind',filters.kind],['assignee',filters.assignee],['query',filters.query]]){if(value)params.set(key,value);else params.delete(key);}const query=params.toString(),url=location.pathname+(query?'?'+query:'')+location.hash;history.replaceState(history.state,'',url);}
-function currentTaskFilter(){return{status:$('#task-status').value,kind:$('#task-kind').value,assignee:$('#task-agent').value,query:$('#task-query').value.trim()};}
-function persistProjectFilter(){if(!state.project)return;try{localStorage.setItem(filterStorageKey(state.project.project_id),JSON.stringify(currentTaskFilter()));}catch{}syncProjectURL();}
-function renderSavedFilters(){const select=$('#saved-filter'),selected=select.value,items=readSavedFilters();select.innerHTML='<option value="">Saved views</option>'+items.map(item=>`<option value="${esc(item.id)}">${esc(item.name)}</option>`).join('');if(items.some(item=>item.id===selected))select.value=selected;$('#delete-filter').disabled=!select.value;}
-function restoreProjectFilter(projectID){const f=sharedProjectFilter(projectID)||readProjectFilter(projectID),status=$('#task-status'),kind=$('#task-kind');status.value=[...status.options].some(o=>o.value===f.status)?f.status:'';kind.value=[...kind.options].some(o=>o.value===f.kind)?f.kind:'';$('#task-agent').value=f.assignee||'';$('#task-query').value=String(f.query||'').slice(0,256);renderSavedFilters();syncProjectURL();}
-function changeTaskFilter(){clearTimeout(taskQueryTimer);state.taskCursor='';state.taskHistory=[];state.taskNext='';$('#saved-filter').value='';$('#delete-filter').disabled=true;persistProjectFilter();state.generation++;refresh();}
-for(const id of ['task-status','task-kind','task-agent'])$('#'+id).addEventListener('change',changeTaskFilter);
-let taskQueryTimer;$('#task-query').addEventListener('input',()=>{const projectID=state.project?.project_id;if(!projectID)return;state.taskCursor='';state.taskHistory=[];state.taskNext='';$('#saved-filter').value='';$('#delete-filter').disabled=true;persistProjectFilter();state.generation++;const generation=state.generation;clearTimeout(taskQueryTimer);taskQueryTimer=setTimeout(()=>{if(state.project?.project_id===projectID&&state.generation===generation)refresh();},250);});
-$('#saved-filter').addEventListener('change',()=>{const item=readSavedFilters().find(row=>row.id===$('#saved-filter').value);if(!item)return;$('#task-status').value=item.filters.status||'';$('#task-kind').value=item.filters.kind||'';$('#task-agent').value=item.filters.assignee||'';$('#task-query').value=item.filters.query||'';$('#delete-filter').disabled=false;persistProjectFilter();state.taskCursor='';state.taskHistory=[];state.taskNext='';state.generation++;refresh();});
-$('#save-filter').addEventListener('click',()=>{if(!state.project)return;const name=window.prompt('Name this project filter');if(!name||!name.trim())return;const rows=readSavedFilters(),normalized=name.trim().slice(0,64),existing=rows.findIndex(row=>row.name.toLowerCase()===normalized.toLowerCase()),item={id:existing>=0?rows[existing].id:crypto.randomUUID(),name:normalized,filters:currentTaskFilter()};if(existing>=0)rows[existing]=item;else if(rows.length>=20){toast('This project already has 20 saved filters');return;}else rows.push(item);try{localStorage.setItem(savedFilterKey(state.project.project_id),JSON.stringify(rows));renderSavedFilters();$('#saved-filter').value=item.id;$('#delete-filter').disabled=false;toast('Project filter saved');}catch{toast('Could not save this filter in browser storage');}});
-$('#delete-filter').addEventListener('click',()=>{const projectID=state.project?.project_id,id=$('#saved-filter').value;if(!projectID||!id)return;try{localStorage.setItem(savedFilterKey(projectID),JSON.stringify(readSavedFilters(projectID).filter(item=>item.id!==id)));renderSavedFilters();toast('Saved filter removed');}catch{toast('Could not update browser storage');}});
-function selectProject(id) { for(const d of document.querySelectorAll('dialog[open]'))d.close(); const project=state.projects.find(p=>p.project_id===id); if(!project)return; state.project=project;state.projectReadDenied=false;state.replicas=[];renderReplicas();renderAccessScope();setConnectionStatus('checking','CHECKING');state.plan=null;state.tasks=[];state.agents=[];state.certificateGrants=[];state.certificateInvitations=[];state.permissions=[];state.roles=[];state.rolePresets=[];state.repositories=[];state.workspaces=[];state.integrations=[];renderIntegrations();state.settings=null;state.budget=null;state.settingsLoadedRevision=null;state.taskCursor='';state.taskHistory=[];state.taskNext='';state.counts={};restoreProjectFilter(project.project_id);state.messages=[];state.events=[];state.generation++;$('#new-task').disabled=true;$('#identity').textContent=`${project.name} · ${project.role}`;renderProjects();activateView(state.view);refresh();loadProjectReplicas(); }
-const selectProjectState=selectProject;
-selectProject=function(id){state.legacyRecords=[];state.legacyImportID='';state.legacyAfter='';state.legacyRecordsFor='';selectProjectState(id);};
-$('#projects').addEventListener('click',e=>{const b=e.target.closest('[data-project]');if(b)selectProject(b.dataset.project);});
-async function refresh() { if(!state.project)return; const project=state.project, generation=state.generation; try { const params=new URLSearchParams({status:$('#task-status').value,kind:$('#task-kind').value,assignee:$('#task-agent').value,query:$('#task-query').value.trim(),cursor:state.taskCursor});const [plan,taskPage,counts,agents,presence,roles,rolePresets,repositories,workspaces,integrations,settings,budget,messages,events,certificateGrants,certificateInvitations,permissions]=await Promise.all([request(projectURL(project.project_id,'plan')).catch(e=>{if(e.message.toLowerCase().includes('not found'))return null;throw e;}),request(projectURL(project.project_id,'task-search?'+params)),request(projectURL(project.project_id,'task-counts')),request(projectURL(project.project_id,'agents')),request(projectURL(project.project_id,'presence')),request(projectURL(project.project_id,'roles')),request(projectURL(project.project_id,'role-presets')),request(projectURL(project.project_id,'repositories')),request(projectURL(project.project_id,'workspaces')),request(projectURL(project.project_id,'integrations')),request(projectURL(project.project_id,'settings')),request(projectURL(project.project_id,'budget')),request(projectURL(project.project_id,'messages?recent=1')),request(projectURL(project.project_id,'events?recent=1')),project.role==='owner'?request(projectURL(project.project_id,'certificates')):Promise.resolve([]),project.role==='owner'?request(projectURL(project.project_id,'certificate-invitations')):Promise.resolve([]),request(projectURL(project.project_id,'permissions'))]); if(generation!==state.generation)return; state.projectReadDenied=false;setConnectionStatus('connected','ONLINE'); Object.assign(state,{plan,tasks:taskPage.tasks,taskNext:taskPage.next_cursor||'',counts,agents,presence,roles,rolePresets,repositories,workspaces,integrations,settings,budget,messages,events,certificateGrants,certificateInvitations,permissions});render();renderRolePresetGuidance();renderIntegrations();void loadEventRetention(generation); } catch(e) { if(e.status===403&&state.project?.project_id===project.project_id){state.projectReadDenied=true;Object.assign(state,{plan:null,tasks:[],messages:[],repositories:[],workspaces:[],integrations:[],agents:[],presence:[],certificateGrants:[],certificateInvitations:[],permissions:[],replicas:[],roles:[],settings:null,budget:null,settingsLoadedRevision:null,counts:{},events:[],legacyImports:[],legacyRecords:[],legacyImportID:'',legacyHasMore:false,selected:null});render();renderIntegrations();renderReplicas();setConnectionStatus('denied','ACCESS DENIED');toast('Project read access was denied. Your credential remains connected; ask the owner to restore project.read.');}else if(generation===state.generation||e.status===401||e.status===403){const previous=$('#connection-status')?.className||'';const status=e.status===401||e.status===403?'denied':e.status>=500?'degraded':e.status?'degraded':'offline';const label=status==='denied'?'ACCESS DENIED':status==='degraded'?'DEGRADED':'OFFLINE';setConnectionStatus(status,label);if(previous.includes('connected')||e.status===401||e.status===403)toast(`Project connection lost: ${e.message}`);} } }
-const refreshProjectData=refresh;
-async function loadLegacyImports(){if(!state.project)return;const project=state.project;try{const imports=await request(projectURL(project.project_id,'legacy-imports'));if(state.project?.project_id!==project.project_id)return;state.legacyImports=imports;if(!imports.some(item=>item.id===state.legacyImportID)){state.legacyImportID=imports[0]?.id||'';state.legacyRecords=[];state.legacyRecordsFor='';state.legacyAfter='';}renderHistory();}catch(e){if(state.project?.project_id===project.project_id)toast(e.message);}}
-refresh=async function(){await refreshProjectData();if(state.projectReadDenied)return;await loadLegacyImports();};
-function renderHistory(){const select=$('#history-import'),previous=state.legacyImportID;select.innerHTML=state.legacyImports.length?state.legacyImports.map(item=>`<option value="${esc(item.id)}">${esc(item.source_name)} · ${Object.values(item.counts||{}).reduce((a,b)=>a+b,0)} records · ${esc(date(item.imported_at/1e6))}</option>`).join(''):'<option value="">No imported history</option>';if([...select.options].some(option=>option.value===previous))select.value=previous;state.legacyImportID=select.value;const currentKey=`${state.legacyImportID}:${state.legacyType}`;if(state.legacyRecordsFor!==currentKey){$('#history-records').innerHTML='<div class="empty">Choose an import and record type, then load records.</div>';state.legacyRecords=[];}else{$('#history-records').innerHTML=state.legacyRecords.length?state.legacyRecords.map(record=>`<details class="history-record"><summary><strong>${esc(record.id)}</strong><small>${record.created_at?esc(date(record.created_at/1e6))+' · ':''}${esc(record.digest.slice(0,16))}… · ${record.payload_bytes} bytes</small><button class="text-button history-open" data-record="${esc(record.id)}">Open</button></summary><pre hidden data-content="${esc(record.id)}"></pre></details>`).join(''):'<div class="empty">No records of this type in the selected import.</div>'; }$('#history-more').hidden=!state.legacyHasMore;}
-async function openLegacyRecord(recordID){const project=state.project,importID=state.legacyImportID,recordType=state.legacyType;if(!project)return;const button=$(`[data-record="${CSS.escape(recordID)}"]`),pre=$(`[data-content="${CSS.escape(recordID)}"]`);if(!button||!pre)return;button.disabled=true;button.textContent='Loading…';try{let offset=0,content='',done=false;while(!done){const query=new URLSearchParams({import_id:importID,type:recordType,id:recordID,offset:String(offset),max_chars:'262144'});const chunk=await request(projectURL(project.project_id,'legacy-record?'+query));if(chunk.offset!==offset||chunk.next_offset<offset||chunk.next_offset-offset!==[...chunk.content].length)throw new Error('Invalid history chunk response');content+=chunk.content;offset=chunk.next_offset;done=chunk.done;}if(state.project?.project_id!==project.project_id||state.legacyImportID!==importID||state.legacyType!==recordType)return;const parsed=JSON.parse(content);pre.textContent=JSON.stringify(parsed,null,2);pre.hidden=false;button.textContent='Close';button.disabled=false;}catch(e){toast(e.message);button.textContent='Open';button.disabled=false;}}
-async function loadLegacyRecords(more=false){if(!state.project||!state.legacyImportID)return;const key=`${state.legacyImportID}:${state.legacyType}`;if(!more){state.legacyAfter='';state.legacyRecords=[];state.legacyHasMore=false;state.legacyRecordsFor=key;}const query=new URLSearchParams({import_id:state.legacyImportID,type:state.legacyType,after:state.legacyAfter,limit:'20'});try{const records=await request(projectURL(state.project.project_id,'legacy-records?'+query));if(state.legacyRecordsFor!==key)return;state.legacyRecords=more?[...state.legacyRecords,...records]:records;state.legacyAfter=records.length?records[records.length-1].id:'';state.legacyHasMore=records.length===20;renderHistory();}catch(e){toast(e.message);}}
-$('#history-load').addEventListener('click',()=>loadLegacyRecords());
-$('#history-more').addEventListener('click',()=>loadLegacyRecords(true));
-$('#history-import').addEventListener('change',()=>{state.legacyImportID=$('#history-import').value;state.legacyRecords=[];state.legacyRecordsFor='';loadLegacyRecords();});
-$('#history-type').addEventListener('change',()=>{state.legacyType=$('#history-type').value;state.legacyRecords=[];state.legacyRecordsFor='';loadLegacyRecords();});
-$('#history-records').addEventListener('click',e=>{const button=e.target.closest('.history-open');if(!button)return;const pre=button.parentElement.parentElement.querySelector('pre');if(pre&&!pre.hidden){pre.hidden=true;button.textContent='Open';return;}openLegacyRecord(button.dataset.record);});
-let recognitionRequest=0;$('#recognize-form').addEventListener('submit',async e=>{e.preventDefault();const input=e.target.elements.remote_url,results=$('#recognition-results'),generation=state.generation,requestID=++recognitionRequest;results.textContent='Checking connected projects…';try{const matches=await request('/api/recognize',{method:'POST',body:JSON.stringify({remote_url:input.value.trim()})});if(generation!==state.generation||requestID!==recognitionRequest)return;results.innerHTML=matches.length?`<small>${matches.length===1?'Project match':'Possible matches; choose a project'}</small>`+matches.map(m=>`<button class="project suggestion" data-project="${esc(m.project_id)}"><strong>${esc(m.project_name)}</strong><small>${esc(m.repository_name)}</small></button>`).join(''):'<small>No match among connected projects. Connect a project credential and ask its owner to register this remote.</small>';}catch(err){if(generation===state.generation&&requestID===recognitionRequest)results.textContent=err.message;}});$('#recognition-results').addEventListener('click',e=>{const button=e.target.closest('[data-project]');if(button)selectProject(button.dataset.project);});
-$('#task-next').addEventListener('click',()=>{if(!state.taskNext)return;state.taskHistory.push(state.taskCursor);state.taskCursor=state.taskNext;state.generation++;refresh();});
-$('#task-prev').addEventListener('click',()=>{if(!state.taskHistory.length)return;state.taskCursor=state.taskHistory.pop();state.generation++;refresh();});
 
-function hasProjectPermission(permission){return state.project?.role==='owner'||state.permissions.some(g=>g.principal_id===state.project?.id&&g.permission===permission);}
-function canDelegateTasks(){return hasProjectPermission('task.delegate');}
-function canManageMembers(){return hasProjectPermission('membership.manage');}
-function render() { if(!state.project)return; const roleSelect=$('#task-form').elements.required_role,selectedRole=roleSelect.value,availableRoles=[...new Set([...state.rolePresets.map(p=>p.name),...state.roles.filter(r=>r.active&&!r.task_id).map(r=>r.name)])].sort((a,b)=>a.localeCompare(b));roleSelect.innerHTML='<option value="">Any eligible agent</option>'+availableRoles.map(role=>`<option value="${esc(role)}">${esc(role)}</option>`).join('');if(availableRoles.includes(selectedRole))roleSelect.value=selectedRole; $('#certificates').innerHTML=state.certificateGrants.length?state.certificateGrants.map(g=>`<div class="agent-row"><div><strong>Certificate access</strong><small><code>${esc(g.fingerprint)}</code> · granted ${esc(date(g.granted_at))}${g.expires_at?` · ${g.expires_at<=Date.now()?"expired":"expires"} ${esc(date(g.expires_at))}`:" · indefinite"}</small></div><button class="button small" data-revoke-certificate="${esc(g.fingerprint)}">Revoke</button></div>`).join(''):'<div class="empty">No remote certificates are granted to this project.</div>';  $('#certificate-invitations').innerHTML=state.certificateInvitations.length?state.certificateInvitations.map(i=>`<div class="agent-row"><div><strong>${esc(i.id.slice(-8))}</strong><small>${i.redeemed_at?'Redeemed by '+esc(i.redeemed_fingerprint):i.revoked_at?'Revoked':i.expires_at<=Date.now()?'Expired':'Expires '+esc(date(i.expires_at))}${i.expected_fingerprint?' · bound to '+esc(i.expected_fingerprint):''}</small></div>${!i.redeemed_at&&!i.revoked_at&&i.expires_at>Date.now()?`<button class="button small" data-revoke-pair="${esc(i.id)}">Revoke</button>`:''}</div>`).join(''):'<div class="empty">No certificate invitations.</div>';  $('#permission-grants').innerHTML=state.permissions.length?state.permissions.map(g=>`<div class="agent-row"><div><strong>${esc(state.agents.find(a=>a.id===g.principal_id)?.name||g.principal_id)} · ${esc(g.permission)}</strong><small>Granted ${esc(date(g.granted_at))}</small></div>${state.project.role==='owner'?`<button class="button small" data-revoke-permission="${esc(g.principal_id)}" data-permission="${esc(g.permission)}">Revoke</button>`:''}</div>`).join(''):'<div class="empty">No explicit action grants.</div>';const permissionForm=$('#permission-form'),permissionType=permissionForm.elements.permission,previousPermission=permissionType.value,grantablePermissions=[['project.read','Read project data'],['message.send','Send project messages'],['task.claim','Claim and manage work'],['task.delegate','Delegate and assign tasks'],['result.submit','Submit results'],['plan.edit','Edit shared plan'],['settings.edit','Change project settings'],['review.decide','Accept reports or request rework'],['integration','Record integration evidence'],['membership.manage','Enroll or revoke members']];permissionType.innerHTML=grantablePermissions.map(([value,label])=>`<option value="${value}">${label}</option>`).join('');if(grantablePermissions.some(([value])=>value===previousPermission))permissionType.value=previousPermission;const permissionSelect=permissionForm.elements.principal_id,previousPermissionPrincipal=permissionSelect.value,selectedPermission=permissionType.value;permissionSelect.innerHTML='<option value="">Select a member</option>'+state.agents.filter(a=>a.role!=='owner'&&!state.permissions.some(g=>g.principal_id===a.id&&g.permission===selectedPermission)).map(a=>`<option value="${esc(a.id)}">${esc(a.name)}</option>`).join('');if([...permissionSelect.options].some(o=>o.value===previousPermissionPrincipal))permissionSelect.value=previousPermissionPrincipal;$('#roles-list').innerHTML=state.roles.filter(r=>r.active).map(r=>`<div class="agent-row"><div><strong>${esc(state.agents.find(a=>a.id===r.principal_id)?.name||r.principal_id)} · ${esc(r.name)}</strong><small>${r.task_id?'Task '+esc(r.task_id):'Project-wide'} · revision ${esc(r.revision)}${r.expires_at?' · expires '+esc(date(r.expires_at)):''}</small><p>${esc(r.duties)}</p></div></div>`).join(''); const selector=$('#role-form').elements.principal, selectedPrincipal=selector.value;selector.innerHTML=state.agents.map(a=>`<option value="${esc(a.id)}">${esc(a.name)}</option>`).join('');if([...selector.options].some(o=>o.value===selectedPrincipal))selector.value=selectedPrincipal;$('#role-form').querySelector('fieldset').disabled=state.project.role!=='owner';$('#invite-form').querySelector('fieldset').disabled=!canManageMembers();$('#invite-form').elements.role.querySelector('option[value=owner]').disabled=state.project.role!=='owner';$('#invite-form').elements.client_fingerprint.disabled=state.project.role!=='owner';$('#invite-form').elements.certificate_expires.disabled=state.project.role!=='owner';$('#permission-form').querySelector('fieldset').disabled=state.project.role!=='owner';$('#new-task').disabled=!canDelegateTasks();const messageForm=$('#message-form'),canMessage=hasProjectPermission('message.send');messageForm.elements.recipient.disabled=!canMessage;messageForm.elements.body.disabled=!canMessage;messageForm.querySelector('button[type=submit],button:not([type])').disabled=!canMessage;$('#certificate-form').querySelector('fieldset').disabled=state.project.role!=='owner';$('#pair-form').querySelector('fieldset').disabled=state.project.role!=='owner'; const budget=state.budget,reported=budget?.reported_usage||{},tokenCount=Number(reported.total_tokens)||0,costs=(reported.costs||[]).map(c=>`${esc(c.currency)} ${(Number(c.cost_micros)/1000000).toFixed(6)}`).join(', ');$('#budget-summary').textContent=budget?.enabled?`${budget.reserved} / ${budget.token_limit} tokens reserved`:'No token limit configured';$('#usage-summary').textContent=reported.records?`${tokenCount.toLocaleString()} tokens reported across ${reported.records} attempts${costs?` · reported cost ${costs}`:''} · ${Object.entries(reported.sources||{}).map(([source,count])=>`${count} ${source.replaceAll('_',' ')}`).join(', ')}`:'No agent usage reported; provider billing is unavailable';for(const id of ['budget-form','reservation-form'])$('#'+id).querySelector('fieldset').disabled=state.project.role!=='owner'; const agentFilter=$('#task-agent'),selectedAgent=agentFilter.value;agentFilter.innerHTML='<option value="">All agents</option>'+state.agents.map(a=>`<option value="${esc(a.id)}">${esc(a.name)}</option>`).join('');if([...agentFilter.options].some(o=>o.value===selectedAgent))agentFilter.value=selectedAgent;$('#task-prev').disabled=!state.taskHistory.length;$('#task-next').disabled=!state.taskNext;$('#task-page').textContent=`Page ${state.taskHistory.length+1}`; const form=$('#settings-form'),settings=state.settings;if(settings&&state.settingsLoadedRevision===null){for(const key of ['max_parallel','max_lease_seconds','summary_token_target','default_review_mode'])form.elements[key].value=settings[key];state.settingsLoadedRevision=settings.revision;}form.querySelector('fieldset').disabled=!hasProjectPermission('settings.edit');$('#settings-permission').hidden=hasProjectPermission('settings.edit'); const recipient=$('#message-form').elements.recipient, previous=recipient.value;recipient.innerHTML='<option value="">Project</option>'+state.agents.filter(a=>a.id!==state.project.id).map(a=>`<option value="${esc(a.id)}">${esc(a.name)}</option>`).join('');if([...recipient.options].some(o=>o.value===previous))recipient.value=previous; const plan=state.plan; $('#ack-plan').hidden=!plan||plan.acknowledged;$('#edit-plan').hidden=!hasProjectPermission('plan.edit'); $('#plan-revision').textContent=plan?`REVISION ${plan.revision}`:'NO PLAN';$('#plan-heading').textContent=plan?'Our shared direction':'Make the goal clear.';$('#plan-text').textContent=plan?plan.body:'Publish a plan to give your agents shared context.';for(const name of ['ready','running','submitted','accepted'])$('#count-'+name).textContent=state.counts[name]||0;$('#task-total').textContent=Object.values(state.counts).reduce((a,b)=>a+b,0);$('#tasks').innerHTML=state.tasks.length?state.tasks.map(t=>`<button class="task" data-task="${esc(t.id)}"><div><strong>${esc(t.title)}</strong><small>${esc(t.kind)} · plan ${t.plan_revision} · ${esc(t.id.slice(-8))}</small></div><span class="status ${esc(t.status)}">${esc(t.status.replaceAll('_',' '))}</span></button>`).join(''):'<div class="empty">No tasks yet. Create one to start coordinating.</div>';$('#messages').innerHTML=state.messages.length?state.messages.map(m=>`<div class="message"><strong>${esc(m.sender===state.project.id?'You':(state.agents.find(a=>a.id===m.sender)?.name||m.sender.slice(-8)))}</strong><time>${esc(date(m.created_at))}${m.recipient?' · Direct':''}</time><p>${esc(m.body)}</p>${m.sender===state.project.id?`<button class="text-button" data-receipts="${esc(m.id)}">View acknowledgments</button>`:`<button class="text-button" data-ack="${esc(m.id)}">Acknowledge</button>`}</div>`).join(''):'<div class="empty">The conversation starts here.</div>';const hintSelect=$('#remote-hint-form').elements.repository_id,previousHintRepo=hintSelect.value;hintSelect.innerHTML='<option value="">Select a repository</option>'+state.repositories.map(r=>`<option value="${esc(r.id)}">${esc(r.name)}</option>`).join('');if([...hintSelect.options].some(o=>o.value===previousHintRepo))hintSelect.value=previousHintRepo;$('#remote-hint-form').querySelector('fieldset').disabled=state.project.role!=='owner'||state.repositories.length===0;$('#repositories').innerHTML=state.repositories.length?state.repositories.map(r=>`<div class="agent-row"><div><strong>${esc(r.name)}</strong><small>${r.remote_hints?.length? r.remote_hints.map(h=>`<span class="repo-hint"><code>${esc(h)}</code>${state.project.role==='owner'?` <button class="text-button" data-remove-hint="${esc(r.id)}" data-remote-url="${esc(h)}" aria-label="Remove remote hint">Remove</button>`:''}</span>`).join('<br>'):'No Git remote hints registered'}</small></div><span class="agent-label">REPOSITORY</span></div>`).join(''):'<div class="empty">Create a repository before adding remote hints.</div>';$('#workspaces').innerHTML=state.workspaces.length?state.workspaces.map(w=>`<div class="agent-row"><div class="avatar">◇</div><div><strong>${esc(w.name)}</strong><small>${esc(state.repositories.find(r=>r.id===w.repository_id)?.name||w.repository_id.slice(-8))} · ${esc(w.branch||'detached')} · ${esc(w.head||'unknown revision')} ${w.dirty?'· uncommitted changes':''}</small></div><span class="agent-label">${esc(w.node_label||'UNSPECIFIED')}</span>${w.owner===state.project.id?`<button class="button small" data-workspace="${esc(w.id)}">Update</button>`:''}</div>`).join(''):'<div class="empty">Register workspaces to keep each checkout and revision distinct.</div>';$('#agents').innerHTML=state.agents.length?state.agents.map(a=>{const live=state.presence.find(p=>p.principal_id===a.id),reported=live?.capabilities||[],adapterCaps=reported.filter(c=>c.source==='adapter').map(c=>c.name),hostCaps=reported.filter(c=>c.source==='host_reported').map(c=>c.name);return `<div class="agent-row"><div class="avatar">${esc(a.name.slice(0,1).toUpperCase())}</div><div><strong>${esc(a.name)}</strong><small>${esc(a.role)} · ${esc(a.id.slice(-8))}${live?.mcp_client_name?` · MCP client: ${esc(live.mcp_client_name)}${live.mcp_client_version?` ${esc(live.mcp_client_version)}`:''} (self-reported)`:''}${state.roles.filter(r=>r.principal_id===a.id&&r.active).map(r=>` · ${esc(r.name)}${r.task_id?' (task '+esc(r.task_id.slice(-8))+')':''}`).join('')}</small>${adapterCaps.length||hostCaps.length?`<small>${adapterCaps.length?`Adapter: ${adapterCaps.map(esc).join(', ')}`:''}${adapterCaps.length&&hostCaps.length?' · ':''}${hostCaps.length?`Host reported (unverified): ${hostCaps.map(esc).join(', ')}`:''}</small>`:''}</div><span class="agent-label" title="${live?.online?'Authenticated MCP heartbeat; capability reports describe adapter/configuration and do not prove execution.':'No recent MCP heartbeat; execution state is unknown.'}">${live?.online?'MCP CONNECTED':live?.last_seen_at?'LAST SEEN '+esc(date(live.last_seen_at)):'NO MCP SESSION'}</span>${canManageMembers()&&a.id!==state.project.id?`<button class="button small" data-revoke-agent="${esc(a.id)}">Revoke</button>`:''}</div>`}).join(''):'<div class="empty">No enrolled agents.</div>';$('#events').innerHTML=state.events.length?[...state.events].reverse().slice(0,12).map(e=>`<div class="event"><span>${esc(e.kind.replaceAll('.',' · '))}${e.kind==='review.requested'?` · requested by ${esc(state.agents.find(a=>a.id===e.actor)?.name||'project member')} · ${esc(e.payload?.review_type==='diagram_report'?'Markdown UML report':'full code review')} <button class="text-button" data-review-task="${esc(e.entity_id)}" data-review-attempt="${Number(e.payload?.attempt)||0}">Open attempt ${Number(e.payload?.attempt)||'?'} ↗</button>`:''}${e.kind==='report.rework_requested'?' · '+esc(e.payload?.feedback||''):''} ${e.kind==='report.submitted'?`<button class="text-button report-link" data-report="${esc(e.entity_id)}">View report ↗</button>`:''}${e.kind==='candidate.saved'?`<button class="text-button" data-candidate="${esc(e.entity_id)}">View candidate ↗</button>`:''}</span><time>${esc(date(e.created_at))}</time></div>`).join(''):'<div class="empty">Activity will appear as work progresses.</div>';state.events.filter(e=>e.kind==='review.requested'&&e.payload?.candidate_id).forEach(e=>{const button=$(`#events [data-review-task=\"${CSS.escape(e.entity_id)}\"]`);if(!button)return;const source=document.createElement('button');source.type='button';source.className='text-button';source.dataset.candidate=e.payload.candidate_id;source.title=`SHA-256 ${e.payload.candidate_digest||'unknown'}`;source.textContent='Open pinned source diff ↗';button.after(source);}); }
-async function post(project,endpoint,body){return request(projectURL(project,endpoint),{method:'POST',body:JSON.stringify(body)});}
-$('#ack-plan').addEventListener('click',async()=>{if(!state.project||!state.plan)return;try{await post(state.project.project_id,'plan',{operation:'acknowledge',revision:state.plan.revision||0});toast('Plan acknowledged');refresh();}catch(err){toast(err.message);}});
-$('#edit-plan').addEventListener('click',()=>{$('#plan-form').elements.body.value=state.plan?.body||'';$('#plan-dialog').showModal();});
-$('#plan-form').addEventListener('submit',async e=>{e.preventDefault();const project=state.project?.project_id, revision=state.plan?.revision||0;if(!project)return;try{await post(project,'plan',{body:e.target.elements.body.value,revision});$('#plan-dialog').close();toast('Plan published');refresh();}catch(err){toast(err.message);}});
-$('#new-task').addEventListener('click',()=>{if(!canDelegateTasks()){toast('Task delegation permission is required');return;}if(!state.plan){toast('Publish a plan first');return;}$('#task-form').elements.review_mode.value=state.settings?.default_review_mode||'full_code';$('#task-dialog').showModal();});
-$('#event-retention-form').addEventListener('submit',async e=>{e.preventDefault();const through_sequence=Number(e.target.elements.through_sequence.value),project=state.project;if(!project||project.role!=='owner'||!Number.isSafeInteger(through_sequence)||through_sequence<=0)return;if(!window.confirm(`Permanently remove activity events through sequence ${through_sequence}? Project data remains; replicas behind this point must rebuild their cache.`))return;try{await post(project.project_id,'events',{operation:'prune',through_sequence});toast(`Activity pruned through sequence ${through_sequence}`);await loadEventRetention();await refresh();}catch(error){toast(error.message);}});
-$('#task-form').elements.review_type.addEventListener('change',e=>{const formats=$('#task-form').elements.formats;for(const option of formats.options)option.selected=e.target.value==='diagram_report'||option.value==='markdown';});
-$('#task-form').addEventListener('submit',async e=>{e.preventDefault();const f=e.target.elements,form=e.target,project=state.project?.project_id;if(!project)return;form.dataset.requestId ||= crypto.randomUUID();try{await post(project,'tasks',{operation:'create',request_id:form.dataset.requestId,revision:state.plan?.revision||0,title:f.title.value,description:f.description.value,kind:f.kind.value,contract:{required_role:f.required_role.value,required_capabilities:[...f.required_capabilities.selectedOptions].map(o=>o.value),questions:f.questions.value.split('\n').map(s=>s.trim()).filter(Boolean),formats:[...f.formats.selectedOptions].map(o=>o.value),review_type:f.review_type.value,review_mode:f.review_mode.value}});form.reset();delete form.dataset.requestId;$('#task-dialog').close();toast('Task created');refresh();}catch(err){toast(err.message);}});
-$('#messages').addEventListener('click',async e=>{const ack=e.target.closest('[data-ack]'),receipts=e.target.closest('[data-receipts]');try{if(ack){await post(state.project.project_id,'messages',{operation:'acknowledge',id:ack.dataset.ack});toast('Message acknowledged');}else if(receipts){const result=await request(projectURL(state.project.project_id,`acknowledgments?id=${encodeURIComponent(receipts.dataset.receipts)}`));toast(result.length?`${result.length} acknowledgment(s)`:'No acknowledgments yet');}}catch(err){toast(err.message);}});
-let pendingMessage=null;
-$('#message-form').addEventListener('submit',async e=>{e.preventDefault();const input=e.target.elements.body,project=state.project?.project_id,recipient=e.target.elements.recipient.value,body=input.value;if(!project)return;if(!pendingMessage||pendingMessage.project!==project||pendingMessage.recipient!==recipient||pendingMessage.body!==body){pendingMessage={project,recipient,body,id:crypto.randomUUID()};}try{await post(project,'messages',{body,recipient,request_id:pendingMessage.id});pendingMessage=null;input.value='';refresh();}catch(err){toast(err.message+' — retry the same message safely');}});
-$('#tasks').addEventListener('click',e=>{const b=e.target.closest('[data-task]');if(!b)return;showTask(state.tasks.find(t=>t.id===b.dataset.task));});
-function showTask(t, snapshotAttempt=t?.attempt) { if(!t)return;const contract=t.report_contract||t.contract||{},eligibleAssignees=state.agents.filter(a=>{if(a.role!=='owner'&&a.role!=='worker')return false;const assignments=state.roles.filter(r=>r.principal_id===a.id&&r.active&&(!r.task_id||r.task_id===t.id)),taskRole=assignments.find(r=>r.task_id===t.id),projectRole=assignments.find(r=>!r.task_id),effectiveRole=taskRole||projectRole,live=state.presence.find(p=>p.principal_id===a.id),hasRole=!contract.required_role||!!effectiveRole&&effectiveRole.name.toLocaleLowerCase()===contract.required_role.toLocaleLowerCase(),hasCapabilities=!(contract.required_capabilities?.length)||live?.online&&contract.required_capabilities.every(required=>(live.capabilities||[]).some(capability=>capability.name===required));return hasRole&&hasCapabilities;});state.selected=t;$('#detail-title').textContent=t.title;$('#detail-content').innerHTML=`<p class="detail-meta">${esc(t.description)}</p><p class="detail-meta">Status: <b>${esc(t.status)}</b> · Type: ${esc(t.kind)} · Plan ${t.plan_revision}${contract.required_role?` · Required role: ${esc(contract.required_role)}`:''}${contract.required_capabilities?.length?` · Capabilities: ${esc(contract.required_capabilities.join(', '))}`:''}</p>${t.owner?`<p class="detail-meta">Owner: ${esc(t.owner)} · Attempt ${t.attempt}</p>`:''}${t.blocker_reason?`<p class="detail-meta"><b>Blocker:</b> ${esc(t.blocker_reason)}</p>`:''}${t.status==='running'&&t.owner===state.project.id&&hasProjectPermission('task.claim')?'<label>Blocker reason<textarea id="task-reason" rows="2"></textarea></label><button id="block-task" class="button">Report blocker</button>':''}${t.status==='blocked'&&t.blocker_reason&&state.project.role==='owner'?'<button id="resolve-task" class="button">Resolve blocker</button>':''}${state.project.role==='owner'&&['ready','blocked','running','submitted','needs_replan'].includes(t.status)?'<label>Cancellation reason<textarea id="cancel-reason" rows="2"></textarea></label><button id="cancel-task" class="button">Cancel task</button>':''}${t.assigned_to?`<p class="detail-meta">Assigned to: ${esc(state.agents.find(a=>a.id===t.assigned_to)?.name||t.assigned_to)}</p>`:''}${canDelegateTasks()&&['ready','blocked','needs_replan'].includes(t.status)?`<label class="detail-meta">Assign to <select id="assign-agent"><option value="">${contract.required_role?'Select a member with '+esc(contract.required_role):contract.required_capabilities?.length?'Select an online agent reporting all required capabilities':'Any available agent'}</option>${eligibleAssignees.map(a=>`<option value="${esc(a.id)}" ${a.id===t.assigned_to?'selected':''}>${esc(a.name)}</option>`).join('')}</select></label><button id="assign-task" class="button">Save assignment</button>`:''}${contract.questions?.length?`<p class="detail-meta"><b>Questions</b><br>${contract.questions.map(esc).join('<br>')}</p>`:''}${contract.formats?.length?`<p class="detail-meta">Requested: ${esc(contract.formats.join(', '))} · ${esc(contract.review_mode||'unspecified review')}</p>`:''}${contract.review_type?`<p class="detail-meta">Planned review: <b>${esc(contract.review_type==='diagram_report'?'Markdown report with UML diagrams':'Full code review')}</b></p>`:''}${t.status==='running'&&t.owner===state.project.id&&hasProjectPermission('task.claim')?'<button id="request-review" class="button">Ask orchestrator for planned review</button>':''}${t.status==='ready'&&hasProjectPermission('task.claim')?`<label class="detail-meta">Workspace <select id="claim-workspace"><option value="">Unknown baseline</option>${state.workspaces.filter(w=>w.owner===state.project.id).map(w=>`<option value="${esc(w.id)}">${esc(w.name)} · ${esc(w.head||'unknown revision')}</option>`).join('')}</select></label><button id="claim" class="button primary">Claim task</button>`:''}${t.status==='running'&&t.owner===state.project.id&&hasProjectPermission('task.claim')?'<button id="renew" class="button">Extend lease</button>':''}${t.status==='needs_replan'&&state.project.role==='owner'?'<button id="reconcile" class="button">Reconcile with current plan</button>':''}`;$('#submit-form').hidden=!(t.status==='running'&&t.owner===state.project.id&&hasProjectPermission('result.submit'));$('#detail-dialog').showModal();if(snapshotAttempt>0){const taskID=t.id,attemptNumber=snapshotAttempt;request(projectURL(state.project.project_id,`attempt?id=${encodeURIComponent(taskID)}&number=${attemptNumber}`)).then(a=>{if(state.selected?.id!==taskID)return;const agent=state.agents.find(x=>x.id===a.principal_id)?.name||a.principal_id,snapshot=a.workspace_id?`${a.workspace_head||'unknown commit'} · worktree ${a.workspace_dirty?'dirty':'clean'} at claim`:'no registered workspace snapshot';const row=document.createElement('p');row.className='detail-meta';row.innerHTML=`<b>Attempt ${attemptNumber} snapshot:</b> ${esc(agent)} · ${esc(snapshot)}`;$('#detail-content').prepend(row);}).catch(()=>{});}$('#assign-task')?.addEventListener('click',async()=>{try{await post(state.project.project_id,'tasks',{operation:'assign',id:t.id,recipient:$('#assign-agent').value});$('#detail-dialog').close();toast('Assignment saved');refresh();}catch(err){toast(err.message);}});for(const action of ['block','resolve','cancel'])$(`#${action}-task`)?.addEventListener('click',async()=>{const reason=action==='block'?$('#task-reason').value.trim():action==='cancel'?$('#cancel-reason').value.trim():'';if(action!=='resolve'&&!reason){toast('Enter a reason');return;}try{await post(state.project.project_id,'tasks',{operation:action,id:t.id,attempt:t.attempt,body:reason});$('#detail-dialog').close();toast(action==='block'?'Blocker reported':action==='resolve'?'Blocker resolved':'Task cancelled');refresh();}catch(err){toast(err.message);}});$('#request-review')?.addEventListener('click',async()=>{try{await post(state.project.project_id,'tasks',{operation:'request_review',id:t.id,attempt:t.attempt});toast('Orchestrator review requested');refresh();}catch(err){toast(err.message);}});$('#claim')?.addEventListener('click',async()=>{try{await post(state.project.project_id,'tasks',{operation:'claim',id:t.id,workspace_id:$('#claim-workspace').value});$('#detail-dialog').close();toast('Task claimed');refresh();}catch(err){toast(err.message);}});$('#renew')?.addEventListener('click',async()=>{try{await post(state.project.project_id,'tasks',{operation:'renew',id:t.id,attempt:t.attempt});$('#detail-dialog').close();toast('Lease extended');refresh();}catch(err){toast(err.message);}});$('#reconcile')?.addEventListener('click',async()=>{try{await post(state.project.project_id,'tasks',{operation:'reconcile',id:t.id,revision:state.plan.revision});$('#detail-dialog').close();refresh();}catch(err){toast(err.message);}}); }
-$('#submit-form').addEventListener('submit',async e=>{e.preventDefault();const task=state.selected,project=state.project?.project_id;if(!task||!project)return;try{await post(project,'reports',{id:task.id,attempt:task.attempt,baseline:e.target.elements.baseline.value,body:e.target.elements.body.value});e.target.reset();$('#detail-dialog').close();toast('Report submitted');refresh();}catch(err){toast(err.message);}});
-function renderCandidatePage(page){$('#detail-title').textContent='Source diff · '+page.id.slice(-8);$('#detail-content').innerHTML=`<div class="evidence-actions"><button type="button" class="button small" data-evidence-fullscreen>Expand evidence</button></div><p class="detail-meta"><b>Attempt ${page.attempt}</b> · baseline ${esc(page.baseline)}<br>SHA-256 ${esc(page.digest)} · ${page.total_characters} characters · page ${page.offset}</p><pre class="candidate-source">${esc(page.excerpt)}</pre>${page.next_offset!==undefined?`<button type="button" class="button small" data-candidate-page="${esc(page.id)}" data-offset="${page.next_offset}">Next source page →</button>`:''}`;$('#submit-form').hidden=true;$('#detail-dialog').showModal();}
-$('#detail-content').addEventListener('click',async e=>{const full=e.target.closest('[data-evidence-fullscreen]');if(full){const active=$('#detail-dialog').classList.toggle('evidence-fullscreen');full.textContent=active?'Restore size':'Expand evidence';return;}const candidate=e.target.closest('[data-candidate]');if(candidate){try{const page=await request(projectURL(state.project.project_id,`candidate-page?id=${encodeURIComponent(candidate.dataset.candidate)}&offset=0&limit=4096`));renderCandidatePage(page);}catch(err){toast(err.message);}return;}const b=e.target.closest('[data-candidate-page]');if(!b)return;try{const page=await request(projectURL(state.project.project_id,`candidate-page?id=${encodeURIComponent(b.dataset.candidatePage)}&offset=${b.dataset.offset}&limit=4096`));renderCandidatePage(page);}catch(err){toast(err.message);}});
-$('#detail-dialog').addEventListener('close',()=>$('#detail-dialog').classList.remove('evidence-fullscreen'));
-$('#events').addEventListener('click',async e=>{const taskButton=e.target.closest('[data-review-task]');if(taskButton){try{const task=await request(projectURL(state.project.project_id,`task?id=${encodeURIComponent(taskButton.dataset.reviewTask)}`));const requestedAttempt=Number(taskButton.dataset.reviewAttempt);showTask(task,Number.isInteger(requestedAttempt)&&requestedAttempt>0?requestedAttempt:task.attempt);}catch(err){toast(err.message);}return;}const b=e.target.closest('[data-report]');if(!b)return;try{const report=await request(projectURL(state.project.project_id,`report?id=${encodeURIComponent(b.dataset.report)}`));$('#detail-title').textContent='Submitted report';$('#detail-content').innerHTML=`<div class="evidence-actions"><button type="button" class="button small" data-evidence-fullscreen>Expand evidence</button></div><p class="detail-meta"><b>Baseline:</b> ${esc(report.baseline)}<br><b>Digest:</b> ${esc(report.digest)}${report.source_candidate_digest?`<br>Reviewed source SHA-256: ${esc(report.source_candidate_digest)}`:''}</p>${report.source_candidate_id?`<button type="button" class="button small" data-candidate="${esc(report.source_candidate_id)}" title="SHA-256 ${esc(report.source_candidate_digest)}">Open pinned source diff</button>`:''}<button type="button" id="download-report" class="button small">Download Markdown</button><p class="detail-meta">${esc(report.body)}</p>${hasProjectPermission('review.decide')&&state.project.id!==report.author?'<button id="accept" class="button primary">Accept report</button><label>Rework feedback<textarea id="review-feedback" rows="3" placeholder="What needs to change?"></textarea></label><button id="request-rework" class="button">Request rework</button>':''}`;$('#submit-form').hidden=true;$('#download-report').addEventListener('click',()=>{const url=URL.createObjectURL(new Blob([report.body],{type:'text/markdown;charset=utf-8'}));const link=document.createElement('a');link.href=url;link.download='gossip-report-'+String(report.task_id).replace(/[^a-zA-Z0-9_-]/g,'_')+'.md';link.click();setTimeout(()=>URL.revokeObjectURL(url),0);});for(const match of report.body.matchAll(/```mermaid\s*\n([\s\S]*?)```/gi)){if(match[1].length>20000)continue;const frame=document.createElement('iframe');frame.className='diagram-frame';frame.title='Rendered report diagram';frame.setAttribute('sandbox','allow-scripts');frame.src='/diagram.html';frame.addEventListener('load',()=>frame.contentWindow.postMessage(match[1],'*'),{once:true});$('#detail-content').appendChild(frame);}$('#detail-dialog').showModal();$('#request-rework')?.addEventListener('click',async()=>{const feedback=$('#review-feedback').value.trim();if(!feedback){toast('Enter feedback for rework');return;}try{await post(state.project.project_id,'review',{operation:'rework',id:report.id,digest:report.digest,body:feedback});$('#detail-dialog').close();toast('Rework requested');refresh();}catch(err){toast(err.message);}});$('#accept')?.addEventListener('click',async()=>{try{await post(state.project.project_id,'review',{id:report.id,digest:report.digest});$('#detail-dialog').close();toast('Report accepted');refresh();}catch(err){toast(err.message);}});}catch(err){toast(err.message);}});
-
-
-$('#workspaces').addEventListener('click',e=>{const button=e.target.closest('[data-workspace]');if(!button)return;const w=state.workspaces.find(x=>x.id===button.dataset.workspace);if(!w)return;const f=$('#workspace-update-form').elements;f.workspace_id.value=w.id;f.branch.value=w.branch;f.head.value=w.head;f.dirty.checked=w.dirty;$('#workspace-update-dialog').showModal();});
-$('#workspace-update-form').addEventListener('submit',async e=>{e.preventDefault();const f=e.target.elements;try{await post(state.project.project_id,'workspaces',{operation:'update',workspace_id:f.workspace_id.value,branch:f.branch.value,head:f.head.value,dirty:f.dirty.checked});$('#workspace-update-dialog').close();toast('Workspace updated');refresh();}catch(err){toast(err.message);}});
-function renderRepositoryOptions(){const select=$('#workspace-form').elements.repository_id,previous=select.value;select.innerHTML='<option value="">Select a repository</option>'+state.repositories.map(r=>`<option value="${esc(r.id)}">${esc(r.name)}</option>`).join('');if([...select.options].some(o=>o.value===previous))select.value=previous;}
-$('#remote-hint-form').addEventListener('submit',async e=>{e.preventDefault();const f=e.target.elements;try{await post(state.project.project_id,'repositories',{operation:'add_hint',repository_id:f.repository_id.value,remote_url:f.remote_url.value.trim()});f.remote_url.value='';toast('Repository recognition hint saved');refresh();}catch(err){toast(err.message);}});$('#repositories').addEventListener('click',async e=>{const button=e.target.closest('[data-remove-hint]');if(!button||!window.confirm('Remove this repository recognition hint?'))return;try{await post(state.project.project_id,'repositories',{operation:'remove_hint',repository_id:button.dataset.removeHint,remote_url:button.dataset.remoteUrl});toast('Repository hint removed');refresh();}catch(err){toast(err.message);}});
-$('#new-workspace').addEventListener('click',()=>{renderRepositoryOptions();$('#repo-create').hidden=state.project?.role!=='owner';$('#workspace-dialog').showModal();});
-$('#add-repository').addEventListener('click',async()=>{const form=$('#workspace-form'),name=form.elements.repository_name.value.trim();if(!name){toast('Enter a repository name');return;}try{const repo=await post(state.project.project_id,'repositories',{name});state.repositories.push(repo);renderRepositoryOptions();form.elements.repository_id.value=repo.id;form.elements.repository_name.value='';toast('Repository created');}catch(err){toast(err.message);}});
-$('#workspace-form').addEventListener('submit',async e=>{e.preventDefault();const f=e.target.elements;try{await post(state.project.project_id,'workspaces',{repository_id:f.repository_id.value,name:f.name.value,node_label:f.node_label.value,local_path:f.local_path.value,branch:f.branch.value,head:f.head.value,dirty:f.dirty.checked});e.target.reset();$('#workspace-dialog').close();toast('Workspace registered');refresh();}catch(err){toast(err.message);}});
-
-$('#reload-settings').addEventListener('click',()=>{state.settingsLoadedRevision=null;refresh();});
-$('#settings-form').addEventListener('submit',async e=>{e.preventDefault();const f=e.target.elements;try{const settings={revision:state.settingsLoadedRevision,max_parallel:Number(f.max_parallel.value),max_lease_seconds:Number(f.max_lease_seconds.value),summary_token_target:Number(f.summary_token_target.value),default_review_mode:f.default_review_mode.value};const saved=await post(state.project.project_id,'settings',{settings});state.settingsLoadedRevision=saved.revision;toast('Settings saved');refresh();}catch(err){toast(err.message);}});
-for(const b of document.querySelectorAll('[data-close]'))b.addEventListener('click',()=>document.getElementById(b.dataset.close).close());
-function activateView(view) {
-  const projectLabels={work:'Work',workspaces:'Workspaces',agents:'Agents',conversation:'Conversations',activity:'Activity',settings:'Settings',history:'History'};
-  state.view=view;
-  for(const nav of document.querySelectorAll('.nav'))nav.classList.toggle('active',nav.dataset.view===view);
-  const connected=Boolean(state.project),projectsView=view==='projects',welcomeView=!connected&&view==='overview',needsProject=!connected&&!projectsView&&!welcomeView;
-  $('#welcome').hidden=!welcomeView;
-  $('#connect-required').hidden=!needsProject;
-  $('#workspace').hidden=welcomeView||needsProject;
-  $('#workspace').classList.toggle('unconnected-overview',!connected&&projectsView);
-  if(needsProject){const label=projectLabels[view]||'this view';$('#connect-required-title').textContent=`Connect a project to open ${label}`;$('#connect-required-description').textContent=`${label} is scoped to a project. Connect a project credential to view its data and actions.`;$('#project-name').textContent='Connect a project';}
-  else if(projectsView)$('#project-name').textContent='Connected projects';
-  else if(connected)$('#project-name').textContent=state.project.project_name;
-  else $('#project-name').textContent='Your workspace';
-  const grid=$('.content-grid');grid.classList.toggle('filtered',view!=='overview');
-  for(const panel of grid.querySelectorAll('.panel'))panel.classList.toggle('visible',panel.id===`${view}-panel`);
-  if(projectsView)loadProjectOverview();
+if (location?.protocol === 'file:') {
+  document.addEventListener('DOMContentLoaded', () => {
+    const warn = document.querySelector('#file-warning');
+    if (warn) warn.hidden = false;
+  });
 }
-for(const b of document.querySelectorAll('.nav'))b.addEventListener('click',()=>activateView(b.dataset.view));
-$('#connect-required-connect').addEventListener('click',()=>$('#credential').click());
-window.addEventListener('popstate',()=>{const id=new URLSearchParams(location.search).get('project');if(id&&state.projects.some(p=>p.project_id===id)&&id!==state.project?.project_id){selectProject(id);return;}if(state.project){restoreProjectFilter(state.project.project_id);state.generation++;refresh();}});
-$('#project-filter').addEventListener('input',renderProjectOverview);$('#refresh-projects').addEventListener('click',loadProjectOverview);$('#project-overview').addEventListener('click',e=>{const card=e.target.closest('[data-open-project]');if(!card)return;selectProject(card.dataset.openProject);document.querySelector('.nav[data-view="overview"]').click();});$('#refresh').addEventListener('click',()=>state.view==='projects'?loadProjectOverview():refresh());
-$('#logout').addEventListener('click',async()=>{try{await request('/api/logout',{method:'POST',body:'{}'});expireProjectSession(state.project?.project_id);state.projects=[];state.projectOverview=[];renderProjects();renderProjectOverview();$('#recognition-results').replaceChildren();$('#recognize-form').reset();activateView('overview');}catch(err){toast(err.message);}});
-loadProjects().then(()=>{if(state.projects.length){const requested=new URLSearchParams(location.search).get('project');selectProject(state.projects.some(p=>p.project_id===requested)?requested:state.projects[0].project_id)}}).catch(e=>toast(e.message));setInterval(()=>{if(!document.hidden&&state.project){refresh();if(state.view==='projects')loadProjectOverview();}},5000);
 
-$('#events').addEventListener('click',async e=>{const b=e.target.closest('[data-candidate]');if(!b)return;try{const page=await request(projectURL(state.project.project_id,`candidate-page?id=${encodeURIComponent(b.dataset.candidate)}&offset=0&limit=4096`));renderCandidatePage(page);}catch(err){toast(err.message);}});
+const $ = (sel, root = document) => root?.querySelector?.(sel) || null;
+const $$ = (sel, root = document) => Array.from(root?.querySelectorAll?.(sel) || []);
+const createEl = (tag, cls, text) => {
+  const node = typeof document.createElement === 'function' ? document.createElement(tag) : document.querySelector(tag);
+  if (cls && 'className' in node) node.className = cls;
+  if (text !== undefined && 'textContent' in node) node.textContent = text;
+  return node;
+};
 
-$('#budget-form').addEventListener('submit',async e=>{e.preventDefault();const project=state.project?.project_id;if(!project)return;try{await post(project,'budget',{operation:'set',revision:state.budget?.revision||0,amount:Number(e.target.elements.amount.value)});toast('Budget limit saved');refresh();}catch(err){toast(err.message);}});
-$('#reservation-form').addEventListener('submit',async e=>{e.preventDefault();const project=state.project?.project_id;if(!project)return;try{await post(project,'budget',{operation:'reserve',id:e.target.elements.task_id.value,amount:Number(e.target.elements.amount.value)});toast('Reservation saved');refresh();}catch(err){toast(err.message);}});
+function clearNode(node) {
+  if (!node) return;
+  if (typeof node.replaceChildren === 'function') node.replaceChildren();
+  else node.innerHTML = '';
+}
 
-function randomHex(size){const bytes=crypto.getRandomValues(new Uint8Array(size));return [...bytes].map(value=>value.toString(16).padStart(2,'0')).join('');}
-function currentInvite(){return state.project?pendingInvites.get(state.project.project_id):null;}
-function downloadInvite(){const invite=currentInvite();if(!invite)return;const payload={project_id:invite.project_id,principal_id:invite.principal_id,token:invite.token,...(invite.fingerprint?{client_certificate_fingerprint:invite.fingerprint,certificate_expires_at:invite.expires_at||0}:{})};const url=URL.createObjectURL(new Blob([JSON.stringify(payload,null,2)],{type:'application/json'}));const link=document.createElement('a');link.href=url;link.download=`gossip-${invite.project_id}-${invite.principal_id}.json`;link.click();setTimeout(()=>URL.revokeObjectURL(url),0);}
-async function sendInvite(){const invite=currentInvite();if(!invite)return;const generation=state.generation;$('#invite-summary').textContent=`${invite.name} · ${invite.role} · ${invite.principal_id}${invite.fingerprint?' · remote certificate included':''}`;try{await post(invite.project_id,'agents',{operation:invite.fingerprint?'invite_remote':'invite',name:invite.name,role:invite.role,principal_id:invite.principal_id,credential_token:invite.token,fingerprint:invite.fingerprint||'',expires_at:invite.expires_at||0});invite.created=true;if(generation!==state.generation||state.project?.project_id!==invite.project_id)return;$('#invite-summary').textContent+=` · enrolled`;$('#retry-invite').hidden=true;$('#download-invite').hidden=false;$('#invite-dialog').showModal();refresh();}catch(err){if(generation!==state.generation||state.project?.project_id!==invite.project_id)return;$('#invite-summary').textContent+=` · enrollment response not confirmed. Retry this same invitation to resolve it.`;$('#retry-invite').hidden=false;$('#download-invite').hidden=false;$('#invite-dialog').showModal();toast(err.message);}}
-$('#invite-form').addEventListener('submit',async e=>{e.preventDefault();const project=state.project;if(!project)return;let invite=currentInvite();if(!invite||invite.created){const f=e.target.elements;const fingerprint=f.client_fingerprint.value.trim(),expires=f.certificate_expires.value,expires_at=expires?new Date(expires).getTime():0;if(expires&&!fingerprint){toast('Enter a client certificate fingerprint to set its expiry');return;}if(fingerprint&&expires&&(!Number.isSafeInteger(expires_at)||expires_at<=Date.now())){toast('Choose a future certificate expiry');return;}invite={project_id:project.project_id,principal_id:'principal_'+randomHex(16),token:randomHex(32),name:f.name.value.trim(),role:f.role.value,fingerprint,expires_at,created:false};pendingInvites.set(project.project_id,invite);downloadInvite();}await sendInvite();});$('#retry-invite').addEventListener('click',sendInvite);$('#download-invite').addEventListener('click',downloadInvite);$('#invite-dialog').addEventListener('close',()=>{$('#invite-summary').textContent='';});
-function currentPairInvite(){return state.project?pendingPairInvites.get(state.project.project_id):null;}
-function downloadPairInvite(){const invite=currentPairInvite();if(!invite)return;const {project_id,invitation_id,token,expected_fingerprint,expires_at}=invite;const url=URL.createObjectURL(new Blob([JSON.stringify({project_id,invitation_id,token,expected_fingerprint,expires_at},null,2)],{type:'application/json'}));const link=document.createElement('a');link.href=url;link.download=`gossip-pair-${project_id}-${invitation_id}.json`;link.click();setTimeout(()=>URL.revokeObjectURL(url),0);}
-async function sendPairInvite(){const invite=currentPairInvite();if(!invite)return;const generation=state.generation;$('#pair-summary').textContent=`${invite.invitation_id} · expires ${date(invite.expires_at)}`;try{await post(invite.project_id,'certificate-invitations',{operation:'create',id:invite.invitation_id,invitation_token:invite.token,fingerprint:invite.expected_fingerprint,expires_at:invite.expires_at});invite.created=true;if(generation!==state.generation||state.project?.project_id!==invite.project_id)return;$('#pair-summary').textContent+=' · ready to redeem';$('#retry-pair').hidden=true;$('#pair-dialog').showModal();refresh();}catch(err){if(generation!==state.generation||state.project?.project_id!==invite.project_id)return;$('#pair-summary').textContent+=' · enrollment response not confirmed. Retry this same invitation.';$('#retry-pair').hidden=false;$('#pair-dialog').showModal();toast(err.message);}}
-$('#pair-form').addEventListener('submit',async e=>{e.preventDefault();const project=state.project;if(!project)return;let invite=currentPairInvite();if(!invite||invite.created||invite.expires_at<=Date.now()){const f=e.target.elements,minutes=Number(f.minutes.value),fingerprint=f.fingerprint.value.trim().replaceAll(':','').toLowerCase();if(!Number.isInteger(minutes)||minutes<1||minutes>1440||fingerprint&&!/^[0-9a-f]{64}$/.test(fingerprint)){toast('Choose a valid lifetime and certificate fingerprint');return;}invite={project_id:project.project_id,invitation_id:'certinvite_'+randomHex(16),token:randomHex(32),expected_fingerprint:fingerprint,expires_at:Date.now()+minutes*60000,created:false};pendingPairInvites.set(project.project_id,invite);downloadPairInvite();}await sendPairInvite();});$('#retry-pair').addEventListener('click',sendPairInvite);$('#download-pair').addEventListener('click',downloadPairInvite);$('#pair-dialog').addEventListener('close',()=>{$('#pair-summary').textContent='';});
-$('#certificate-invitations').addEventListener('click',async e=>{const button=e.target.closest('[data-revoke-pair]');if(!button||!state.project||!window.confirm('Revoke this unredeemed certificate invitation?'))return;const project=state.project.project_id,generation=state.generation;try{await post(project,'certificate-invitations',{operation:'revoke',id:button.dataset.revokePair});if(generation!==state.generation)return;toast('Certificate invitation revoked');refresh();}catch(err){if(generation===state.generation)toast(err.message);}});
-$('#permission-form').addEventListener('submit',async e=>{e.preventDefault();const principal_id=e.target.elements.principal_id.value,permission=e.target.elements.permission.value,project=state.project?.project_id,generation=state.generation;if(!principal_id||!project)return;try{await post(project,'permissions',{operation:'grant',principal_id,permission});if(generation!==state.generation)return;toast(`${permission} granted`);refresh();}catch(err){if(generation===state.generation)toast(err.message);}});
-$('#permission-form').elements.permission.addEventListener('change',()=>render());
-$('#permission-grants').addEventListener('click',async e=>{const button=e.target.closest('[data-revoke-permission]');if(!button||!state.project)return;const permission=button.dataset.permission;if(!window.confirm(`Revoke ${permission} for this member?`))return;const project=state.project.project_id,generation=state.generation;try{await post(project,'permissions',{operation:'revoke',principal_id:button.dataset.revokePermission,permission});if(generation!==state.generation)return;toast(`${permission} revoked`);refresh();}catch(err){if(generation===state.generation)toast(err.message);}});
-$('#certificate-form').addEventListener('submit',async e=>{e.preventDefault();const fingerprint=e.target.elements.fingerprint.value.trim(),expires=e.target.elements.expires.value,expires_at=expires?new Date(expires).getTime():0;if(expires&&(!Number.isSafeInteger(expires_at)||expires_at<=Date.now())){toast('Choose a future access expiry');return;}try{await post(state.project.project_id,'certificates',{operation:'grant',fingerprint,expires_at});e.target.reset();toast('Certificate access granted');refresh();}catch(err){toast(err.message);}});
-$('#certificates').addEventListener('click',async e=>{const button=e.target.closest('[data-revoke-certificate]');if(!button||!window.confirm('Revoke this certificate from the current project? The change applies immediately.'))return;try{await post(state.project.project_id,'certificates',{operation:'revoke',fingerprint:button.dataset.revokeCertificate});toast('Certificate access revoked');refresh();}catch(err){toast(err.message);}});
-$('#agents').addEventListener('click',async e=>{const button=e.target.closest('[data-revoke-agent]');if(!button)return;const principal=state.agents.find(a=>a.id===button.dataset.revokeAgent);if(!principal||!window.confirm(`Revoke ${principal.name} from this project? Their project credential will stop working immediately.`))return;try{await post(state.project.project_id,'agents',{operation:'revoke',id:principal.id});toast('Project access revoked');refresh();}catch(err){toast(err.message);}});
-$('#role-form').addEventListener('submit',async e=>{e.preventDefault();const f=e.target.elements,p=state.project?.project_id,task=f.task_id.value.trim(),old=state.roles.find(r=>r.principal_id===f.principal.value&&(r.task_id||'')===task);if(!p)return;if(f.name.value.trim()&&!state.rolePresets.some(preset=>preset.name.toLowerCase()===f.name.value.trim().toLowerCase())&&!f.duties.value.trim()){toast('Describe the duties for this custom role');return;}try{await post(p,'roles',{recipient:f.principal.value,id:task,name:f.name.value,body:f.duties.value,expires_at:f.expires.value?new Date(f.expires.value).getTime():0,revision:old?.revision||0});toast('Work role saved');refresh();}catch(err){toast(err.message);}});
-function renderRemoteAccess(){const status=$('#remote-access-status');if(state.remoteAccessEnabled===null){status.textContent='Local status only';return;}status.textContent=state.remoteAccessEnabled?'ENABLED':'DISABLED · SAFE DEFAULT';status.classList.toggle('warning',state.remoteAccessEnabled);}
-async function loadRemoteAccess(){try{const result=await request('/api/remote-access');state.remoteAccessEnabled=!!result.enabled;}catch(_){state.remoteAccessEnabled=null;}renderRemoteAccess();}
-$('#remote-access-refresh').addEventListener('click',loadRemoteAccess);
-void loadRemoteAccess();
-setInterval(()=>{if(!document.hidden&&state.project?.role==='owner')loadProjectReplicas();},30000);
+function svgIcon(name) {
+  const ns = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(ns, 'svg');
+  const use = document.createElementNS(ns, 'use');
+  svg.setAttribute('class', 'icon');
+  svg.setAttribute('aria-hidden', 'true');
+  svg.setAttribute('focusable', 'false');
+  use.setAttribute('href', '#icon-' + name);
+  svg.appendChild(use);
+  return svg;
+}
+
+const THEME_STORAGE_KEY = 'gossip.theme';
+
+function resolveInitialTheme() {
+  try {
+    const saved = typeof localStorage !== 'undefined' ? localStorage.getItem(THEME_STORAGE_KEY) : null;
+    if (saved === 'dark' || saved === 'light') return saved;
+  } catch {}
+  return typeof window !== 'undefined' && window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+}
+
+function applyTheme(theme, persist = false) {
+  const mode = theme === 'dark' ? 'dark' : 'light';
+  if (document?.documentElement?.dataset) document.documentElement.dataset.theme = mode;
+  if (persist) {
+    try {
+      if (typeof localStorage !== 'undefined') localStorage.setItem(THEME_STORAGE_KEY, mode);
+    } catch {}
+  }
+  const nextLabel = mode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode';
+  const btn = $('#theme-toggle-btn');
+  if (btn) {
+    btn.setAttribute('aria-label', nextLabel);
+    btn.setAttribute('title', nextLabel);
+  }
+  const label = $('#theme-toggle-label');
+  if (label) label.textContent = nextLabel;
+  const icon = $('#theme-toggle-icon');
+  if (icon) icon.setAttribute('href', mode === 'dark' ? '#icon-sun' : '#icon-moon');
+}
+
+applyTheme(resolveInitialTheme(), false);
+
+/* REUSABLE UI PRIMITIVES */
+function uiBadge(text, variant = '', extraClass = '') {
+  const classes = ['badge'];
+  if (variant) classes.push(`badge-${variant}`);
+  if (extraClass) classes.push(extraClass);
+  return createEl('span', classes.join(' '), text);
+}
+
+function uiButton({
+  label = '',
+  shortLabel = label,
+  icon = '',
+  cls = 'btn btn-secondary',
+  iconOnly = false,
+  disabled = false,
+  type = 'button',
+  title = label,
+  ariaLabel = label,
+  onClick = null
+} = {}) {
+  const btn = createEl('button', iconOnly ? `${cls} icon-btn` : cls);
+  btn.type = type;
+  btn.disabled = Boolean(disabled);
+  if (ariaLabel) btn.setAttribute('aria-label', ariaLabel);
+  if (title) btn.title = title;
+  if (icon) {
+    btn.appendChild(svgIcon(icon));
+    if (!iconOnly && shortLabel !== '') btn.appendChild(createEl('span', '', shortLabel));
+  } else {
+    btn.textContent = shortLabel;
+  }
+  if (onClick) btn.addEventListener('click', onClick);
+  return btn;
+}
+
+function renderList(container, items, emptyMessage, renderItem, emptyClass = 'muted small') {
+  if (!container) return;
+  clearNode(container);
+  if (!items || !items.length) {
+    if (emptyMessage) container.appendChild(createEl('p', emptyClass, emptyMessage));
+    return;
+  }
+  for (const item of items) {
+    const node = renderItem(item);
+    if (node) container.appendChild(node);
+  }
+}
+
+function populateSelect(selectEl, items, {
+  placeholder = '',
+  getValue = x => x.id,
+  getLabel = x => x.name || x.id,
+  selectedValue = undefined
+} = {}) {
+  if (!selectEl) return;
+  clearNode(selectEl);
+  if (placeholder !== '' && placeholder !== null && placeholder !== undefined) {
+    const opt = createEl('option', '', placeholder);
+    opt.value = '';
+    selectEl.appendChild(opt);
+  }
+  for (const item of items || []) {
+    const opt = createEl('option', '', getLabel(item));
+    opt.value = String(getValue(item));
+    if (selectedValue !== undefined && opt.value === String(selectedValue)) opt.selected = true;
+    selectEl.appendChild(opt);
+  }
+  if (selectedValue !== undefined) selectEl.value = String(selectedValue);
+}
+
+async function runGuardedAction(control, fn, { onError = err => showError(err.message), onFinally = null } = {}) {
+  if (control?.disabled) return;
+  if (control) control.disabled = true;
+  try {
+    return await fn();
+  } catch (err) {
+    if (onError) onError(err);
+  } finally {
+    if (control) control.disabled = false;
+    if (onFinally) onFinally();
+  }
+}
+
+function bindProjectForm(selector, { action, getBody, onSuccess = null, refreshAfter = true } = {}) {
+  const form = $(selector);
+  if (!form) return;
+  form.addEventListener('submit', async e => {
+    e.preventDefault();
+    const submit = form.querySelector('[type=submit]');
+    await runGuardedAction(submit, async () => {
+      const res = await request(projectApi(action), { method: 'POST', body: getBody(form, e) });
+      if (onSuccess) await onSuccess(res, form);
+      if (refreshAfter) await refresh();
+    });
+  });
+}
+
+/* ROUTING & APPLICATION STATE */
+const ACCESS_SECTIONS = [
+  'access-members', 'project-roles-card', 'access-requests-card', 'access-devices',
+  'access-permissions', 'access-limits', 'recovery-card'
+];
+
+const ROUTES = ['projects', 'chat', 'plans', 'todos', 'agents', 'search', 'settings'];
+const ROUTE_TITLES = {
+  projects: 'Projects',
+  chat: 'Chat',
+  plans: 'Plans',
+  todos: 'To-dos',
+  agents: 'Agents',
+  search: 'Search',
+  settings: 'Settings'
+};
+
+const state = {
+  projects: [],
+  projectOverview: [],
+  localProjects: [],
+  remoteProjects: [],
+  dashboardAccess: { local_access: false, home_id: '', profile: '' },
+  project: null,
+  projectReadDenied: false,
+  view: 'projects',
+  previousView: 'chat',
+  settingsTab: 'access',
+  mobilePane: 'thread',
+  recipient: '',
+  channelId: '',
+  channels: [],
+  plan: null,
+  planHistory: [],
+  planThreads: [],
+  selectedPlanID: '',
+  planPane: 'list',
+  contextRecords: [],
+  contextError: '',
+  selectedPlanRev: 0,
+  comparePlanRev: 0,
+  tasks: [],
+  taskCounts: {},
+  taskTotal: 0,
+  taskCursor: '',
+  taskFilters: { status: '', kind: '', assignee: '', query: '' },
+  todoLayout: 'checklist',
+  todoScope: 'project',
+  todoGoalTab: 'all',
+  todoAgent: '',
+  projectsTab: 'local',
+  agentsTab: 'all',
+  agentDMs: [],
+  agents: [],
+  collapsedAgentIDs: new Set(),
+  presence: [],
+  permissions: [],
+  roles: [],
+  agentTasks: [],
+  agentTasksAgentID: '',
+  agentTasksLoading: false,
+  agentTasksError: '',
+  rolePresets: [],
+  repositories: [],
+  workspaces: [],
+  fileReservations: [],
+  certificates: [],
+  certInvitations: [],
+  replicas: [],
+  remoteAccessEnabled: false,
+  integrations: [],
+  legacyImports: [],
+  legacyRecords: [],
+  events: [],
+  retention: null,
+  messages: [],
+  messagesHasOlder: false,
+  messagesOldestSeq: 0,
+  messageDrafts: {},
+  chatScroll: new Map(),
+  chatLoaded: false,
+  chatFetchedSequence: 0,
+  chatUnseen: 0,
+  chatActivity: new Map(),
+  chatSeen: new Map(),
+  settings: null,
+  budget: null,
+  checklists: { available: false, reason: '', items: [] },
+  searchQuery: '',
+  chatSearch: '',
+  accessSection: 'access-members',
+  todoRevision: 0,
+  searchTab: 'results',
+  agentQuery: '',
+  projectQuery: '',
+  searchPending: false,
+  searchResults: null,
+  graphify: null,
+  generation: 0,
+  loading: {},
+  errorText: '',
+  planConflict: '',
+  pollTimer: null
+};
+
+let chatSearchTimer;
+let chatSearchRequest = 0;
+let liveTaskSearchRequest = 0;
+let liveGlobalSearchRequest = 0;
+
+function showError(msg) {
+  state.errorText = msg || '';
+  const box = $('#error');
+  const text = $('#error-text');
+  if (text) text.textContent = state.errorText;
+  if (box) box.hidden = !state.errorText;
+}
+
+function expireProjectSession(projectId) {
+  $('#project-roles-content')?.replaceChildren();
+  if ($('#load-project-roles')) {
+    const label = $('#load-project-roles span');
+    if (label) label.textContent = 'Refresh';
+    else $('#load-project-roles').textContent = 'Refresh';
+    $('#load-project-roles').disabled = false;
+  }
+  Object.assign(state,{projects:[],projectOverview:[],localProjects:[],remoteProjects:[],project:null,projectReadDenied:false,channels:[],channelId:'',plan:null,planHistory:[],tasks:[],agents:[],agentDMs:[],presence:[],messages:[],events:[],repositories:[],workspaces:[],integrations:[],permissions:[],roles:[],rolePresets:[],certificates:[],certInvitations:[],replicas:[],fileReservations:[],legacyImports:[],legacyRecords:[],settings:null,budget:null,checklists:{available:false,items:[]},searchResults:null,graphify:null});
+  render();
+}
+
+async function request(path, options = {}) {
+  const init = {
+    method: options.method || 'GET',
+    headers: { ...(options.headers || {}) },
+    credentials: 'same-origin'
+  };
+  if (options.body !== undefined) {
+    init.headers['Content-Type'] = 'application/json';
+    init.body = typeof options.body === 'string' ? options.body : JSON.stringify(options.body);
+  }
+  const project = state.project;
+  const response = await fetch(path, init);
+  if (!response.ok) {
+    const projectPath = String(path || '').match(/\/api\/projects\/([^/?]+)/);
+    if (response.status === 401 && projectPath && state.project === project) {
+      expireProjectSession(decodeURIComponent(projectPath[1]));
+    }
+    let message = '';
+    try {
+      const text = await response.text();
+      if (text) {
+        try {
+          const parsed = JSON.parse(text);
+          message = parsed.error || parsed.message || text;
+        } catch {
+          message = text;
+        }
+      }
+    } catch {}
+    const err = new Error(message || `HTTP ${response.status}`);
+    err.status = response.status;
+    throw err;
+  }
+  if (response.status === 204) return null;
+  return response.json();
+}
+
+function projectApi(action, extraQuery = {}) {
+  if (!state.project) throw new Error('No active project selected');
+  const params = new URLSearchParams();
+  if (state.project.home_id && state.dashboardAccess.home_id && state.project.home_id !== state.dashboardAccess.home_id) {
+    params.set('home', state.project.home_id);
+  }
+  for (const [k, v] of Object.entries(extraQuery || {})) {
+    if (v !== undefined && v !== null && String(v) !== '') {
+      params.set(k, String(v));
+    }
+  }
+  const qs = params.toString();
+  return `/api/projects/${encodeURIComponent(state.project.project_id)}/${action}${qs ? `?${qs}` : ''}`;
+}
+
+function hasProjectPermission(perm) {
+  const p = state.project;
+  if (!p || state.projectReadDenied) return false;
+  if (p.role === 'owner') return true;
+  if (Array.isArray(p.permissions) && p.permissions.includes(perm)) return true;
+  return state.permissions.some(entry => entry.principal_id === p.id && entry.permission === perm && !entry.revoked);
+}
+
+function canEditPlan() { return hasProjectPermission('plan.edit'); }
+function canEditSettings() { return hasProjectPermission('settings.edit'); }
+function canManageMembers() { return hasProjectPermission('membership.manage'); }
+function canDelegateTask() { return hasProjectPermission('task.delegate'); }
+function canClaimTask() { return hasProjectPermission('task.claim'); }
+function canSubmitReport() { return hasProjectPermission('result.submit'); }
+function canDecideReview() { return hasProjectPermission('review.decide'); }
+function canSendMessage() { return hasProjectPermission('message.send'); }
+
+function renderAccessScope() {
+  const project = state.project;
+  const nameEl = $('#access-project-name');
+  if (nameEl) nameEl.textContent = project ? (project.project_name || project.project_id) : 'No project selected';
+  if (!project) {
+    if ($('#access-project-id')) $('#access-project-id').textContent = '';
+    return;
+  }
+  $('#access-project-id').textContent=project.project_id;
+}
+
+function syncUrlState(replace = false) {
+  if (typeof history?.replaceState !== 'function' && typeof history?.pushState !== 'function') return;
+  const params = new URLSearchParams();
+  if (state.project) {
+    params.set('project', state.project.project_id);
+    if (state.project.home_id && state.dashboardAccess.home_id && state.project.home_id !== state.dashboardAccess.home_id) {
+      params.set('home', state.project.home_id);
+    }
+  }
+  if (state.view && (state.view !== 'projects' || state.project)) params.set('view', state.view);
+  if (state.view === 'chat' && state.channelId) params.set('channel', state.channelId);
+  else if (state.view === 'chat' && state.recipient) params.set('recipient', state.recipient);
+  if (state.view === 'settings') {
+    if (state.settingsTab !== 'access') params.set('sub', state.settingsTab);
+    else if (state.accessSection !== ACCESS_SECTIONS[0]) params.set('section', state.accessSection);
+  }
+  if (state.view === 'search') {
+    if (state.searchQuery) params.set('q', state.searchQuery);
+    if (state.searchTab === 'graph') params.set('search_tab', 'graph');
+  }
+  if (state.view === 'plans') {
+    if (state.selectedPlanRev) params.set('revision', state.selectedPlanRev);
+    if (state.selectedPlanID) params.set('plan', state.selectedPlanID);
+    if (state.planTab === 'context') params.set('plan_tab', 'context');
+    else if (state.planVariant) params.set('variant', state.planVariant);
+  }
+  if (state.view === 'todos') {
+    if (state.todoRevision) params.set('revision', state.todoRevision);
+    if (state.todoScope !== 'project') params.set('scope', state.todoScope);
+    if (state.todoGoalTab !== 'all') params.set('goal', state.todoGoalTab);
+    if (state.todoScope === 'agent' && state.todoAgent) params.set('agent', state.todoAgent);
+    if (state.todoLayout === 'kanban') params.set('layout', 'kanban');
+    if (state.taskFilters.status) params.set('status', state.taskFilters.status);
+    if (state.taskFilters.kind) params.set('kind', state.taskFilters.kind);
+    if (state.taskFilters.assignee) params.set('assignee', state.taskFilters.assignee);
+    if (state.taskFilters.query) params.set('query', state.taskFilters.query);
+  }
+  const qs = params.toString();
+  const nextUrl = `${location?.pathname || '/'}${qs ? `?${qs}` : ''}`;
+  if (!replace && nextUrl === location.pathname + location.search) return;
+  if (replace || typeof history.pushState !== 'function') history.replaceState({}, '', nextUrl);
+  else history.pushState({}, '', nextUrl);
+}
+
+function readUrlState() {
+  const params = new URLSearchParams(location?.search || '');
+  const view = params.get('view') || '';
+  const scope = params.get('scope');
+  state.todoScope = ['mine', 'agent'].includes(scope) ? scope : 'project';
+  const goal = params.get('goal');
+  state.todoGoalTab = ['plan', 'global'].includes(goal) ? goal : 'all';
+  state.todoAgent = state.todoScope === 'agent' ? params.get('agent') || '' : '';
+  state.todoRevision = view === 'todos' ? Number(params.get('revision')) || 0 : 0;
+  state.todoLayout = params.get('layout') === 'kanban' ? 'kanban' : 'checklist';
+  if (ROUTES.includes(view)) state.view = view;
+  const sub = params.get('sub') || '';
+  state.settingsTab = ['connections', 'workspaces', 'history'].includes(sub) ? sub : 'access';
+  const section = params.get('section');
+  state.accessSection = ACCESS_SECTIONS.includes(section) ? section : ACCESS_SECTIONS[0];
+  state.planTab = view === 'plans' && params.get('plan_tab') === 'context' ? 'context' : 'reader';
+  const variant = params.get('variant') || '';
+  state.planVariant = view === 'plans' && /^variant_[a-f0-9]{32}$/.test(variant) ? variant : '';
+  state.channelId = params.get('channel') || '';
+  state.recipient = state.channelId ? '' : (params.get('recipient') || '');
+  state.searchQuery = params.get('q') || '';
+  state.searchTab = view === 'search' && params.get('search_tab') === 'graph' ? 'graph' : 'results';
+  state.selectedPlanRev = Number(params.get('revision')) || 0;
+  state.selectedPlanID = params.get('plan') || '';
+  state.planPane = state.selectedPlanID || state.selectedPlanRev ? 'reader' : 'list';
+  state.taskFilters = {
+    status: params.get('status') || '',
+    kind: params.get('kind') || '',
+    assignee: params.get('assignee') || '',
+    query: params.get('query') || ''
+  };
+  return {
+    projectID: params.get('project') || '',
+    homeID: params.get('home') || '',
+    explicitView: ROUTES.includes(view) ? view : '',
+    revision: state.selectedPlanRev,
+    planID: state.selectedPlanID,
+    planPane: state.planPane,
+    accessSection: state.accessSection,
+    planTab: state.planTab,
+    planVariant: state.planVariant,
+    todoScope: state.todoScope,
+    todoRevision: state.todoRevision,
+    todoAgent: state.todoAgent,
+    todoLayout: state.todoLayout,
+    taskFilters: state.taskFilters,
+    searchQuery: state.searchQuery,
+    searchTab: state.searchTab,
+    channelId: state.channelId,
+    recipient: state.recipient
+  };
+}
+
+function clearUrlProject() {
+  if (typeof history?.replaceState === 'function') {
+    history.replaceState({}, '', location?.pathname || '/');
+  }
+}
+
+function selectProject(project, opts = {}) {
+  $('#project-roles-content')?.replaceChildren();
+  if ($('#load-project-roles')) {
+    const label = $('#load-project-roles span');
+    if (label) label.textContent = 'Refresh';
+    else $('#load-project-roles').textContent = 'Refresh';
+    $('#load-project-roles').disabled = false;
+  }
+  state.generation += 1;
+  state.project=project;state.projectReadDenied=false;state.replicas=[];
+  state.agentDMs = [];
+  if ($('#copy-project-status')) $('#copy-project-status').textContent = '';
+  state.plan = null;
+  state.planHistory = [];
+  state.planThreads = [];
+  state.contextRecords = [];
+  state.contextError = '';
+  state.remoteAccessEnabled = false;
+  state.selectedPlanRev = opts.revision || 0;
+  state.selectedPlanID = opts.planID || '';
+  state.planPane = opts.planPane || (opts.planID || opts.revision ? 'reader' : 'list');
+  state.planTab = opts.planTab || 'reader';
+  state.planVariant = opts.planVariant || '';
+  state.comparePlanRev = 0;
+  state.tasks = [];
+  state.taskCounts = {};
+  state.taskTotal = 0;
+  state.taskCursor = '';
+  state.todoScope = opts.todoScope || 'project';
+  state.todoRevision = opts.todoRevision || 0;
+  state.accessSection = opts.accessSection || state.accessSection;
+  if (typeof closeAgentDMs === 'function') closeAgentDMs();
+  if (typeof closeChatSearch === 'function') closeChatSearch();
+  if (typeof resetPlanUiState === 'function') resetPlanUiState();
+  state.todoAgent = opts.todoAgent || '';
+  state.todoLayout = opts.todoLayout || 'checklist';
+  state.taskFilters = opts.taskFilters || { status: '', kind: '', assignee: '', query: '' };
+  for (const dlgId of [
+    'add-project-dialog', 'message-actions-dialog', 'message-source-dialog',
+    'personal-edit-dialog', 'plan-dialog', 'plan-walkthrough-dialog', 'context-dialog',
+    'share-project-dialog', 'task-dialog', 'detail-dialog', 'audit-dialog',
+    'work-roles-section', 'agent-parent-dialog'
+  ]) {
+    closeDialog(dlgId);
+  }
+  if ($('#recovery-output')) { $('#recovery-output').textContent = ''; $('#recovery-output').hidden = true; }
+  if ($('#copy-recovery-btn')) $('#copy-recovery-btn').hidden = true;
+  if ($('#invite-result')) { $('#invite-result').textContent = ''; $('#invite-result').hidden = true; }
+  state.agentQuery = '';
+  state.profileAgent = '';
+  state.agentPane = 'roster';
+  state.agents = [];
+  state.presence = [];
+  state.permissions = [];
+  state.roles = [];
+  state.agentTasks = [];
+  state.agentTasksAgentID = '';
+  state.agentTasksLoading = false;
+  state.agentTasksError = '';
+  state.rolePresets = [];
+  state.repositories = [];
+  state.workspaces = [];
+  state.fileReservations = [];
+  state.certificates = [];
+  state.certInvitations = [];
+  state.integrations = [];
+  state.legacyImports = [];
+  state.legacyRecords = [];
+  state.events = [];
+  state.retention = null;
+  state.messages = [];
+  state.chatLoaded = false;
+  state.chatUnseen = 0;
+  state.chatFetchedSequence = 0;
+  state.chatActivity.clear();
+  state.messagesHasOlder = false;
+  state.messagesOldestSeq = 0;
+  state.settings = null;
+  state.budget = null;
+  state.checklists = { available: false, reason: '', items: [] };
+  state.searchQuery = opts.searchQuery || '';
+  state.searchTab = opts.searchTab || 'results';
+  state.searchResults = null;
+  state.graphify = null;
+  state.searchPending = false;
+  if ($('#header-search-input')) $('#header-search-input').value = state.searchQuery;
+  state.channels = [];
+  state.channelId = opts.channelId !== undefined ? opts.channelId : '';
+  state.recipient = state.channelId ? '' : (opts.recipient !== undefined ? opts.recipient : '');
+  state.mobilePane = 'thread';
+  if (opts.view && ROUTES.includes(opts.view)) {
+    state.view = opts.view;
+  }
+  renderAccessScope();
+  syncUrlState(Boolean(opts.replaceUrl));
+  render();
+}
+
+/* SHARED DOMAIN HELPERS & CONTRACT INVARIANTS */
+function principalLabel(principalID, fallbackName) {
+  if (!principalID) return fallbackName || 'System';
+  if (state.project && principalID === state.project.id) return 'You';
+  const found = state.agents.find(a => a.id === principalID);
+  if (found?.name) return found.name;
+  return fallbackName || principalID;
+}
+
+function labelInitial(name) {
+  return Array.from(String(name || '').trim())[0]?.toUpperCase() || '?';
+}
+
+function agentObject(principalID) {
+  return state.agents.find(a => a.id === principalID) || null;
+}
+
+function presenceFor(principalID) {
+  return state.presence.find(p => p.principal_id === principalID) || null;
+}
+
+function agentHasWorkRole(agentID, roleID) {
+  if (!roleID) return true;
+  return state.roles.some(r => r.principal_id === agentID && r.role_id === roleID);
+}
+
+function eligibleAssignees(t) {
+  const contract=t.report_contract||t.contract||{};
+  return state.agents.filter(a => {
+    if (a.revoked) return false;
+    const pres = presenceFor(a.id);
+    if (!pres || !pres.online) return false;
+    if (contract.required_role && a.role !== contract.required_role && !agentHasWorkRole(a.id, contract.required_role)) {
+      return false;
+    }
+    const reportedCaps = Array.isArray(pres.reported_capabilities) ? pres.reported_capabilities : [];
+    const hasCapabilities = !Array.isArray(contract.required_capabilities) || contract.required_capabilities.length === 0 || contract.required_capabilities.every(cap => reportedCaps.includes(cap));
+    return hasCapabilities;
+  });
+}
+
+function taskContractReviewLabel(t) {
+  const contract=t.report_contract||t.contract||{};
+  return contract.review_type==='diagram_report'?'Markdown report with UML diagrams':'Full code review';
+}
+
+const UNVERIFIED_TASK_ASSIGNMENT_HINT = 'Select an online agent reporting all required capabilities';
+const HOST_REPORTED_NOTE = 'Host reported (unverified)';
+
+function formatBudgetStatus(budget) {
+  const usage = budget.reported_usage;
+  const reported = usage?.records ? ` · ${Number(usage.total_tokens).toLocaleString()} reported tokens` : '';
+  return `Reserved: ${budget.reserved_units || 0} · Revision: ${budget.revision || 0}${reported}`;
+}
+
+function appendAgentUsageDetails(details, presence) {
+  if (presence?.reported_usage) {
+    details.appendChild(createEl('p', 'muted small', 'Reported usage · ' + JSON.stringify(presence.reported_usage)));
+    details.appendChild(createEl('p', 'muted small', 'Usage comes from the client. Independent provider billing is unavailable.'));
+  }
+}
+
+function completionMark(done) {
+  const mark = createEl('span', 'completion-mark' + (done ? ' is-done' : ''));
+  mark.setAttribute('role', 'img');
+  mark.setAttribute('aria-label', done ? 'Complete' : 'Incomplete');
+  if (done) mark.appendChild(svgIcon('check'));
+  return mark;
+}
+
+const taskStatusLabels = {
+  ready: 'Ready', running: 'In progress', submitted: 'In review',
+  accepted: 'Done', blocked: 'Blocked', needs_replan: 'Needs replan', cancelled: 'Cancelled'
+};
+
+/* FORMATTING, DIALOGS & SAFE MARKDOWN */
+function formatTime(isoOrMs) {
+  if (!isoOrMs) return '';
+  const d = new Date(isoOrMs);
+  if (Number.isNaN(d.getTime())) return String(isoOrMs);
+  return d.toLocaleString();
+}
+
+function formatShortTime(isoOrMs) {
+  if (!isoOrMs) return '';
+  const d = new Date(isoOrMs);
+  if (Number.isNaN(d.getTime())) return String(isoOrMs);
+  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+function openDialog(id) {
+  const dlg = $(`#${id}`);
+  if (dlg && typeof dlg.showModal === 'function' && !dlg.open) {
+    dlg.showModal();
+  }
+}
+
+function closeDialog(id) {
+  const dlg = $(`#${id}`);
+  if (dlg && typeof dlg.close === 'function' && dlg.open) {
+    dlg.close();
+  }
+}
+
+function setMobileRailOpen(open) {
+  const rail = $('#app-rail');
+  const backdrop = $('#rail-backdrop');
+  if (rail) rail.classList.toggle('is-open', Boolean(open));
+  if (backdrop) backdrop.hidden = !open;
+  $('#rail-toggle-btn')?.setAttribute('aria-expanded', String(Boolean(open)));
+}
+
+function askConfirmation(title, message, quote = null) {
+  return new Promise(resolve => {
+    const dlg = $('#confirm-dialog');
+    if (!dlg || typeof dlg.showModal !== 'function') {
+      resolve(true);
+      return;
+    }
+    $('#confirm-title').textContent = title;
+    $('#confirm-message').textContent = message;
+    const preview = $('#confirm-quote');
+    preview.textContent = quote || '';
+    preview.hidden = quote === null;
+    const accept = $('#confirm-accept-btn');
+    const cancel = $('#confirm-cancel-btn');
+    const cleanup = result => {
+      accept?.removeEventListener('click', onAccept);
+      cancel?.removeEventListener('click', onCancel);
+      dlg.removeEventListener('cancel', onCancel);
+      dlg.removeEventListener('close', onCancel);
+      preview.textContent = '';
+      preview.hidden = true;
+      if (dlg.open) dlg.close();
+      resolve(result);
+    };
+    const onAccept = () => cleanup(true);
+    const onCancel = () => cleanup(false);
+    accept?.addEventListener('click', onAccept);
+    cancel?.addEventListener('click', onCancel);
+    dlg.addEventListener('cancel', onCancel);
+    dlg.addEventListener('close', onCancel);
+    dlg.showModal();
+  });
+}
+
+function appendInlineFormatted(parent, text) {
+  const parts = String(text || '').split(/(`[^`]+`|\*\*[^*]+\*\*|\[Source message\]\(gossip:message:msg_[0-9a-f]{32}\))/g);
+  for (const part of parts) {
+    if (!part) continue;
+    const source = /^\[Source message\]\(gossip:message:(msg_[0-9a-f]{32})\)$/.exec(part);
+    if (source) {
+      parent.appendChild(uiButton({
+        label: 'Open source message',
+        cls: 'btn btn-xs btn-secondary',
+        onClick: () => openSourceMessage(source[1])
+      }));
+      continue;
+    }
+    if (part.startsWith('`') && part.endsWith('`') && part.length >= 2) {
+      parent.appendChild(createEl('code', '', part.slice(1, -1)));
+    } else if (part.startsWith('**') && part.endsWith('**') && part.length >= 4) {
+      parent.appendChild(createEl('strong', '', part.slice(2, -2)));
+    } else {
+      parent.appendChild(document.createTextNode ? document.createTextNode(part) : createEl('span', '', part));
+    }
+  }
+}
+
+function createSandboxedDiagramPreview(mermaidSource) {
+  const wrap = createEl('div', 'stack-list');
+  let frame = null;
+  const toggleBtn = uiButton({
+    label: 'Render UML diagram preview',
+    cls: 'btn btn-xs btn-secondary',
+    onClick: () => {
+      if (frame) {
+        frame.remove();
+        frame = null;
+        toggleBtn.textContent = 'Render UML diagram preview';
+        return;
+      }
+      frame = createEl('iframe', 'diagram-frame');
+      frame.setAttribute('sandbox','allow-scripts');
+      frame.setAttribute('title', 'Sandboxed UML Diagram');
+      frame.src = '/diagram.html';
+      frame.addEventListener('load', () => {
+        frame?.contentWindow?.postMessage(mermaidSource, '*');
+      });
+      wrap.appendChild(frame);
+      toggleBtn.textContent = 'Hide diagram preview';
+    }
+  });
+  wrap.appendChild(toggleBtn);
+  return wrap;
+}
+
+function renderSafeMarkdown(container, markdownText) {
+  clearNode(container);
+  if (!container) return;
+  const src = String(markdownText || '').trim();
+  if (!src) {
+    container.appendChild(createEl('p', 'muted', 'No content yet.'));
+    return;
+  }
+  const lines = src.split('\n');
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    const fence = line.match(/^```([\w-]*)\s*$/);
+    if (fence) {
+      const lang = (fence[1] || '').toLowerCase();
+      const buf = [];
+      i += 1;
+      while (i < lines.length && !lines[i].startsWith('```')) {
+        buf.push(lines[i]);
+        i += 1;
+      }
+      i += 1;
+      const codeText = buf.join('\n');
+      container.appendChild(createEl('pre', 'code-block', codeText));
+      if (lang === 'mermaid') container.appendChild(createSandboxedDiagramPreview(codeText));
+      continue;
+    }
+    if (line.startsWith('### ')) {
+      const h = createEl('h3');
+      appendInlineFormatted(h, line.slice(4));
+      container.appendChild(h);
+      i += 1;
+      continue;
+    }
+    if (line.startsWith('## ')) {
+      const h = createEl('h2');
+      appendInlineFormatted(h, line.slice(3));
+      container.appendChild(h);
+      i += 1;
+      continue;
+    }
+    if (line.startsWith('# ')) {
+      const h = createEl('h1');
+      appendInlineFormatted(h, line.slice(2));
+      container.appendChild(h);
+      i += 1;
+      continue;
+    }
+    if (/^\s*[-*]\s+/.test(line)) {
+      const ul = createEl('ul');
+      while (i < lines.length && /^\s*[-*]\s+/.test(lines[i])) {
+        const li = createEl('li');
+        appendInlineFormatted(li, lines[i].replace(/^\s*[-*]\s+/, ''));
+        ul.appendChild(li);
+        i += 1;
+      }
+      container.appendChild(ul);
+      continue;
+    }
+    if (/^\s*\d+\.\s+/.test(line)) {
+      const ol = createEl('ol');
+      while (i < lines.length && /^\s*\d+\.\s+/.test(lines[i])) {
+        const li = createEl('li');
+        appendInlineFormatted(li, lines[i].replace(/^\s*\d+\.\s+/, ''));
+        ol.appendChild(li);
+        i += 1;
+      }
+      container.appendChild(ol);
+      continue;
+    }
+    if (!line.trim()) {
+      i += 1;
+      continue;
+    }
+    const p = createEl('p');
+    appendInlineFormatted(p, line);
+    container.appendChild(p);
+    i += 1;
+  }
+}
+
+/* DATA LOADERS (ROUTE-SCOPED + GENERATION GUARDED) */
+async function loadDashboardProjects() {
+  const gen = state.generation;
+  try {
+    const dash = await request('/api/dashboard/projects');
+    if (gen !== state.generation) return dash;
+    state.dashboardAccess = {
+      local_access: Boolean(dash.local_access),
+      home_id: dash.home_id || '',
+      profile: dash.profile || ''
+    };
+    state.localProjects = Array.isArray(dash.local) ? dash.local : [];
+    state.remoteProjects = Array.isArray(dash.remote) ? dash.remote : [];
+    const legacy = await request('/api/projects');
+    if (gen !== state.generation) return dash;
+    state.projects = Array.isArray(legacy) ? legacy : [];
+    $('#connect-required')?.setAttribute('hidden', '');
+    return dash;
+  } catch (err) {
+    if ($('#connect-required')) $('#connect-required').hidden = false;
+    throw err;
+  }
+}
+
+function normalizePlanHistory(items) {
+  return items.map(item => {
+    if (item.plan_id) return item;
+    const heading = String(item.body || '').split('\n').map(line => line.trim().replace(/^#+\s*/, '').trim()).find(Boolean);
+    return { ...item, plan_id: `legacy-plan-${item.revision}`, plan_title: heading || `Legacy plan ${item.revision}` };
+  });
+}
+
+function planVersion(plan) {
+  if (!plan) return 0;
+  const revisions = state.planHistory
+    .filter(item => item.plan_id === plan.plan_id)
+    .sort((a, b) => a.revision - b.revision);
+  const index = revisions.findIndex(item => item.revision === plan.revision);
+  return index < 0 ? 1 : index + 1;
+}
+
+function planVersionLabel(plan) {
+  return `Revision ${planVersion(plan)}`;
+}
+
+function normalizePlanThreads(threads, history) {
+  if (threads.length) return threads;
+  const grouped = new Map();
+  for (const plan of history) {
+    if (!grouped.has(plan.plan_id)) {
+      grouped.set(plan.plan_id, {
+        id: plan.plan_id,
+        title: plan.plan_title || `Plan ${plan.revision}`,
+        latest_revision: plan.revision,
+        status: plan.status || 'archived',
+        created_at: plan.created_at
+      });
+    }
+  }
+  return [...grouped.values()];
+}
+
+async function fetchCoreProjectContext(gen) {
+  const [identityRes, agentsRes, presenceRes, plansRes, threadsRes, rolesRes, permsRes, channelsRes] = await Promise.allSettled([
+    request(projectApi('identity')),
+    request(projectApi('agents')),
+    request(projectApi('presence')),
+    request(projectApi('plans')),
+    request(projectApi('plan-threads')),
+    request(projectApi('roles')),
+    request(projectApi('permissions')),
+    request(projectApi('channels'))
+  ]);
+  if (gen !== state.generation) return;
+  if (identityRes.status === 'rejected') throw identityRes.reason;
+  const identity = identityRes.value;
+  Object.assign(state.project, {
+    id: identity.id, name: identity.name, role: identity.role, project_role: identity.project_role, permissions: []
+  });
+  if (agentsRes.status === 'rejected' && agentsRes.reason?.status) {
+    throw agentsRes.reason;
+  }
+  if (plansRes.status === 'rejected' && plansRes.reason?.status && plansRes.reason.status !== 404) {
+    throw plansRes.reason;
+  }
+  state.agents = agentsRes.status === 'fulfilled' && Array.isArray(agentsRes.value) ? agentsRes.value : [];
+  state.presence = presenceRes.status === 'fulfilled' && Array.isArray(presenceRes.value) ? presenceRes.value : [];
+  const plansList = plansRes.status === 'fulfilled' && Array.isArray(plansRes.value) ? plansRes.value : [];
+  state.planHistory = normalizePlanHistory(plansList);
+  state.plan = state.planHistory[0] || null;
+  state.planThreads = normalizePlanThreads(threadsRes.status === 'fulfilled' && Array.isArray(threadsRes.value) ? threadsRes.value : [], state.planHistory);
+  if (!state.selectedPlanID || !state.planThreads.some(t => t.id === state.selectedPlanID)) {
+    state.selectedPlanID = state.plan?.plan_id || state.planThreads[0]?.id || '';
+  }
+  state.roles = rolesRes.status === 'fulfilled' && Array.isArray(rolesRes.value) ? rolesRes.value : [];
+  state.permissions = permsRes.status === 'fulfilled' && Array.isArray(permsRes.value) ? permsRes.value : [];
+  state.channels = channelsRes.status === 'fulfilled' && Array.isArray(channelsRes.value) ? channelsRes.value : [];
+}
+
+async function loadChatMessages(gen, opts = {}) {
+  if (!state.project) return;
+  if (state.channelId) {
+    const ch = state.channels.find(c => c.id === state.channelId);
+    const isOwner = state.project.role === 'owner';
+    if (!ch || (!isOwner && ch.my_status !== 'joined')) {
+      state.messages = [];
+      state.messagesHasOlder = false;
+      state.messagesOldestSeq = 0;
+      return;
+    }
+  }
+  const query = state.channelId
+    ? { channel: state.channelId, limit: 60 }
+    : { recipient: state.recipient || '', limit: 60 };
+  if (opts.before) query.before = opts.before;
+  else if (opts.incremental) query.after = state.chatFetchedSequence;
+  else query.recent = 1;
+  const res = await request(projectApi('messages', query));
+  if (gen !== state.generation) return;
+  const items = Array.isArray(res) ? res : (Array.isArray(res?.messages) ? res.messages : []);
+  state.chatLoaded = true;
+  if (opts.before) {
+    const existingIDs = new Set(state.messages.map(m => m.id));
+    state.messages = [...items.filter(m => !existingIDs.has(m.id)), ...state.messages];
+    state.messagesHasOlder = items.length >= 60;
+  } else if (opts.incremental) {
+    const existingIDs = new Set(state.messages.map(m => m.id));
+    const incoming = items.filter(m => !existingIDs.has(m.id));
+    state.messages.push(...incoming);
+    state.chatUnseen += incoming.filter(m => m.sender !== state.project.id).length;
+  } else {
+    state.messages = items;
+    state.messagesHasOlder = items.length >= 60;
+  }
+  if (!opts.before) {
+    state.chatFetchedSequence = items.at(-1)?.sequence || (opts.incremental ? state.chatFetchedSequence : 0);
+    if (!opts.incremental) state.chatUnseen = 0;
+  }
+  state.messagesOldestSeq = state.messages.reduce(
+    (oldest, message) => (message.sequence && (!oldest || message.sequence < oldest) ? message.sequence : oldest),
+    0
+  );
+}
+
+async function loadConversationActivity(generation) {
+  try {
+    const activity = await request(projectApi('conversation-activity'));
+    if (generation !== state.generation) return;
+    state.chatActivity = new Map(activity.map(({ room, sequence }) => [room, sequence]));
+    if (state.project?.source === 'remote') {
+      for (const room of state.chatActivity.keys()) {
+        if (room.startsWith('channel:')) state.chatActivity.delete(room);
+      }
+    }
+    if (typeof renderConversationBadges === 'function') renderConversationBadges();
+  } catch {
+    // Keep unread markers during temporary failures and support peers without the activity route.
+  }
+}
+
+async function loadTasksRouteData(gen, append = false) {
+  if (!state.project) return;
+  const query = {
+    revision: state.todoRevision || '',
+    status: state.taskFilters.status,
+    kind: state.taskFilters.kind,
+    assignee: state.todoScope === 'mine' ? state.project.id : state.todoScope === 'agent' ? (state.todoAgent || state.project.id) : state.taskFilters.assignee,
+    query: state.taskFilters.query,
+    cursor: append ? state.taskCursor : ''
+  };
+  const [searchRes, countsRes, checklistsRes] = await Promise.allSettled([
+    request(projectApi('task-search', query)),
+    request(projectApi('task-counts')),
+    request(projectApi('personal-items'))
+  ]);
+  if (gen !== state.generation) return;
+  if (searchRes.status === 'rejected') throw searchRes.reason;
+  const payload = searchRes.value || {};
+  const pageTasks = Array.isArray(payload.tasks) ? payload.tasks : (Array.isArray(payload) ? payload : []);
+  state.tasks = append ? [...state.tasks, ...pageTasks] : pageTasks;
+  state.taskTotal = typeof payload.total === 'number' ? payload.total : state.tasks.length;
+  state.taskCursor = payload.next_cursor || '';
+  state.taskCounts = countsRes.status === 'fulfilled' && countsRes.value ? countsRes.value : {};
+  state.checklists = checklistsRes.status === 'fulfilled' && checklistsRes.value ? checklistsRes.value : { available: false, reason: 'Unavailable', items: [] };
+}
+
+async function loadTaskSearchOnly(gen, append = false, isCurrent = () => true) {
+  if (!state.project) return;
+  const payload = await request(projectApi('task-search', {
+    revision: state.todoRevision || '',
+    status: state.taskFilters.status,
+    kind: state.taskFilters.kind,
+    assignee: state.todoScope === 'mine' ? state.project.id : state.todoScope === 'agent' ? (state.todoAgent || state.project.id) : state.taskFilters.assignee,
+    query: state.taskFilters.query,
+    cursor: append ? state.taskCursor : ''
+  }));
+  if (gen !== state.generation || !isCurrent()) return;
+  const pageTasks = Array.isArray(payload?.tasks) ? payload.tasks : (Array.isArray(payload) ? payload : []);
+  state.tasks = append ? [...state.tasks, ...pageTasks] : pageTasks;
+  state.taskTotal = typeof payload?.total === 'number' ? payload.total : state.tasks.length;
+  state.taskCursor = payload?.next_cursor || '';
+}
+
+async function loadPlansRouteData(gen) {
+  const [plansRes, threadsRes, reposRes, contextRes] = await Promise.allSettled([
+    request(projectApi('plans')),
+    request(projectApi('plan-threads')),
+    request(projectApi('repositories')),
+    request(projectApi('context'))
+  ]);
+  if (gen !== state.generation) return;
+  state.contextRecords = contextRes.status === 'fulfilled' ? contextRes.value : [];
+  state.contextError = contextRes.status === 'rejected' ? contextRes.reason.message : '';
+  state.planHistory = normalizePlanHistory(plansRes.status === 'fulfilled' && Array.isArray(plansRes.value) ? plansRes.value : (state.plan ? [state.plan] : []));
+  state.planThreads = normalizePlanThreads(threadsRes.status === 'fulfilled' && Array.isArray(threadsRes.value) ? threadsRes.value : [], state.planHistory);
+  if (!state.selectedPlanID || !state.planThreads.some(t => t.id === state.selectedPlanID)) state.selectedPlanID = state.plan?.plan_id || state.planThreads[0]?.id || '';
+  const selectedThreadHistory = state.planHistory.filter(p => p.plan_id === state.selectedPlanID);
+  if (!selectedThreadHistory.some(p => p.revision === state.selectedPlanRev)) state.selectedPlanRev = selectedThreadHistory[0]?.revision || 0;
+  state.repositories = reposRes.status === 'fulfilled' && Array.isArray(reposRes.value) ? reposRes.value : [];
+}
+
+async function loadAgentsRouteData(gen) {
+  const selectedID = state.profileAgent || state.agents.find(agent => agent.id !== state.project?.id)?.id || state.agents[0]?.id || '';
+  if (!state.profileAgent && selectedID) state.profileAgent = selectedID;
+  state.agentTasksAgentID = selectedID;
+  state.agentTasksLoading = Boolean(selectedID);
+  state.agentTasksError = '';
+  const [presetsRes, checklistsRes, tasksRes] = await Promise.allSettled([
+    request(projectApi('role-presets')),
+    request(projectApi('personal-items')),
+    selectedID ? request(projectApi('task-search', { assignee: selectedID })) : Promise.resolve({ tasks: [] })
+  ]);
+  if (gen !== state.generation) return;
+  state.rolePresets = presetsRes.status === 'fulfilled' && Array.isArray(presetsRes.value) ? presetsRes.value : [];
+  state.checklists = checklistsRes.status === 'fulfilled' && checklistsRes.value ? checklistsRes.value : { available: false, reason: '', items: [] };
+  state.agentTasks = tasksRes.status === 'fulfilled' ? (Array.isArray(tasksRes.value?.tasks) ? tasksRes.value.tasks : []) : [];
+  state.agentTasksError = tasksRes.status === 'rejected' ? tasksRes.reason.message : '';
+  state.agentTasksLoading = false;
+}
+
+async function loadAgentTaskPreview(agentID, gen = state.generation) {
+  state.agentTasks = [];
+  state.agentTasksAgentID = agentID;
+  state.agentTasksLoading = true;
+  state.agentTasksError = '';
+  if (typeof renderAgentsView === 'function') renderAgentsView();
+  try {
+    const result = await request(projectApi('task-search', { assignee: agentID }));
+    if (gen !== state.generation || state.profileAgent !== agentID) return;
+    state.agentTasks = Array.isArray(result?.tasks) ? result.tasks : [];
+  } catch (error) {
+    if (gen === state.generation && state.profileAgent === agentID) state.agentTasksError = error.message;
+  } finally {
+    if (gen === state.generation && state.profileAgent === agentID) {
+      state.agentTasksLoading = false;
+      if (typeof renderAgentsView === 'function') renderAgentsView();
+    }
+  }
+}
+
+async function loadSearchRouteData(gen, isCurrent = () => true) {
+  const q = state.searchQuery.trim();
+  const [searchRes, graphRes] = await Promise.allSettled([
+    q ? request(projectApi('search', { q })) : Promise.resolve(null),
+    request(projectApi('graphify', { q }))
+  ]);
+  if (gen !== state.generation || !isCurrent()) return;
+  state.searchPending = false;
+  if (searchRes.status === 'rejected') throw searchRes.reason;
+  state.searchResults = searchRes.status === 'fulfilled' ? searchRes.value : null;
+  state.graphify = graphRes.status === 'fulfilled' ? graphRes.value : { status: 'unavailable', reason: 'Unable to inspect Graphify.' };
+}
+
+async function loadSettingsRouteData(gen) {
+  const tab = state.settingsTab;
+  const section = state.accessSection;
+  const resources = {
+    workspaces: ['repositories', 'workspaces', 'file-reservations', 'integrations'],
+    connections: ['replicas', 'remote-access'],
+    history: ['events', 'retention', 'legacy-imports']
+  }[tab] || {
+    'access-devices': ['certificates', 'certificate-invitations'],
+    'access-limits': ['settings', 'budget']
+  }[section] || [];
+  const current = () => gen === state.generation && state.view === 'settings'
+    && state.settingsTab === tab && (tab !== 'access' || state.accessSection === section);
+  if (!current()) return;
+  const status = $('#settings-load-status');
+  if (status) {
+    status.hidden = !resources.length;
+    status.textContent = resources.length ? 'Loading section…' : '';
+  }
+  const results = await Promise.allSettled(resources.map(resource => request(
+    resource === 'remote-access'
+      ? '/api/remote-access'
+      : resource === 'events'
+        ? projectApi('events', { recent: 1 })
+        : projectApi(resource))));
+  if (!current()) return;
+  const fields = {
+    'file-reservations': 'fileReservations',
+    'certificate-invitations': 'certInvitations',
+    'legacy-imports': 'legacyImports'
+  };
+  resources.forEach((resource, index) => {
+    const result = results[index];
+    const value = result.status === 'fulfilled' ? result.value : null;
+    if (resource === 'remote-access') {
+      state.remoteAccessEnabled = Boolean(value?.enabled);
+    } else if (['budget', 'settings', 'retention'].includes(resource)) {
+      state[resource] = value;
+    } else {
+      state[fields[resource] || resource] = Array.isArray(value) ? value : [];
+    }
+  });
+  if (tab === 'history') {
+    state.legacyRecords = [];
+    const first = state.legacyImports[0];
+    if (first) {
+      try {
+        const records = await request(projectApi('legacy-records', { import_id: first.id }));
+        if (current() && Array.isArray(records)) state.legacyRecords = records;
+      } catch {}
+    }
+  }
+  if (current()) {
+    const failures = results.filter(result => result.status === 'rejected' && ![403, 404, 501].includes(result.reason?.status));
+    if (status) {
+      status.hidden = !failures.length;
+      status.textContent = failures.length ? 'Some settings could not be loaded. Refresh to try again.' : '';
+    }
+    if (typeof renderSettingsView === 'function') renderSettingsView();
+  }
+}
+
+async function refresh() {
+  const gen = state.generation;
+  const project = state.project;
+  try {
+    if (!project) {
+      await loadDashboardProjects();
+      if (gen === state.generation) render();
+      return;
+    }
+    await fetchCoreProjectContext(gen);
+    if (gen !== state.generation) return;
+    if (state.view === 'chat') {
+      await loadChatMessages(gen);
+      if (gen === state.generation) await loadConversationActivity(gen);
+      if (gen === state.generation && typeof loadAgentDMThreads === 'function') await loadAgentDMThreads(gen);
+    } else if (state.view === 'plans') {
+      await loadPlansRouteData(gen);
+    } else if (state.view === 'todos') {
+      await loadTasksRouteData(gen, false);
+    } else if (state.view === 'agents') {
+      await loadAgentsRouteData(gen);
+    } else if (state.view === 'search') {
+      await loadSearchRouteData(gen);
+    } else if (state.view === 'settings') {
+      await loadSettingsRouteData(gen);
+      if (gen === state.generation && state.settingsTab === 'access' && state.accessSection === 'project-roles-card' && typeof loadProjectRoleEditor === 'function') {
+        await loadProjectRoleEditor();
+      }
+    } else if (state.view === 'projects') {
+      await loadDashboardProjects();
+    }
+    if (gen !== state.generation) return;
+    showError('');
+    render();
+  } catch (e) {
+    if (gen !== state.generation) return;
+    if (e.status === 403 && state.project === project) {
+      state.projectReadDenied=true;
+      Object.assign(state,{tasks:[],messages:[],repositories:[],workspaces:[],integrations:[],agents:[],presence:[],plan:null,planHistory:[]});
+      render();
+      return;
+    }
+    if (state.project === null) {
+      render();
+      return;
+    }
+    showError(e.message || 'Unable to load project data.');
+    render();
+  }
+}
+
+function renderAuditEventRow(ev) {
+  const row = createEl('div', 'list-item');
+  const meta = [formatTime(ev.created_at), ev.actor ? principalLabel(ev.actor) : '', ev.summary]
+    .filter(Boolean)
+    .join(' · ');
+  row.append(
+    createEl('div', 'list-item-title', `${ev.kind} · #${ev.sequence}`),
+    createEl('div', 'muted small', meta)
+  );
+  return row;
+}
+
+function setView(viewName, opts = {}) {
+  if (!ROUTES.includes(viewName)) return;
+  if (state.view && state.view !== 'search' && viewName === 'search') {
+    state.previousView = state.view;
+  }
+  if (state.view === 'chat' && viewName !== 'chat') {
+    if (typeof closeAgentDMs === 'function') closeAgentDMs();
+    if (typeof closeChatSearch === 'function') closeChatSearch();
+  }
+  const routeChanged = state.view !== viewName;
+  state.view = viewName;
+  if (viewName === 'plans') {
+    if (opts.planID !== undefined) state.selectedPlanID = opts.planID;
+    if (opts.revision !== undefined) state.selectedPlanRev = opts.revision;
+    if (opts.planID !== undefined || opts.revision !== undefined) state.planPane = 'reader';
+  }
+  if (opts.revision !== undefined && viewName === 'todos') {
+    state.todoRevision = opts.revision;
+    if (opts.revision > 0) {
+      state.todoScope = 'project';
+      state.todoGoalTab = 'plan';
+    }
+  }
+  if (opts.todoAgent) {
+    state.todoScope = opts.todoAgent === state.project?.id ? 'mine' : 'agent';
+    state.todoAgent = opts.todoAgent;
+  }
+  if (viewName === 'chat' && (opts.channelId !== undefined || opts.recipient !== undefined)) {
+    state.messages = [];
+    state.messagesHasOlder = false;
+    state.messagesOldestSeq = 0;
+    state.chatLoaded = false;
+  }
+  if (opts.channelId !== undefined) {
+    state.channelId = opts.channelId;
+    if (opts.channelId) state.recipient = '';
+  }
+  if (opts.recipient !== undefined) {
+    state.recipient = opts.recipient;
+    if (opts.recipient) state.channelId = '';
+  }
+  if (opts.mobilePane) state.mobilePane = opts.mobilePane;
+  setMobileRailOpen(false);
+  syncUrlState(Boolean(opts.replaceUrl));
+  if (state.project || viewName === 'projects') {
+    state.generation += 1;
+    render();
+    if (routeChanged) window.scrollTo(0, 0);
+    refresh();
+  } else {
+    render();
+  }
+}
+
+/* SHELL CHROME & ROUTE DISPATCHER */
+function renderShellChrome() {
+  const p = state.project;
+  if ($('.app-shell')) $('.app-shell').dataset.view = state.view;
+  const share = $('#share-project-btn');
+  if (share) {
+    share.hidden = state.project?.role !== 'owner' || state.project?.source === 'remote';
+    share.onclick = () => typeof openShareProject === 'function' && openShareProject();
+  }
+  const authBadge = $('#authority-badge');
+  const signOut = $('#logout');
+  if (signOut) signOut.hidden = Boolean(state.dashboardAccess.local_access);
+  if (authBadge) {
+    if (state.dashboardAccess.local_access) authBadge.textContent = 'Local authority';
+    else authBadge.textContent = state.dashboardAccess.profile ? `Profile: ${state.dashboardAccess.profile}` : 'Scoped session';
+  }
+  const titleEl = $('#topbar-title');
+  if (titleEl) titleEl.textContent = ROUTE_TITLES[state.view] || 'Projects';
+  document.title = (p ? p.project_name + ' · ' : '') + (ROUTE_TITLES[state.view] || 'Projects') + ' · Gossip';
+
+  const projBadge = $('#topbar-project-badge');
+  if (projBadge) {
+    if (p) {
+      projBadge.textContent = p.project_name || p.project_id;
+      projBadge.hidden = false;
+    } else {
+      projBadge.hidden = true;
+    }
+  }
+  const homeBadge = $('#topbar-home-badge');
+  if (homeBadge) {
+    if (p && p.home_id && state.dashboardAccess.home_id && p.home_id !== state.dashboardAccess.home_id) {
+      homeBadge.textContent = 'Remote';
+      homeBadge.hidden = false;
+    } else if (p) {
+      homeBadge.textContent = 'Local';
+      homeBadge.hidden = false;
+    } else {
+      homeBadge.hidden = true;
+    }
+  }
+
+  const search = $('#header-search-input');
+  const label = {
+    projects: 'Find projects',
+    chat: 'Search messages',
+    plans: 'Search project content',
+    todos: 'Search tasks',
+    agents: 'Find agents',
+    search: 'Search all project content',
+    settings: 'Search project content'
+  }[state.view] || 'Search project content';
+  if (search) {
+    search.placeholder = label + '…';
+    search.setAttribute('aria-label', label);
+    const searchButton = $('#header-search-form .search-submit');
+    if (searchButton) {
+      searchButton.setAttribute('aria-label', label);
+      searchButton.title = label;
+    }
+    if (search.dataset.view !== state.view) {
+      search.dataset.view = state.view;
+      search.value = {
+        projects: state.projectQuery, search: state.searchQuery, agents: state.agentQuery, todos: state.taskFilters.query
+      }[state.view] || '';
+    }
+    const canSearch = Boolean(p) || state.view === 'projects';
+    if ($('#header-search-form')) $('#header-search-form').hidden = !canSearch;
+    search.disabled = !canSearch;
+  }
+
+  const switcher = $('#project-switcher');
+  const switcherOptions = $('#project-switcher-options');
+  const switcherLabel = $('#project-switcher-label');
+  const switcherIconUse = $('#project-switcher-icon use');
+  const switcherEntries = [];
+  if (switcher || switcherOptions) {
+    if (switcher) clearNode(switcher);
+    if (switcherOptions) clearNode(switcherOptions);
+    const emptyOpt = createEl('option', '', 'Select a project…');
+    emptyOpt.value = '';
+    switcher?.appendChild(emptyOpt);
+    const localReady = state.localProjects.filter(lp => lp.status === 'ready');
+    for (const lp of localReady) {
+      const selected = Boolean(p && p.project_id === lp.project_id && (!p.home_id || p.home_id === lp.home_id));
+      switcherEntries.push({
+        value: `local:${lp.project_id}`,
+        name: lp.project_name || lp.project_id,
+        icon: 'projects',
+        selected,
+        nativeLabel: `${lp.project_name} (Local)`,
+        open: () => typeof openLocalProject === 'function' && openLocalProject(lp, state.view === 'projects' ? 'chat' : state.view)
+      });
+    }
+    for (const rp of state.remoteProjects) {
+      const selected = Boolean(p && p.project_id === rp.project_id && p.home_id === rp.home_id);
+      switcherEntries.push({
+        value: `remote:${rp.home_id}:${rp.project_id}`,
+        name: rp.project_name || rp.project_id,
+        icon: 'globe',
+        selected,
+        nativeLabel: `${rp.project_name} (${rp.status})`,
+        open: () => typeof openRemoteProject === 'function' && openRemoteProject(rp, state.view === 'projects' ? 'chat' : state.view)
+      });
+    }
+    for (const ep of state.projects) {
+      const already = localReady.some(lp => lp.project_id === ep.project_id)
+        || state.remoteProjects.some(rp => rp.project_id === ep.project_id && rp.home_id === ep.home_id);
+      if (already) continue;
+      const selected = Boolean(p && p.project_id === ep.project_id);
+      switcherEntries.push({
+        value: `session:${ep.project_id}`,
+        name: ep.project_name || ep.project_id,
+        icon: ep.source === 'remote' ? 'globe' : 'projects',
+        selected,
+        nativeLabel: ep.project_name || ep.project_id,
+        open: async () => {
+          selectProject(ep, { view: state.view === 'projects' ? 'chat' : state.view });
+          await refresh();
+        }
+      });
+    }
+    for (const item of switcherEntries) {
+      const opt = createEl('option', '', item.nativeLabel);
+      opt.value = item.value;
+      if (item.selected) opt.selected = true;
+      switcher?.appendChild(opt);
+      if (switcherOptions) {
+        const optionBtn = createEl('button', `project-switcher-option${item.selected ? ' is-selected' : ''}`);
+        optionBtn.type = 'button';
+        optionBtn.setAttribute('role', 'option');
+        optionBtn.setAttribute('aria-selected', String(item.selected));
+        optionBtn.dataset.value = item.value;
+        optionBtn.append(
+          svgIcon(item.icon),
+          createEl('span', 'project-switcher-option-name', item.name)
+        );
+        if (item.selected) optionBtn.appendChild(svgIcon('check'));
+        optionBtn.addEventListener('click', async () => {
+          const menu = $('#project-switcher-menu');
+          if (menu) menu.hidden = true;
+          $('#project-switcher-btn')?.setAttribute('aria-expanded', 'false');
+          if (switcher) switcher.value = item.value;
+          await item.open();
+        });
+        switcherOptions.appendChild(optionBtn);
+      }
+    }
+    const activeEntry = switcherEntries.find(item => item.selected) || null;
+    if (switcherLabel) switcherLabel.textContent = activeEntry ? activeEntry.name : (p ? (p.project_name || p.project_id) : 'Select a project…');
+    if (switcherIconUse) switcherIconUse.setAttribute('href', `#icon-${activeEntry ? activeEntry.icon : (p?.source === 'remote' ? 'globe' : 'projects')}`);
+    if (switcherOptions && !switcherEntries.length) {
+      switcherOptions.appendChild(createEl('p', 'muted small project-switcher-empty', 'No projects ready yet.'));
+    }
+  }
+
+  const railHint = $('#rail-project-hint');
+  if (railHint) {
+    const needsRepair = state.localProjects.filter(lp => lp.status !== 'ready');
+    if (needsRepair.length > 0) {
+      railHint.textContent = `${needsRepair.length} local project(s) need owner selection in Projects.`;
+      railHint.hidden = false;
+    } else {
+      railHint.hidden = true;
+    }
+  }
+
+  $$('.nav-tab').forEach(btn => {
+    const v = btn.getAttribute('data-view');
+    btn.classList.toggle('is-active', v === state.view);
+    if (v === state.view) btn.setAttribute('aria-current', 'page');
+    else btn.removeAttribute('aria-current');
+    btn.disabled = v !== 'projects' && !p;
+  });
+
+  const planCount = state.planThreads.length;
+  const plansNav = $('.nav-tab[data-view="plans"]');
+  if (plansNav) {
+    plansNav.setAttribute('aria-label', planCount ? `Plans, ${planCount} independent plans` : 'Plans');
+    plansNav.title = planCount ? `${planCount} independent plans` : 'Plans';
+  }
+  if ($('#nav-badge-plans')) $('#nav-badge-plans').textContent = planCount ? String(planCount) : '';
+  const openCount = (state.taskCounts?.open || 0) + (state.taskCounts?.assigned || 0) + (state.taskCounts?.in_progress || 0);
+  if ($('#nav-badge-todos')) $('#nav-badge-todos').textContent = openCount ? String(openCount) : '';
+  const onlineAgents = state.presence.filter(pr => pr.online).length;
+  if ($('#nav-badge-agents')) $('#nav-badge-agents').textContent = state.agents.length ? `${onlineAgents}/${state.agents.length}` : '';
+
+  const idName = $('#identity-name');
+  const idRole = $('#identity-role');
+  if (idName) idName.textContent = p ? `You · ${p.name || p.id}` : 'You';
+  if (idRole) idRole.textContent = p ? `Role: ${p.project_role || p.role || 'member'} · ${p.project_name || p.project_id}` : 'No project opened';
+  if ($('#home-id-label')) $('#home-id-label').textContent = state.dashboardAccess.home_id ? `Home: ${state.dashboardAccess.home_id}` : '';
+
+  const auditBtn = $('#open-audit-btn');
+  if (auditBtn) auditBtn.hidden = !p;
+  const denied = $('#access-denied-banner');
+  if (denied) denied.hidden = !state.projectReadDenied;
+
+  ROUTES.forEach(route => {
+    const el = $(`#view-${route}`);
+    if (el) el.hidden = state.view !== route;
+  });
+}
+
+function render() {
+  renderShellChrome();
+  const renderers = {
+    projects: typeof renderProjectsView === 'function' ? renderProjectsView : null,
+    chat: typeof renderChatView === 'function' ? renderChatView : null,
+    plans: typeof renderPlansView === 'function' ? renderPlansView : null,
+    todos: typeof renderTodosView === 'function' ? renderTodosView : null,
+    agents: typeof renderAgentsView === 'function' ? renderAgentsView : null,
+    search: typeof renderSearchView === 'function' ? renderSearchView : null,
+    settings: typeof renderSettingsView === 'function' ? renderSettingsView : null
+  };
+  renderers[state.view]?.();
+}
+
+function wireShellEvents() {
+  const shell = $('.app-shell');
+  const resizeHandle = $('#rail-resize-handle');
+  const resizeKey = 'gossip.sidebar.width';
+  const RAIL_MIN_WIDTH = 248;
+  const RAIL_MAX_WIDTH = 380;
+  const RAIL_DEFAULT_WIDTH = 264;
+  const setRailWidth = raw => {
+    const width = Math.max(RAIL_MIN_WIDTH, Math.min(RAIL_MAX_WIDTH, window.innerWidth - 32, Math.round(raw)));
+    shell?.style.setProperty('--rail-width', `${width}px`);
+    resizeHandle?.setAttribute('aria-valuenow', String(width));
+    try { localStorage.setItem(resizeKey, String(width)); } catch {}
+  };
+  try {
+    const saved = Number(localStorage.getItem(resizeKey));
+    if (saved >= RAIL_MIN_WIDTH && saved <= RAIL_MAX_WIDTH) setRailWidth(saved);
+    else setRailWidth(RAIL_DEFAULT_WIDTH);
+  } catch {}
+  let resizingRail = false;
+  resizeHandle?.addEventListener('pointerdown', event => {
+    if ((window.innerWidth < 1100 && !$('#app-rail').classList.contains('is-open')) || event.button !== 0) return;
+    resizingRail = true;
+    resizeHandle.setPointerCapture(event.pointerId);
+    event.preventDefault();
+  });
+  resizeHandle?.addEventListener('pointermove', event => {
+    if (resizingRail) setRailWidth(event.clientX);
+  });
+  const finishResize = () => { resizingRail = false; };
+  resizeHandle?.addEventListener('pointerup', finishResize);
+  resizeHandle?.addEventListener('pointercancel', finishResize);
+  resizeHandle?.addEventListener('keydown', event => {
+    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+    event.preventDefault();
+    const width = Number(resizeHandle.getAttribute('aria-valuenow')) || RAIL_DEFAULT_WIDTH;
+    setRailWidth(event.key === 'Home' ? RAIL_MIN_WIDTH : event.key === 'End' ? RAIL_MAX_WIDTH : width + (event.key === 'ArrowRight' ? 12 : -12));
+  });
+
+  const switcherBtn = $('#project-switcher-btn');
+  const switcherMenu = $('#project-switcher-menu');
+  const closeProjectMenu = () => {
+    if (switcherMenu) switcherMenu.hidden = true;
+    switcherBtn?.setAttribute('aria-expanded', 'false');
+  };
+  switcherBtn?.addEventListener('click', () => {
+    if (!switcherMenu) return;
+    const willOpen = switcherMenu.hidden;
+    switcherMenu.hidden = !willOpen;
+    switcherBtn.setAttribute('aria-expanded', String(willOpen));
+  });
+  switcherBtn?.addEventListener('keydown', event => {
+    if (!switcherMenu || event.key !== 'ArrowDown') return;
+    event.preventDefault();
+    switcherMenu.hidden = false;
+    switcherBtn.setAttribute('aria-expanded', 'true');
+    const first = switcherMenu.querySelector('[role="menuitem"]:not([hidden])');
+    first?.focus();
+  });
+  switcherMenu?.addEventListener('keydown', event => {
+    if (event.key === 'Escape') {
+      closeProjectMenu();
+      switcherBtn?.focus();
+      return;
+    }
+    if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
+    const items = Array.from(switcherMenu.querySelectorAll('[role="menuitem"]:not([hidden]):not(:disabled)'));
+    if (!items.length) return;
+    event.preventDefault();
+    const idx = items.indexOf(document.activeElement);
+    let nextIdx = 0;
+    if (event.key === 'ArrowDown') nextIdx = idx < 0 ? 0 : (idx + 1) % items.length;
+    else if (event.key === 'ArrowUp') nextIdx = idx <= 0 ? items.length - 1 : idx - 1;
+    else if (event.key === 'Home') nextIdx = 0;
+    else if (event.key === 'End') nextIdx = items.length - 1;
+    items[nextIdx].focus();
+  });
+  $('#search-back-btn')?.addEventListener('click', () => {
+    const target = state.previousView && state.previousView !== 'search' ? state.previousView : 'chat';
+    setView(target);
+  });
+  ['#projects-tabs', '#plan-view-tabs', '#todo-scope-tabs', '#agents-view-tabs', '#search-mode-tabs', '#settings-tabs']
+    .forEach(selector => {
+      const tablist = $(selector);
+      if (!tablist) return;
+      tablist.addEventListener('keydown', event => {
+        if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+        const tabs = Array.from(tablist.querySelectorAll('[role="tab"]:not([hidden]):not(:disabled)'));
+        const currentIndex = tabs.indexOf(document.activeElement);
+        if (currentIndex === -1 || !tabs.length) return;
+        event.preventDefault();
+        let nextIndex = currentIndex;
+        if (event.key === 'ArrowRight') nextIndex = (currentIndex + 1) % tabs.length;
+        else if (event.key === 'ArrowLeft') nextIndex = (currentIndex - 1 + tabs.length) % tabs.length;
+        else if (event.key === 'Home') nextIndex = 0;
+        else if (event.key === 'End') nextIndex = tabs.length - 1;
+        tabs[nextIndex].focus();
+        tabs[nextIndex].click();
+      });
+    });
+
+  applyTheme(document?.documentElement?.dataset?.theme || resolveInitialTheme(), false);
+  $('#theme-toggle-btn')?.addEventListener('click', () => {
+    const next = document?.documentElement?.dataset?.theme === 'dark' ? 'light' : 'dark';
+    applyTheme(next, true);
+  });
+  if (typeof window !== 'undefined') {
+    window.matchMedia?.('(prefers-color-scheme: dark)')?.addEventListener?.('change', e => {
+      try {
+        if (typeof localStorage !== 'undefined' && localStorage.getItem(THEME_STORAGE_KEY)) return;
+      } catch {}
+      applyTheme(e.matches ? 'dark' : 'light', false);
+    });
+  }
+
+  $('#error-dismiss')?.addEventListener('click', () => showError(''));
+  const closeRail = () => {
+    setMobileRailOpen(false);
+    $('#rail-toggle-btn')?.focus();
+  };
+  $('#rail-toggle-btn')?.addEventListener('click', () => {
+    setMobileRailOpen(true);
+    $('#rail-close-btn')?.focus();
+  });
+  $('#rail-close-btn')?.addEventListener('click', closeRail);
+  $('#rail-backdrop')?.addEventListener('click', closeRail);
+  $('#app-rail')?.addEventListener('keydown', event => {
+    if (event.key === 'Escape' && $('#app-rail').classList.contains('is-open')) closeRail();
+  });
+
+  $$('.modal-close, [data-close-dialog]').forEach(btn => {
+    btn.addEventListener('click', () => closeDialog(btn.getAttribute('data-close-dialog')));
+  });
+
+  $('#project-switcher')?.addEventListener('change', async e => {
+    const val = e.target.value || '';
+    if (!val) return;
+    if (val.startsWith('local:')) {
+      const id = val.slice(6);
+      const lp = state.localProjects.find(x => x.project_id === id);
+      if (lp && typeof openLocalProject === 'function') await openLocalProject(lp, state.view === 'projects' ? 'chat' : state.view);
+    } else if (val.startsWith('remote:')) {
+      const [, homeID, projID] = val.split(':');
+      const rp = state.remoteProjects.find(x => x.home_id === homeID && x.project_id === projID);
+      if (rp && typeof openRemoteProject === 'function') await openRemoteProject(rp, state.view === 'projects' ? 'chat' : state.view);
+    } else if (val.startsWith('session:')) {
+      const id = val.slice(8);
+      const sp = state.projects.find(x => x.project_id === id);
+      if (sp) {
+        selectProject(sp, { view: state.view === 'projects' ? 'chat' : state.view });
+        await refresh();
+      }
+    }
+  });
+
+  $$('.nav-tab').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const view = btn.getAttribute('data-view');
+      if (view) setView(view);
+      if (view === 'search') $('#header-search-input')?.focus();
+    });
+  });
+
+  $('#refresh')?.addEventListener('click', () => {
+    if ($('#shell-actions')) $('#shell-actions').open = false;
+    refresh();
+  });
+  document.addEventListener('click', event => {
+    const actions = $('#shell-actions');
+    if (actions?.open && !actions.contains(event.target)) actions.open = false;
+    const dropdown = $('#project-dropdown');
+    const menu = $('#project-switcher-menu');
+    if (menu && !menu.hidden && dropdown && !dropdown.contains(event.target)) {
+      menu.hidden = true;
+      $('#project-switcher-btn')?.setAttribute('aria-expanded', 'false');
+    }
+    $$('.agent-profile-action-menu[open]').forEach(node => {
+      if (!node.contains(event.target)) node.open = false;
+    });
+  });
+
+  $('#logout').addEventListener('click',async()=>{
+    if (!await askConfirmation('Sign out?', 'This removes project credentials imported into this browser session. Local projects and saved peer connections remain available.')) return;
+    try { await request('/api/logout', { method: 'POST', body: {} }); }
+    catch (error) { showError(error.message); return; }
+    expireProjectSession(state.project?.project_id);
+    clearUrlProject();
+    try { await loadDashboardProjects(); } catch {}
+    state.view = 'projects';
+    render();
+  });
+
+  $('#open-audit-btn')?.addEventListener('click', async () => {
+    if (!state.project) return;
+    try {
+      const events = await request(projectApi('events', { recent: 1 }));
+      renderList($('#audit-list'), events || [], 'No recent events recorded.', renderAuditEventRow);
+      openDialog('audit-dialog');
+    } catch (err) {
+      showError(err.message);
+    }
+  });
+
+  $('#header-search-input')?.addEventListener('input', event => {
+    clearTimeout(chatSearchTimer);
+    if (state.view === 'projects') {
+      state.projectQuery = event.target.value.trim();
+      if (typeof renderProjectsView === 'function') renderProjectsView();
+      return;
+    }
+    if (state.view === 'agents' && state.project) {
+      state.agentQuery = event.target.value.trim();
+      state.agentPane = 'roster';
+      if (typeof renderAgentsView === 'function') renderAgentsView();
+      return;
+    }
+    if (state.view === 'todos' && state.project) {
+      state.taskFilters.query = event.target.value.trim();
+      const generation = state.generation;
+      const requestID = ++liveTaskSearchRequest;
+      chatSearchTimer = setTimeout(async () => {
+        if (generation !== state.generation || state.view !== 'todos' || requestID !== liveTaskSearchRequest) return;
+        try {
+          await loadTaskSearchOnly(generation, false, () => requestID === liveTaskSearchRequest);
+          if (generation === state.generation && state.view === 'todos' && requestID === liveTaskSearchRequest && typeof renderTodosView === 'function') {
+            renderTodosView();
+          }
+        } catch (error) {
+          if (generation === state.generation) showError(error.message);
+        }
+      }, 250);
+      return;
+    }
+    if (state.view === 'search' && state.project) {
+      const query = event.target.value.trim();
+      const generation = state.generation;
+      const requestID = ++liveGlobalSearchRequest;
+      state.searchQuery = query;
+      state.searchResults = null;
+      state.searchPending = Boolean(query);
+      if (typeof renderSearchView === 'function') renderSearchView();
+      chatSearchTimer = setTimeout(async () => {
+        if (generation !== state.generation || state.view !== 'search' || requestID !== liveGlobalSearchRequest) return;
+        try {
+          await loadSearchRouteData(generation, () => requestID === liveGlobalSearchRequest);
+          if (generation === state.generation && state.view === 'search' && requestID === liveGlobalSearchRequest && typeof renderSearchView === 'function') {
+            renderSearchView();
+          }
+        } catch (error) {
+          if (generation === state.generation) showError(error.message);
+        }
+      }, 250);
+      return;
+    }
+    if (state.view !== 'chat' || !state.project) return;
+    const query = event.target.value.trim();
+    const generation = state.generation;
+    chatSearchRequest += 1;
+    if (!query) {
+      if (typeof closeChatSearch === 'function') closeChatSearch();
+      if (typeof renderChatView === 'function') renderChatView();
+    } else {
+      chatSearchTimer = setTimeout(() => {
+        if (generation === state.generation && state.view === 'chat' && typeof searchChat === 'function') void searchChat(query);
+      }, 300);
+    }
+  });
+
+  $('#header-search-form')?.addEventListener('submit', event => {
+    event.preventDefault();
+    clearTimeout(chatSearchTimer);
+    const query = $('#header-search-input').value.trim();
+    if (state.view === 'projects') {
+      state.projectQuery = query;
+      if (typeof renderProjectsView === 'function') renderProjectsView();
+      $('#local-projects-list button, #remote-projects-list button')?.focus();
+      return;
+    }
+    if (!state.project) return;
+    if (state.view === 'chat') {
+      if (typeof searchChat === 'function') void searchChat(query);
+      return;
+    }
+    if (state.view === 'todos') {
+      state.taskFilters.query = query;
+      if ($('#filter-query')) $('#filter-query').value = query;
+      $('#todo-filters')?.requestSubmit();
+      return;
+    }
+    if (state.view === 'agents') {
+      state.agentQuery = query;
+      state.agentPane = 'roster';
+      if (typeof renderAgentsView === 'function') renderAgentsView();
+      $('#agents-list button')?.focus();
+      return;
+    }
+    const graph = state.view === 'search' && state.searchTab === 'graph';
+    state.searchQuery = query;
+    state.searchResults = null;
+    state.graphify = null;
+    state.searchPending = Boolean(state.searchQuery);
+    state.searchTab = graph ? 'graph' : 'results';
+    setView('search');
+  });
+}
+
+function wireEvents() {
+  wireShellEvents();
+  if (typeof wireProjectDialogEvents === 'function') wireProjectDialogEvents();
+  if (typeof wireChatEvents === 'function') wireChatEvents();
+  if (typeof wirePlanEvents === 'function') wirePlanEvents();
+  if (typeof wireTodoEvents === 'function') wireTodoEvents();
+  if (typeof wireAgentEvents === 'function') wireAgentEvents();
+  if (typeof wireSettingsEvents === 'function') wireSettingsEvents();
+}
+
+async function boot() {
+  wireEvents();
+  if (matchMedia('(max-width: 700px)').matches && $('#quick-task-disclosure')) {
+    $('#quick-task-disclosure').open = false;
+  }
+  const initial = readUrlState();
+  try {
+    await loadDashboardProjects();
+  } catch (err) {
+    showError(err.message);
+    render();
+    return;
+  }
+
+  let selected = typeof projectFromLocation === 'function' ? projectFromLocation(initial) : null;
+  if (!initial.projectID) {
+    const firstReadyLocal = state.localProjects.find(project => project.status === 'ready');
+    const needsRepair = state.localProjects.some(project => project.status !== 'ready');
+    if (firstReadyLocal && typeof principalFromLocalProject === 'function') selected = principalFromLocalProject(firstReadyLocal);
+    else if (!needsRepair && state.projects.length) selected = state.projects[0];
+  }
+
+  if (selected) {
+    const defaultView = initial.explicitView || 'chat';
+    selectProject(selected, { ...initial, view: defaultView, replaceUrl: true });
+    await refresh();
+  } else {
+    state.view = 'projects';
+    render();
+  }
+
+  if (typeof window?.addEventListener === 'function') {
+    window.addEventListener('popstate', async () => {
+      const previousView = state.view;
+      const previousQuery = state.searchQuery;
+      const previousSettings = state.settingsTab + '/' + state.accessSection;
+      const previousRoom = typeof activeChatDraftKey === 'function' ? activeChatDraftKey() : '';
+      const previousTaskQuery = JSON.stringify([state.todoScope, state.todoAgent, state.todoRevision, state.taskFilters]);
+      const next = readUrlState();
+      if ($('#header-search-input')) $('#header-search-input').value = next.searchQuery;
+      const nextSelected = typeof projectFromLocation === 'function' ? projectFromLocation(next) : null;
+      const current = state.project;
+      const sameProject = nextSelected && current && nextSelected.project_id === current.project_id
+        && (nextSelected.home_id || state.dashboardAccess.home_id) === (current.home_id || state.dashboardAccess.home_id);
+      const view = next.explicitView || (nextSelected ? 'chat' : 'projects');
+      if (!sameProject && (nextSelected || current)) {
+        selectProject(nextSelected, { ...next, view, replaceUrl: true });
+        await refresh();
+        return;
+      }
+      state.view = view;
+      if (previousView === 'chat') {
+        if (typeof closeAgentDMs === 'function') closeAgentDMs();
+        if (typeof closeChatSearch === 'function') closeChatSearch();
+      }
+      const tasksChanged = view === 'todos' && previousTaskQuery !== JSON.stringify([state.todoScope, state.todoAgent, state.todoRevision, state.taskFilters]);
+      const searchChanged = state.view === 'search' && previousQuery !== next.searchQuery;
+      const roomChanged = state.view === 'chat' && typeof activeChatDraftKey === 'function' && previousRoom !== activeChatDraftKey();
+      if (searchChanged) {
+        state.searchResults = null;
+        state.graphify = null;
+        state.searchPending = Boolean(next.searchQuery);
+      }
+      if (roomChanged) {
+        state.messages = [];
+        state.messagesOldestSeq = 0;
+        state.messagesHasOlder = false;
+        state.chatLoaded = false;
+        state.mobilePane = 'thread';
+      }
+      if (state.view !== previousView || searchChanged || roomChanged || tasksChanged) {
+        state.generation += 1;
+        render();
+        await refresh();
+      } else {
+        render();
+        if (view === 'settings' && previousSettings !== state.settingsTab + '/' + state.accessSection) {
+          await loadSettingsRouteData(state.generation);
+        }
+      }
+    });
+  }
+}
+
+document.addEventListener('DOMContentLoaded', boot);
