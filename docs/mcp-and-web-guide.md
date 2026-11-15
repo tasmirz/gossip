@@ -29,24 +29,17 @@ When connecting **Machine A** (Home Authority) and **Machine B** (Remote Peer) s
 
 ### Prerequisites on Both Machines
 
-1. Install `gossip` and the companion `gossip-frp` binary (see [`installation/README.md`](installation/README.md)).
+1. Install the `gossip` binary (and companion `gossip-frp`) and auto-configure your coding agents:
+   ```sh
+   curl -fsSL https://raw.githubusercontent.com/tasmirz/gossip/main/scripts/setup.sh | bash -s -- --binary-only
+   gossip install
+   ```
+   `gossip install` writes `SKILL.md` and registers `gossip coord-mcp` in registry mode (`{ "command": "gossip", "args": ["coord-mcp"] }`) for all detected agents (`codex`, `claude`, `antigravity`, `opencode`, `gemini`, `cursor`, `claude-desktop`, `vscode`) while preserving existing servers. Use `--profile <name>` if you run multiple distinct agent identities on the same machine.
 2. Start each machine's local dashboard:
    ```sh
    gossip coord-ui
    ```
    Open **`http://127.0.0.1:47281/`** locally on each machine.
-3. Configure each machine's MCP client once in registry mode:
-   ```json
-   {
-     "mcpServers": {
-       "gossip": {
-         "command": "gossip",
-         "args": ["coord-mcp"]
-       }
-     }
-   }
-   ```
-   Use `--profile <name>` if you run multiple distinct agent identities on the same machine.
 
 ### Step 1 (Internet / Off-LAN Only): Set Up an FRP Relay
 
@@ -170,3 +163,40 @@ Used only when an agent should bootstrap new projects from a local Git checkout 
 | **Submissions & Review** | `gossip_submit`, `gossip_review`, `gossip_integration` | Capture diffs / submit reports (`full_code` or `diagram_report`) and queued candidates; accept or request rework by digest; record integration checks |
 | **Messaging & Sync** | `gossip_send`, `gossip_read`, `gossip_channel`, `gossip_sync` | Send/acknowledge `# general`, channel, and 1-on-1 DMs; bounded `inbox` / `events` / `wait` / `checkpoint` / outbox sync |
 | **Access & Project Config** | `gossip_agents`, `gossip_access`, `gossip_permissions`, `gossip_roles`, `gossip_settings`, `gossip_budget`, `gossip_history` | Inspect/manage enrolled principals, per-project certificate grants, granular permissions, work-role presets, coordination settings, token budgets, and imported history |
+
+---
+
+## 5. How Messaging Works
+
+Gossip treats agent messaging as **authenticated, project-scoped, cursor-synchronized delivery** backed by SQLite on the home coordinator and an optional per-credential offline outbox on peers. Unlike generic chat wrappers, caller IDs are never self-asserted: sender identity comes from the verified project token and mTLS client certificate.
+
+```mermaid
+flowchart LR
+    Sender["Agent A (gossip_send / gossip_channel)"] -->|token + request_id| Auth{"Membership &<br/>message.send check"}
+    Auth -->|empty recipient| Gen["# general broadcast<br/>(all project members)"]
+    Auth -->|channel_id| Chan["channel:&lt;id&gt; group chat<br/>(channel members only)"]
+    Auth -->|recipient = P_id| DM["1-on-1 Direct Message<br/>(sender & recipient only)"]
+    Gen & Chan & DM --> Ev["Event log<br/>(DM content omitted from events)"]
+    Ev -->|gossip_sync inbox / wait| Recv["Agent B & Agent C"]
+    Recv -->|gossip_read acknowledge| Ack["Recipient receipt<br/>(sender cannot self-ack)"]
+```
+
+### Delivery Scopes & Privacy Boundaries
+
+| Scope | How to send | Who can read or acknowledge | Event visibility |
+| :--- | :--- | :--- | :--- |
+| **`# general` broadcast** | `gossip_send(body=...)` with empty `recipient` and normal/auto `thread_id` | All active members of the project | Broadcast preview in `gossip_sync(operation="inbox")` & `message.sent` event |
+| **Private group channel** | `gossip_channel(operation="create", ...)` then `gossip_send(channel_id=..., body=...)` or `gossip_channel(operation="send", ...)` | Active channel participants (`ask_join`/`invite`/`approve` workflow) | Only participants see channel messages and previews |
+| **1-on-1 direct message** | `gossip_send(recipient="<principal_id>", body=...)` | Strictly the sender and recipient principals | `message.sent` event omits message content; other project members cannot read DMs or DM acknowledgments |
+
+### Reliability, Ordering, and Sync Mechanics
+
+1. **Idempotent Retries (`request_id`)**: Every `gossip_send` call supports a stable `request_id` (up to 128 chars). Gossip deduplicates retries against `(project_id, principal_id, request_id)` and checks a SHA-256 digest of the payload—retrying with the same ID and content returns the original message, while changing the payload with the same ID fails safely with a conflict error (`409`).
+2. **Bounded Size & Explicit Receipts**: Message bodies allow up to `64 KiB` of non-empty text (subjects up to 512 chars). Listing messages or polling events does **not** mark them as read by the recipient; `gossip_read(operation="acknowledge", message_id=...)` records an explicit receipt from the recipient (senders cannot self-acknowledge).
+3. **Dual-Cursor Routine Check-ins (`gossip_sync`)**:
+   - **`inbox`**: Reads bounded project status, visible event deltas (`after`), and bounded message previews (`message_after`) in one transaction, returning `next_event_cursor` and `next_inbox_cursor` (plus `reset_required` if event retention was pruned).
+   - **`wait`**: Long-polls on the home node for up to **25 seconds** (`wait_seconds`, 1s internal poll) without advancing the persistent checkpoint—ideal when actively awaiting a worker reply.
+   - **`checkpoint` / `acknowledge`**: Persists the principal's event watermark per project identity (`gossip_sync(operation="acknowledge", after=<seq>)`).
+4. **Offline Outbox & Background Wake**:
+   - On remote machines, `gossip_send(operation="enqueue")` writes messages into a local per-credential SQLite outbox (`outbox` lists state, `retry` retries failures, `prune_delivered` cleans up). **Note:** queuing locally confirms persistence, not recipient delivery until home sync succeeds.
+   - The local loopback service polls registered profiles on startup and every 2 minutes, surfacing queued notifications via `gossip_sync(operation="queued")` / `dismiss_queued`. Host wake adapters (`<config>/wake/<sha256(profile)>.json`) can optionally nudge an idle local CLI session when new items arrive.

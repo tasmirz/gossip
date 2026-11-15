@@ -1357,11 +1357,13 @@ Commands:
   coord-add       Enroll a project principal with a private credential
   coord-access    List, grant, or revoke project client certificates
   coord-pair      Create or redeem a short-lived client certificate invitation
+  coord-connect   Accept a .gossip invite file + 6-digit PIN with TOFU host pinning
+  coord-connection Add, list, or remove project credentials in the local device registry
   coord-frp       Write a private FRP TCP config for the mTLS endpoint
-  coord-mcp       Serve project-scoped coordination tools over MCP stdio
+  coord-mcp       Serve project-scoped coordination & messaging tools over MCP stdio
   coord-mcp-bootstrap Serve create-only project bootstrap tool over authenticated MCP stdio
   coord-bootstrap-key Generate a private create-only project bootstrap API key
-  coord-ui        Start the local coordination dashboard
+  coord-ui        Start the local coordination dashboard (default http://127.0.0.1:47281)
   coord-serve     Serve coordination over mutually authenticated TLS
   coord-daemon    Serve local coordination over a private Unix socket
   coord-remote    Show or change the local remote-access kill switch (disabled by default)
@@ -1391,7 +1393,7 @@ Commands:
   system-todos    View unified cross-system backlog (alias: gsp:system_todos)
   assignments     View Orchestrator task allocation & workload matrix (alias: gsp:assignments)
   resume          Re-identify and resume agent session with instant catch-up briefing (alias: gsp:resume)
-  install         Auto-install and configure all AI agents & editors (Antigravity, OpenCode, Claude, Cursor, VS Code)
+  install         Auto-install Gossip SKILL.md and coord-mcp into coding agents (Codex, Claude, Antigravity, OpenCode, Gemini, Cursor, VS Code)
   tunnel          Manage protected FRP reverse-proxy tunnels with username/password authentication
   cron            Execute periodic health checks (unread messages, ready DAG tasks, stale heartbeats)
   vault           Stage or list local secret files; remote transfer is disabled

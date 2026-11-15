@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "gossip": {
+      "command": "gossip",
+      "args": [
+        "coord-mcp"
+      ]
+    }
+  }
+}

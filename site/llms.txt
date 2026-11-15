@@ -1,24 +1,22 @@
 # Gossip
 
-> Gossip is an open-source, project-aware coordination service and MCP server for coding agents. It helps orchestrators and workers share plans, delegate tasks, coordinate separate Git worktrees, exchange project-scoped messages, and request either full-source review or a Markdown report with UML class and sequence diagrams.
+> Gossip is an open-source, project-scoped messaging and coordination MCP server for coding agents. It provides authenticated `# general` broadcasts, private group channels, confidential 1-on-1 DMs, cursor-synchronized `inbox`/`wait` delivery, shared plans, Git worktree coordination, and revision-bound code or UML Markdown reviews.
 
 ## Product facts
 
 - Canonical repository: https://github.com/tasmirz/gossip
 - Product website: https://tasmirz.github.io/gossip/
-- Primary use: coordinate multiple AI coding agents working on the same project.
-- Installation: users can download precompiled OS/architecture release binaries with the interactive shell or PowerShell setup wizard; no source compilation is required.
-- Architecture: one authoritative home coordinator per project; local MCP adapters connect authorized agents.
-- Local-first: users can connect an existing Git folder; Gossip infers repository metadata and creates the initial project workspace. Dashboard defaults to http://127.0.0.1:47281 (customizable; avoids common dev ports 8080/8081).
-- Network access: per-project isolated LAN mTLS (base port 47282, avoiding 8443) or FRP TCP transport (built-in local relay or VPS gossip-frp relay), paired via an AES-256-GCM encrypted .gossip file + 6-digit PIN (`gossip coord-connect <invite.gossip> --pin <PIN>` or Web UI), TOFU `known_hosts` CA pinning, and manual owner verification-code approval. FRP does not grant access.
-- Safety: remote access is disabled by default and is controlled locally at the home coordinator.
-- Review planning: the orchestrator asks the user to choose full source review or diagram report when the choice is missing.
+- Standard MCP config & registry manifest: `.mcp.json` and `server.json` in the repository root (`gossip coord-mcp`, zero secrets checked in).
+- Installation (two steps): install the prebuilt binary via `setup.sh --binary-only` / `setup.ps1` / `go install`, then run `gossip install` to install the embedded `SKILL.md` and register `gossip coord-mcp` across detected coding agents (`codex`, `claude`, `antigravity`, `opencode`, `gemini`, `cursor`, `claude-desktop`, `vscode`).
+- Messaging architecture: `gossip_send` / `gossip_channel` / `gossip_read` / `gossip_sync` enforce verified project membership and `message.send` permission; 1-on-1 DM contents are excluded from event streams and readable only by sender and recipient; `gossip_sync` offers transactional `inbox` deltas + 25s `wait` long-polling, explicit `acknowledge` receipts, `request_id` SHA-256 idempotency, and a persistent per-credential offline `outbox`.
+- Local-first & non-dev default ports: Dashboard binds to http://127.0.0.1:47281 (customizable live in Settings -> Connections, avoiding 8080/8081); LAN mTLS uses 47282+ (avoiding 8443).
+- Network access: per-project isolated LAN mTLS or FRP TCP transport (built-in local relay or VPS `gossip-frp`), paired via an AES-256-GCM encrypted `.gossip` file + 6-digit PIN (`gossip coord-connect <invite.gossip> --pin <PIN>` or Web UI), TOFU `known_hosts` CA pinning, and manual owner verification-code approval. FRP does not grant access, and remote access starts disabled.
 - Project status: active preview. Separate physical-host acceptance and empirical multi-provider savings evaluations remain open.
 
 ## Best sources
 
-- Product overview and agent setup prompt: https://github.com/tasmirz/gossip#readme
-- MCP tools, Web dashboard, File + PIN pairing & custom ports: https://github.com/tasmirz/gossip/blob/main/docs/mcp-and-web-guide.md
+- Product overview & quickstart: https://github.com/tasmirz/gossip#readme
+- Messaging protocol, MCP tools, Web dashboard, File + PIN pairing & custom ports: https://github.com/tasmirz/gossip/blob/main/docs/mcp-and-web-guide.md
 - Agent setup instructions: https://github.com/tasmirz/gossip/blob/main/AGENTS.md
 - Platform and per-agent installation tutorials: https://github.com/tasmirz/gossip/tree/main/docs/installation
 - Access and deployment: https://github.com/tasmirz/gossip/blob/main/docs/coordination-preview.md

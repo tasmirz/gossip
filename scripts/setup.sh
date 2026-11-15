@@ -4,15 +4,23 @@ set -euo pipefail
 OWNER_REPO="tasmirz/gossip"
 API="https://api.github.com/repos/${OWNER_REPO}/releases?per_page=10"
 BASE="https://github.com/${OWNER_REPO}/releases/download"
+BINARY_ONLY="${GOSSIP_BINARY_ONLY:-0}"
+for arg in "$@"; do
+  case "$arg" in
+    --binary-only) BINARY_ONLY=1 ;;
+    *) echo "Unknown option: $arg" >&2; exit 2 ;;
+  esac
+done
+
 command -v curl >/dev/null || { echo "Install curl, then retry." >&2; exit 1; }
 command -v tar >/dev/null || { echo "Install tar, then retry." >&2; exit 1; }
 command -v python3 >/dev/null || { echo "Python 3 is required to select a matching release asset." >&2; exit 1; }
-if [ ! -t 0 ]; then
+if [ "$BINARY_ONLY" != "1" ] && [ ! -t 0 ]; then
   if [ -r /dev/tty ]; then
     exec </dev/tty
   else
-    echo "Run this installer in an interactive terminal so you can choose an agent and credential." >&2
-    exit 1
+    echo "No interactive terminal detected; installing binary only. Run 'gossip install' afterwards to configure coding agents."
+    BINARY_ONLY=1
   fi
 fi
 
@@ -107,99 +115,62 @@ SERVICE
 }
 
 install -m 0755 "$tmp/gossip" "$root/bin/gossip"
+if [ -f "$tmp/gossip-frp" ]; then
+  install -m 0755 "$tmp/gossip-frp" "$root/bin/gossip-frp"
+fi
 install -m 0644 "$tmp/skills/gossip/SKILL.md" "$root/skills/gossip/SKILL.md"
 bin="$root/bin/gossip"
+local_bin="$HOME/.local/bin"
+if mkdir -p "$local_bin" 2>/dev/null; then
+  ln -sf "$bin" "$local_bin/gossip"
+  if [ -f "$root/bin/gossip-frp" ]; then
+    ln -sf "$root/bin/gossip-frp" "$local_bin/gossip-frp"
+  fi
+fi
 
 echo ""
 echo "Installed binary: $bin"
-echo "Choose an agent to configure:"
-echo "  1) Codex"
-echo "  2) Antigravity"
-echo "  3) OpenCode"
-echo "  4) Claude Code"
-echo "  5) Gemini CLI"
-echo "  6) Install the skill only"
-read -r -p "Selection [1-6]: " choice
-case "$choice" in
-  1) client=codex; skill="$HOME/.agents/skills/gossip" ;;
-  2) client=antigravity; skill="$HOME/.gemini/config/skills/gossip" ;;
-  3) client=opencode; skill="${XDG_CONFIG_HOME:-$HOME/.config}/opencode/skills/gossip" ;;
-  4) client=claude; skill="$HOME/.claude/skills/gossip" ;;
-  5) client=gemini; skill="$HOME/.gemini/skills/gossip" ;;
-  6) client=none; skill="$HOME/.agents/skills/gossip" ;;
-  *) echo "Choose 1, 2, 3, 4, 5, or 6." >&2; exit 2 ;;
-esac
-mkdir -p "$skill"
-install -m 0644 "$root/skills/gossip/SKILL.md" "$skill/SKILL.md"
-echo "Installed Gossip skill at $skill/SKILL.md"
-
-if [ "$client" != none ]; then
-  read -r -p "Local Gossip identity profile [default]: " profile
-  profile="${profile:-default}"
-    case "$client" in
-      codex)
-        command -v codex >/dev/null || { echo "Install Codex CLI, then rerun this setup." >&2; exit 1; }
-        codex_home="${CODEX_HOME:-$HOME/.codex}"
-        mkdir -p "$codex_home"
-        codex_config="$codex_home/config.toml"
-        if [ -f "$codex_config" ] && grep -Eq '^\[mcp_servers\.gossip\]' "$codex_config"; then
-          backup="$codex_config.backup-$(date +%Y%m%d-%H%M%S)"
-          cp -p "$codex_config" "$backup"
-          echo "Backed up the previous Codex MCP config to $backup"
-        fi
-        codex mcp add gossip -- "$bin" coord-mcp --profile "$profile"
-        ;;
-      antigravity)
-        config="${GEMINI_CONFIG_DIR:-$HOME/.gemini/config}/mcp_config.json"
-        python3 - "$config" "$bin" "$profile" <<'PY'
-import json, os, shutil, sys, tempfile, time
-path, command, profile = sys.argv[1:]
-os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
-data = {}
-if os.path.exists(path):
-    with open(path, encoding="utf-8") as source:
-        data = json.load(source)
-if not isinstance(data, dict):
-    raise SystemExit("Antigravity MCP config must contain a JSON object; left unchanged.")
-servers = data.setdefault("mcpServers", {})
-if not isinstance(servers, dict):
-    raise SystemExit("Antigravity mcpServers must be an object; left unchanged.")
-if "gossip" in servers:
-    backup = f"{path}.backup-{time.strftime('%Y%m%d-%H%M%S')}"
-    shutil.copy2(path, backup)
-    os.chmod(backup, 0o600)
-    print(f"Backed up the previous Gossip entry to {backup}")
-servers["gossip"] = {"command": command, "args": ["coord-mcp", "--profile", profile]}
-mode = (os.stat(path).st_mode & 0o777) if os.path.exists(path) else 0o600
-fd, temporary = tempfile.mkstemp(prefix=".mcp_config.", dir=os.path.dirname(path))
-try:
-    with os.fdopen(fd, "w", encoding="utf-8") as target:
-        json.dump(data, target, indent=2)
-        target.write("\n")
-    os.chmod(temporary, mode)
-    os.replace(temporary, path)
-except BaseException:
-    try: os.unlink(temporary)
-    except FileNotFoundError: pass
-    raise
-print(f"Configured Antigravity MCP at {path}")
-PY
-        ;;
-      opencode)
-        command -v opencode >/dev/null || { echo "Install OpenCode, then rerun this setup." >&2; exit 1; }
-        opencode_config="${XDG_CONFIG_HOME:-$HOME/.config}/opencode/opencode.json"
-        opencode_helper="$tmp/configure-opencode.py"
-        if [ -n "${GOSSIP_OPENCODE_MERGE_HELPER:-}" ] && [ -f "$GOSSIP_OPENCODE_MERGE_HELPER" ]; then
-          cp "$GOSSIP_OPENCODE_MERGE_HELPER" "$opencode_helper"
-        else
-          curl -fsSL "https://raw.githubusercontent.com/${OWNER_REPO}/main/scripts/configure-opencode.py" -o "$opencode_helper"
-        fi
-        python3 "$opencode_helper" "$opencode_config" "$bin" "$profile"
-        ;;
-      claude) command -v claude >/dev/null || { echo "Install Claude Code, then rerun this setup." >&2; exit 1; }; claude mcp add --scope user gossip -- "$bin" coord-mcp --profile "$profile" ;;
-      gemini) command -v gemini >/dev/null || { echo "Install Gemini CLI, then rerun this setup." >&2; exit 1; }; gemini mcp add --scope user gossip "$bin" coord-mcp --profile "$profile" ;;
+if [ "$BINARY_ONLY" = "1" ]; then
+  echo "Binary-only mode complete."
+  echo "Next: auto-configure all detected coding agents with:"
+  echo "  gossip install"
+  echo "(or '$bin' install if $local_bin is not yet in PATH)"
+else
+  echo "Choose an agent to configure:"
+  echo "  0) Auto-configure all detected coding agents (recommended)"
+  echo "  1) Codex"
+  echo "  2) Antigravity"
+  echo "  3) OpenCode"
+  echo "  4) Claude Code"
+  echo "  5) Gemini CLI"
+  echo "  6) Install the skill only"
+  read -r -p "Selection [0-6, default 0]: " choice
+  choice="${choice:-0}"
+  if [ "$choice" = "0" ]; then
+    read -r -p "Local Gossip identity profile [default]: " profile
+    profile="${profile:-default}"
+    "$bin" install --all --profile "$profile"
+  else
+    case "$choice" in
+      1) client=codex; skill="$HOME/.agents/skills/gossip" ;;
+      2) client=antigravity; skill="$HOME/.gemini/config/skills/gossip" ;;
+      3) client=opencode; skill="${XDG_CONFIG_HOME:-$HOME/.config}/opencode/skills/gossip" ;;
+      4) client=claude; skill="$HOME/.claude/skills/gossip" ;;
+      5) client=gemini; skill="$HOME/.gemini/skills/gossip" ;;
+      6) client=none; skill="$HOME/.agents/skills/gossip" ;;
+      *) echo "Choose 0, 1, 2, 3, 4, 5, or 6." >&2; exit 2 ;;
     esac
-    echo "Configured Gossip MCP for $client. Restart its app and verify the connection."
+    mkdir -p "$skill"
+    install -m 0644 "$root/skills/gossip/SKILL.md" "$skill/SKILL.md"
+    echo "Installed Gossip skill at $skill/SKILL.md"
+
+    if [ "$client" != none ]; then
+      read -r -p "Local Gossip identity profile [default]: " profile
+      profile="${profile:-default}"
+      "$bin" install --client "$client" --profile "$profile"
+      echo "Configured Gossip MCP for $client. Restart its app and verify the connection."
+    fi
+  fi
 fi
 
 echo ""

@@ -9,8 +9,8 @@ Use this guide when you want an AI coding agent to connect a repository and coor
 ## What the agent should do
 
 1. Detect this checkout's Git remote, branch, head revision, and dirty state.
-2. Check for the Gossip coordinator and MCP support; use the official prebuilt installer if Gossip is absent or outdated. See the per-agent instructions in [`installation/README.md`](installation/README.md).
-3. Start the local dashboard and guide you to **Create local project** with this checkout. Gossip infers repository metadata and creates the project and initial workspace together.
+2. Check for the `gossip` binary (`command -v gossip`). If absent, install the official prebuilt binary (`curl -fsSL https://raw.githubusercontent.com/tasmirz/gossip/main/scripts/setup.sh | bash -s -- --binary-only` on Linux/macOS or PowerShell on Windows), then run `gossip install` (or `gossip install --client <agent> --profile <profile>`) to install the embedded skill and register `gossip coord-mcp`. See [`installation/README.md`](installation/README.md).
+3. Start the local dashboard (`gossip coord-ui`) and guide the user to **Create local project** with this checkout (or **Join LAN or remote project** with an encrypted `.gossip` file + 6-digit PIN). Gossip infers repository metadata and creates the project and initial workspace together.
 4. Save the owner credential to a private, untracked file. Keep it out of prompts, logs, source control, and shared workspace directories.
 5. Configure the coding agent's regular Gossip MCP server with the project's private credential file. Keep the create-only bootstrap server separate and remove its key from routine agent configuration after project creation where possible.
 6. Restart or refresh the MCP client, verify a project-scoped read, and tell you the project name, repository, and branch it connected.

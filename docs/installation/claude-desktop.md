@@ -17,4 +17,4 @@
 
 4. Install the skill in Claude Desktop's supported skill mechanism for your version and restart the app.
 
-The wizard does not currently edit Claude Desktop's JSON config. See [`examples/mcp-clients/claude-desktop/claude_desktop_config.json`](../../examples/mcp-clients/claude-desktop/claude_desktop_config.json) for a reference template.
+Run `gossip install --client claude-desktop` after installing the binary to merge this entry automatically, or see [`examples/mcp-clients/claude-desktop/claude_desktop_config.json`](../../examples/mcp-clients/claude-desktop/claude_desktop_config.json) for a reference template.

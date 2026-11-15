@@ -26,7 +26,7 @@ Extract the archive into a private, user-owned directory. For example, Linux/mac
 
 ## 2. Install the skill
 
-Copy `skills/gossip/SKILL.md` from the archive into the agent's personal or project skills directory. The portable Agent Skills format is a directory named after the skill with a required `SKILL.md` file. See each [agent tutorial](README.md#agent-tutorials) for the current discovery path. The Codex plugin manifest lives at `.codex-plugin/plugin.json`; Claude plugin metadata is in `.claude-plugin/plugin.json`.
+Copy `skills/gossip/SKILL.md` from the archive into the agent's personal or project skills directory—or run `gossip install --skill-only` using the installed binary. The portable Agent Skills format is a directory named after the skill with a required `SKILL.md` file. See each [agent tutorial](README.md#agent-tutorials) for the current discovery path.
 
 ## 3. Create or connect a project
 
@@ -46,7 +46,7 @@ Use the agent's documented CLI or configuration editor, following its dedicated 
 /absolute/path/to/gossip coord-mcp
 ```
 
-The setup wizard can add this entry to Codex, Antigravity, OpenCode, Claude Code, or Gemini CLI. Cursor, VS Code Copilot, and Claude Desktop have manual walkthroughs. Preserve other MCP servers. The device registry under `~/.config/gossip` (or `$XDG_CONFIG_HOME/gossip`) stores project connections and credentials. Existing project credentials can be imported with `gossip coord-connection add --credential-file <private-file> [--profile <name>]`; source files are left in place.
+Running `gossip install` (or the setup wizard) automatically configures Codex, Claude Code, Antigravity, OpenCode, Gemini CLI, Cursor, Claude Desktop, and VS Code while preserving existing MCP servers. The device registry under `~/.config/gossip` (or `$XDG_CONFIG_HOME/gossip`) stores project connections and credentials. Existing project credentials can be imported with `gossip coord-connection add --credential-file <private-file> [--profile <name>]`; source files are left in place.
 
 ## 5. Verify
 

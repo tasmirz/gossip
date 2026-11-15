@@ -1,6 +1,6 @@
 # Local coordination preview
 
-The coordination preview provides a separate SQLite-backed project store and MCP tool profile. It is an implementation increment toward the [redesign](gossip-redesign-plan.md); its historical archive does not replace or cut over the legacy JSON stores. The default MCP client configurations use this project-scoped profile and a private credential. The legacy JSON MCP CLI transport is retired because it has no project membership boundary. The editor installer defers MCP registration until a project-scoped credential exists.
+The coordination preview provides a separate SQLite-backed project store and MCP tool profile (see the [architecture overview](architecture-overview.md)); its historical archive does not replace or cut over the legacy JSON stores. The default MCP client configurations use this project-scoped profile and a private credential (run `gossip install` to auto-configure detected agents, or connect via the local registry). The legacy JSON MCP CLI transport is retired because it has no project membership boundary.
 
 Run `gossip coord-migrate --legacy-dir /path/to/.local/gossip` for a read-only preflight. It reports file hashes and record counts, malformed messages, invalid task and milestone dependencies, SOP artifact inventories and missing files, and legacy identity or role data that requires review. It flags unsafe artifact paths and explicitly excludes vault secrets. Only audit reports with `ready_for_import: true` have no structural errors; warnings still require an explicit mapping decision.
 

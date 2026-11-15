@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"time"
 
@@ -18,130 +17,10 @@ import (
 )
 
 func runInstall(args []string) {
-	fs := flag.NewFlagSet("install", flag.ExitOnError)
-	all := fs.Bool("all", true, "Configure all detected AI agents & editors (Antigravity, OpenCode, Claude, Cursor, VS Code)")
-	client := fs.String("client", "", "Configure a specific client only: 'antigravity', 'opencode', 'claude', 'cursor', 'vscode'")
-	binDir := fs.String("bin-dir", "", "Custom binary install destination directory")
-	dryRun := fs.Bool("dry-run", false, "Print planned changes without writing files")
-	_ = fs.Parse(args)
-
-	fmt.Printf("%s\n", BannerArt)
-	fmt.Printf("[INSTALL] Gossip Universal Mesh Auto-Installer (OS: %s/%s)\n", runtime.GOOS, runtime.GOARCH)
-	fmt.Println(strings.Repeat("-", 65))
-
-	home, err := os.UserHomeDir()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error detecting user home directory: %v\n", err)
+	if err := runInstallCommand(args); err != nil {
+		fmt.Fprintf(os.Stderr, "Install error: %v\n", err)
 		os.Exit(1)
 	}
-
-	selfExe, err := os.Executable()
-	if err != nil {
-		selfExe = "gossip"
-	}
-
-	targetClients := make(map[string]bool)
-	if *client != "" {
-		for _, c := range strings.Split(*client, ",") {
-			targetClients[strings.TrimSpace(strings.ToLower(c))] = true
-		}
-	} else if *all {
-		targetClients["antigravity"] = true
-		targetClients["opencode"] = true
-		targetClients["claude"] = true
-		targetClients["cursor"] = true
-		targetClients["vscode"] = true
-	}
-
-	// 1. Binary installation
-	destBinDir := *binDir
-	if destBinDir == "" {
-		if runtime.GOOS == "windows" {
-			destBinDir = filepath.Join(os.Getenv("LOCALAPPDATA"), "Programs", "gossip")
-		} else {
-			destBinDir = filepath.Join(home, ".local", "bin")
-		}
-	}
-
-	fmt.Printf("[1/6] Binary Installation Destination: %s\n", destBinDir)
-	if !*dryRun {
-		_ = os.MkdirAll(destBinDir, 0755)
-		destBin := filepath.Join(destBinDir, filepath.Base(selfExe))
-		if selfExe != destBin {
-			if data, err := os.ReadFile(selfExe); err == nil {
-				_ = os.WriteFile(destBin, data, 0755)
-				fmt.Printf("  ✓ Copied binary to %s\n", destBin)
-			}
-		}
-	} else {
-		fmt.Printf("  [DRY-RUN] Would ensure %s exists and copy %s\n", destBinDir, selfExe)
-	}
-
-	// 2. Configure Antigravity
-	if targetClients["antigravity"] {
-		fmt.Println("[2/6] Preparing Antigravity integration...")
-		if !*dryRun {
-			fmt.Println("  ✓ MCP setup deferred until a project-scoped credential exists")
-		} else {
-			fmt.Println("  [DRY-RUN] MCP setup requires a project-scoped credential")
-		}
-	}
-
-	// 3. Configure OpenCode
-	if targetClients["opencode"] {
-		fmt.Println("[3/6] Preparing OpenCode integration...")
-		ocDir := filepath.Join(home, ".config", "opencode")
-		ocCfgFile := filepath.Join(ocDir, "opencode.json")
-		if !*dryRun {
-			fmt.Printf("  ✓ OpenCode config left unchanged: configure coord-mcp after creating a project credential (%s)\n", ocCfgFile)
-		} else {
-			fmt.Printf("  [DRY-RUN] Would leave %s unchanged; project credentials are required for coord-mcp\n", ocCfgFile)
-		}
-	}
-
-	// 4. Configure Claude Desktop
-	if targetClients["claude"] {
-		fmt.Println("[4/6] Preparing Claude Desktop integration...")
-		var claudeCfgFile string
-		if runtime.GOOS == "darwin" {
-			claudeCfgFile = filepath.Join(home, "Library", "Application Support", "Claude", "claude_desktop_config.json")
-		} else if runtime.GOOS == "windows" {
-			claudeCfgFile = filepath.Join(os.Getenv("APPDATA"), "Claude", "claude_desktop_config.json")
-		} else {
-			claudeCfgFile = filepath.Join(home, ".config", "Claude", "claude_desktop_config.json")
-		}
-		if !*dryRun {
-			fmt.Printf("  ✓ Claude Desktop config left unchanged: configure coord-mcp after creating a project credential (%s)\n", claudeCfgFile)
-		} else {
-			fmt.Printf("  [DRY-RUN] Would leave %s unchanged; project credentials are required for coord-mcp\n", claudeCfgFile)
-		}
-	}
-
-	// 5. Configure Cursor
-	if targetClients["cursor"] {
-		fmt.Println("[5/6] Preparing Cursor integration...")
-		cursorCfgFile := filepath.Join(home, ".cursor", "mcp.json")
-		if !*dryRun {
-			fmt.Printf("  ✓ Cursor config left unchanged: configure coord-mcp after creating a project credential (%s)\n", cursorCfgFile)
-		} else {
-			fmt.Printf("  [DRY-RUN] Would leave %s unchanged; project credentials are required for coord-mcp\n", cursorCfgFile)
-		}
-	}
-
-	// 6. Configure VS Code
-	if targetClients["vscode"] {
-		fmt.Println("[6/6] Preparing VS Code Workspace integration...")
-		vscodeFile := filepath.Join(".vscode", "mcp.json")
-		if !*dryRun {
-			fmt.Printf("  ✓ VS Code MCP config left unchanged: configure coord-mcp after creating a project credential (%s)\n", vscodeFile)
-		} else {
-			fmt.Printf("  [DRY-RUN] Would leave %s unchanged; project credentials are required for coord-mcp\n", vscodeFile)
-		}
-	}
-
-	fmt.Println(strings.Repeat("-", 65))
-	fmt.Println("[SUCCESS] Gossip installed. Editor MCP setup is deferred until a project credential exists.")
-	fmt.Println("Connect a local folder in the coordination UI, then configure coord-mcp with its private credential file.")
 }
 
 func runTunnel(args []string) {

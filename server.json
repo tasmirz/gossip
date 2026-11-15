@@ -1,0 +1,12 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.json",
+  "name": "io.github.tasmirz/gossip",
+  "title": "Gossip",
+  "description": "Project-scoped MCP coordination and messaging server for coding agents with channels, DMs, shared plans, task leases, Git worktree context, and File + 6-digit PIN LAN/FRP peer pairing.",
+  "websiteUrl": "https://tasmirz.github.io/gossip/",
+  "repository": {
+    "url": "https://github.com/tasmirz/gossip",
+    "source": "github"
+  },
+  "version": "1.2.0"
+}
