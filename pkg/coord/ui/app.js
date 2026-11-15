@@ -510,12 +510,13 @@ async function request(path, options = {}) {
       expireProjectSession(decodeURIComponent(projectPath[1]));
     }
     let message = '';
+    let parsedData = null;
     try {
       const text = await response.text();
       if (text) {
         try {
-          const parsed = JSON.parse(text);
-          message = parsed.error || parsed.message || text;
+          parsedData = JSON.parse(text);
+          message = parsedData.error || parsedData.message || text;
         } catch {
           message = text;
         }
@@ -523,6 +524,7 @@ async function request(path, options = {}) {
     } catch {}
     const err = new Error(message || `HTTP ${response.status}`);
     err.status = response.status;
+    err.data = parsedData;
     throw err;
   }
   if (response.status === 204) return null;
@@ -1655,7 +1657,7 @@ async function loadSettingsRouteData(gen) {
   const section = state.accessSection;
   const resources = {
     workspaces: ['repositories', 'workspaces', 'file-reservations', 'integrations'],
-    connections: ['replicas', 'remote-access'],
+    connections: ['replicas', 'remote-access', 'known-hosts'],
     history: ['events', 'retention', 'legacy-imports']
   }[tab] || {
     'access-devices': ['certificates', 'certificate-invitations'],
@@ -1671,21 +1673,25 @@ async function loadSettingsRouteData(gen) {
   }
   const results = await Promise.allSettled(resources.map(resource => request(
     resource === 'remote-access'
-      ? '/api/remote-access'
-      : resource === 'events'
-        ? projectApi('events', { recent: 1 })
-        : projectApi(resource))));
+      ? ('/api/remote-access' + (state.project?.project_id ? '?project=' + encodeURIComponent(state.project.project_id) : ''))
+      : resource === 'known-hosts'
+        ? '/api/local/known-hosts'
+        : resource === 'events'
+          ? projectApi('events', { recent: 1 })
+          : projectApi(resource))));
   if (!current()) return;
   const fields = {
     'file-reservations': 'fileReservations',
     'certificate-invitations': 'certInvitations',
-    'legacy-imports': 'legacyImports'
+    'legacy-imports': 'legacyImports',
+    'known-hosts': 'knownHosts'
   };
   resources.forEach((resource, index) => {
     const result = results[index];
     const value = result.status === 'fulfilled' ? result.value : null;
     if (resource === 'remote-access') {
       state.remoteAccessEnabled = Boolean(value?.enabled);
+      state.peerAccess = value || null;
     } else if (['budget', 'settings', 'retention'].includes(resource)) {
       state[resource] = value;
     } else if (resource === 'events') {

@@ -125,9 +125,9 @@
 
 .chat-layout {
   display: grid;
-  grid-template-columns: minmax(12rem, 15.5rem) minmax(0, 1fr);
+  grid-template-columns: var(--split-layout-cols, minmax(12rem, 15rem) minmax(0, 1fr));
   align-items: stretch;
-  gap: 1rem;
+  gap: var(--split-layout-gap, 1rem);
   flex: 1;
   min-height: 0;
 }
@@ -485,8 +485,8 @@
 
 .plans-grid {
   display: grid;
-  grid-template-columns: minmax(10.5rem, 13.5rem) minmax(0, 1fr);
-  gap: 1rem;
+  grid-template-columns: var(--split-layout-cols, minmax(12rem, 15rem) minmax(0, 1fr));
+  gap: var(--split-layout-gap, 1rem);
   align-items: start;
 }
 
@@ -522,7 +522,6 @@
 .plan-reader-card {
   min-width: 0;
   min-height: 24rem;
-  padding: clamp(1rem, 2.8vw, 2rem);
 }
 
 .plan-reader-header {
@@ -673,10 +672,19 @@
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0.75rem;
+  align-items: stretch;
 }
 
 .plan-editor-split .field {
   min-width: 0;
+  height: 100%;
+}
+
+.plan-editor-split #plan-editor-body,
+.plan-editor-split #plan-editor-preview {
+  flex: 1 1 auto;
+  min-height: 20rem;
+  max-height: min(26rem, 52dvh);
 }
 
 .plan-editor-switch {
@@ -825,8 +833,8 @@
 
 .todo-workspace-grid {
   display: grid;
-  grid-template-columns: minmax(10.5rem, 13.5rem) minmax(0, 1fr);
-  gap: 1rem;
+  grid-template-columns: var(--split-layout-cols, minmax(12rem, 15rem) minmax(0, 1fr));
+  gap: var(--split-layout-gap, 1rem);
   align-items: start;
 }
 
@@ -1110,8 +1118,8 @@
 /* --- Agents --- */
 .agent-layout {
   display: grid;
-  grid-template-columns: minmax(12rem, 15.5rem) minmax(0, 1fr);
-  gap: 1rem;
+  grid-template-columns: var(--split-layout-cols, minmax(12rem, 15rem) minmax(0, 1fr));
+  gap: var(--split-layout-gap, 1rem);
   align-items: start;
 }
 
@@ -1551,9 +1559,9 @@
 
 .settings-panel {
   display: grid;
-  grid-template-columns: minmax(9.5rem, 12.5rem) minmax(0, 1fr);
+  grid-template-columns: var(--split-layout-cols, minmax(12rem, 15rem) minmax(0, 1fr));
   align-items: start;
-  gap: 1rem;
+  gap: var(--split-layout-gap, 1rem);
 }
 
 .access-section-links {

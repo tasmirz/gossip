@@ -45,6 +45,8 @@
 
   --radius: 10px;
   --radius-sm: 6px;
+  --split-layout-cols: minmax(12rem, 15rem) minmax(0, 1fr);
+  --split-layout-gap: 1rem;
 
   --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   --font-mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;

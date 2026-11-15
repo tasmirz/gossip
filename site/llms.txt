@@ -9,8 +9,8 @@
 - Primary use: coordinate multiple AI coding agents working on the same project.
 - Installation: users can download precompiled OS/architecture release binaries with the interactive shell or PowerShell setup wizard; no source compilation is required.
 - Architecture: one authoritative home coordinator per project; local MCP adapters connect authorized agents.
-- Local-first: users can connect an existing Git folder; Gossip infers repository metadata and creates the initial project workspace.
-- Network access: LAN or FRP TCP transport to the home coordinator with mutual TLS, project-specific certificate grants, and project credentials. FRP does not grant access.
+- Local-first: users can connect an existing Git folder; Gossip infers repository metadata and creates the initial project workspace. Dashboard defaults to http://127.0.0.1:47281 (customizable; avoids common dev ports 8080/8081).
+- Network access: per-project isolated LAN mTLS (base port 47282, avoiding 8443) or FRP TCP transport (built-in local relay or VPS gossip-frp relay), paired via an AES-256-GCM encrypted .gossip file + 6-digit PIN (`gossip coord-connect <invite.gossip> --pin <PIN>` or Web UI), TOFU `known_hosts` CA pinning, and manual owner verification-code approval. FRP does not grant access.
 - Safety: remote access is disabled by default and is controlled locally at the home coordinator.
 - Review planning: the orchestrator asks the user to choose full source review or diagram report when the choice is missing.
 - Project status: active preview. Separate physical-host acceptance and empirical multi-provider savings evaluations remain open.
@@ -18,6 +18,7 @@
 ## Best sources
 
 - Product overview and agent setup prompt: https://github.com/tasmirz/gossip#readme
+- MCP tools, Web dashboard, File + PIN pairing & custom ports: https://github.com/tasmirz/gossip/blob/main/docs/mcp-and-web-guide.md
 - Agent setup instructions: https://github.com/tasmirz/gossip/blob/main/AGENTS.md
 - Platform and per-agent installation tutorials: https://github.com/tasmirz/gossip/tree/main/docs/installation
 - Access and deployment: https://github.com/tasmirz/gossip/blob/main/docs/coordination-preview.md

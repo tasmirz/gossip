@@ -138,10 +138,11 @@ try {
     $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
     Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null
     Start-ScheduledTask -TaskName $taskName
+    $dashboardPort = if ($env:GOSSIP_DASHBOARD_PORT) { $env:GOSSIP_DASHBOARD_PORT } else { '47281' }
     $healthy = $false
     for ($i = 0; $i -lt 15 -and -not $healthy; $i++) {
       try {
-        $reply = Invoke-WebRequest 'http://127.0.0.1:8081/healthz' -UseBasicParsing -TimeoutSec 1
+        $reply = Invoke-WebRequest "http://127.0.0.1:${dashboardPort}/healthz" -UseBasicParsing -TimeoutSec 1
         $serverPid = 0
         if ($reply.Content -eq 'gossip-inbox-v1' -and
             [int]::TryParse([string]$reply.Headers['Gossip-Service-Pid'], [ref]$serverPid) -and
@@ -164,8 +165,8 @@ try {
       }
       if (-not $healthy) { Start-Sleep -Seconds 1 }
     }
-    if (-not $healthy) { throw 'Gossip did not become healthy on port 8081. Check Task Scheduler and whether the port is occupied.' }
-    Write-Host 'Gossip starts at sign-in. Open http://127.0.0.1:8081 to add a project.'
+    if (-not $healthy) { throw "Gossip did not become healthy on port ${dashboardPort}. Check Task Scheduler and whether the port is occupied." }
+    Write-Host "Gossip starts at sign-in. Open http://127.0.0.1:${dashboardPort} to add a project."
   } catch {
     Write-Warning $_.Exception.Message
     Write-Host "Start Gossip manually with: & `"$serviceExe`" coord-ui"

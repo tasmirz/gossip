@@ -36,7 +36,7 @@ Run the installed binary with `coord-ui`, for example:
 ~/.local/share/gossip/bin/gossip coord-ui
 ```
 
-Open `http://127.0.0.1:8081`, select **Create local project**, and enter the full path to an existing checkout. Gossip infers repository metadata and creates the project and initial workspace. The owner credential is saved in the device registry; it is not downloaded automatically. Use **Export recovery credential** in the project header only when you want a separate backup. Do not open the UI's `index.html` with a `file://` URL; the dashboard requires its local HTTP server. See the [Luna dashboard walkthrough](../walkthrough-luna.md) for the everyday project flow.
+Open `http://127.0.0.1:47281`, select **Create local project**, and enter the full path to an existing checkout. Gossip infers repository metadata and creates the project and initial workspace. The owner credential is saved in the device registry; it is not downloaded automatically. Use **Export recovery credential** in the project header only when you want a separate backup. Do not open the UI's `index.html` with a `file://` URL; the dashboard requires its local HTTP server. See the [Luna dashboard walkthrough](../walkthrough-luna.md) and the [MCP & Web Dashboard guide](../mcp-and-web-guide.md) for the everyday project and File + 6-digit PIN remote-connect flow.
 
 ## 4. Add the project MCP server
 

@@ -20,7 +20,7 @@ Use this guide when you want an AI coding agent to connect a repository and coor
 
 Use the [guided prebuilt installer and per-agent tutorials](installation/README.md). They do not require Go or source compilation. For manual archive extraction, MCP setup, verification, and removal, see the [full manual guide](installation/manual.md).
 
-Run `gossip coord-ui` (or `gossip.exe coord-ui`) and open `http://127.0.0.1:8081`. The user chooses **Create local project** and selects the checkout. The dashboard binds to loopback by default; remote access stays off until an administrator enables it locally.
+Run `gossip coord-ui` (or `gossip.exe coord-ui`) and open `http://127.0.0.1:47281`. The user chooses **Create local project** and selects the checkout. The dashboard binds to loopback by default; remote access stays off until an administrator enables it locally.
 
 ## User choices and security
 
@@ -31,4 +31,4 @@ Run `gossip coord-ui` (or `gossip.exe coord-ui`) and open `http://127.0.0.1:8081
 - FRP forwards transport to the TLS home coordinator. It does not grant project access.
 - Do not expose the legacy JSON dashboard through LAN, reverse proxy, or FRP.
 
-Detailed command examples and recovery steps are in [`coordination-preview.md`](coordination-preview.md). The architecture is in [`mcp-architecture-security-efficiency.md`](mcp-architecture-security-efficiency.md).
+Detailed command examples and recovery steps are in [`coordination-preview.md`](coordination-preview.md). The full MCP tool reference, Web dashboard views, custom ports, and two-machine LAN/FRP pairing walkthrough are in [`mcp-and-web-guide.md`](mcp-and-web-guide.md). The architecture is in [`mcp-architecture-security-efficiency.md`](mcp-architecture-security-efficiency.md).

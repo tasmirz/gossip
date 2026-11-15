@@ -10,7 +10,9 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"database/sql"
+	"encoding/base64"
 	"encoding/hex"
+	"encoding/pem"
 	"errors"
 	"math/big"
 	"strings"
@@ -18,16 +20,75 @@ import (
 )
 
 type RemoteInvitation struct {
-	ID          string `json:"id"`
-	Project     string `json:"project_id"`
-	Name        string `json:"name"`
-	Role        string `json:"role"`
-	State       string `json:"state"`
-	Fingerprint string `json:"fingerprint,omitempty"`
-	ExpiresAt   int64  `json:"expires_at"`
+	ID               string `json:"id"`
+	Project          string `json:"project_id"`
+	Name             string `json:"name"`
+	Role             string `json:"role"`
+	State            string `json:"state"`
+	Fingerprint      string `json:"fingerprint,omitempty"`
+	SSHFingerprint   string `json:"ssh_fingerprint,omitempty"`
+	VerificationCode string `json:"verification_code,omitempty"`
+	ExpiresAt        int64  `json:"expires_at"`
+	AutoApprove      bool   `json:"auto_approve,omitempty"`
+}
+
+// SSHFingerprintSHA256 formats raw DER bytes as an OpenSSH-style SHA256 fingerprint.
+func SSHFingerprintSHA256(raw []byte) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	sum := sha256.Sum256(raw)
+	return "SHA256:" + base64.RawStdEncoding.EncodeToString(sum[:])
+}
+
+// HostCertSSHFingerprint parses the first PEM CERTIFICATE block and returns its SHA256 fingerprint.
+func HostCertSSHFingerprint(certPEM string) string {
+	block, _ := pem.Decode([]byte(strings.TrimSpace(certPEM)))
+	if block == nil || len(block.Bytes) == 0 {
+		return ""
+	}
+	return SSHFingerprintSHA256(block.Bytes)
+}
+
+// PeerVerificationCode derives a deterministic human-readable SAS code (XXXX-XXXX)
+// from the device's public key fingerprint hex and invitation ID so both host and
+// joining peer can compare codes before manual approval.
+func PeerVerificationCode(fingerprintHex, inviteID string) string {
+	fp := strings.ToLower(strings.TrimSpace(fingerprintHex))
+	id := strings.TrimSpace(inviteID)
+	if fp == "" || id == "" {
+		return ""
+	}
+	const alphabet = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"
+	sum := sha256.Sum256([]byte("gossip-verify-v1\x00" + fp + "\x00" + id))
+	var b strings.Builder
+	b.Grow(9)
+	for i := range 8 {
+		if i == 4 {
+			b.WriteByte('-')
+		}
+		b.WriteByte(alphabet[int(sum[i])%len(alphabet)])
+	}
+	return b.String()
+}
+
+func populateVerificationDisplay(inv *RemoteInvitation) {
+	if inv == nil || inv.Fingerprint == "" || inv.ID == "" {
+		return
+	}
+	inv.VerificationCode = PeerVerificationCode(inv.Fingerprint, inv.ID)
+	if raw, err := hex.DecodeString(strings.TrimSpace(inv.Fingerprint)); err == nil && len(raw) == sha256.Size {
+		inv.SSHFingerprint = "SHA256:" + base64.RawStdEncoding.EncodeToString(raw)
+	}
 }
 
 func (s *Store) CreateRemoteInvitation(ctx context.Context, project, token, name, role string) (RemoteInvitation, string, error) {
+	return s.CreateRemoteInvitationWithOptions(ctx, project, token, name, role, false)
+}
+
+// CreateRemoteInvitationWithOptions issues a remote invitation. Manual owner approval
+// with verification code comparison is always required (auto-approve is disabled).
+func (s *Store) CreateRemoteInvitationWithOptions(ctx context.Context, project, token, name, role string, _ bool) (RemoteInvitation, string, error) {
 	name = strings.TrimSpace(name)
 	if name == "" || len(name) > 160 {
 		return RemoteInvitation{}, "", errors.New("invitee name required")
@@ -59,8 +120,8 @@ func (s *Store) CreateRemoteInvitation(ctx context.Context, project, token, name
 	if err != nil {
 		return RemoteInvitation{}, "", err
 	}
-	inv := RemoteInvitation{ID: id, Project: project, Name: name, Role: role, State: "issued", ExpiresAt: time.Now().Add(30 * time.Minute).UnixMilli()}
-	_, err = tx.ExecContext(ctx, `INSERT INTO remote_enrollments(id,project_id,name,role_id,state,expires_at,code_hash,issued_by) VALUES(?,?,?,?,?,?,?,?)`, id, project, name, role, inv.State, inv.ExpiresAt, hash, actor.ID)
+	inv := RemoteInvitation{ID: id, Project: project, Name: name, Role: role, State: "issued", ExpiresAt: time.Now().Add(30 * time.Minute).UnixMilli(), AutoApprove: false}
+	_, err = tx.ExecContext(ctx, `INSERT INTO remote_enrollments(id,project_id,name,role_id,state,expires_at,code_hash,issued_by,auto_approve) VALUES(?,?,?,?,?,?,?,?,?)`, id, project, name, role, inv.State, inv.ExpiresAt, hash, actor.ID, 0)
 	if err != nil {
 		return RemoteInvitation{}, "", err
 	}
@@ -116,6 +177,7 @@ func (s *Store) AcceptRemoteInvitation(ctx context.Context, project, id, code st
 	if err != nil {
 		return RemoteInvitation{}, err
 	}
+	inv.AutoApprove = false
 	if subtle.ConstantTimeCompare(expected, hash[:]) != 1 || inv.ExpiresAt <= time.Now().UnixMilli() {
 		return RemoteInvitation{}, ErrUnauthorized
 	}
@@ -123,13 +185,16 @@ func (s *Store) AcceptRemoteInvitation(ctx context.Context, project, id, code st
 		if inv.Fingerprint != keyID {
 			return RemoteInvitation{}, ErrUnauthorized
 		}
+		populateVerificationDisplay(&inv)
 		return inv, nil
 	}
 	if inv.State != "issued" {
 		return RemoteInvitation{}, ErrUnauthorized
 	}
-	inv.State, inv.Fingerprint = "pending", keyID
-	_, err = tx.ExecContext(ctx, `UPDATE remote_enrollments SET state='pending',fingerprint=?,csr=? WHERE id=? AND project_id=?`, keyID, der, id, project)
+	const nextState = "pending"
+	inv.State, inv.Fingerprint = nextState, keyID
+	populateVerificationDisplay(&inv)
+	_, err = tx.ExecContext(ctx, `UPDATE remote_enrollments SET state=?,fingerprint=?,csr=? WHERE id=? AND project_id=?`, nextState, keyID, der, id, project)
 	if err != nil {
 		return RemoteInvitation{}, err
 	}
@@ -337,6 +402,7 @@ func (s *Store) RemoteInvitations(ctx context.Context, project, token string) ([
 		if err := rows.Scan(&item.ID, &item.Name, &item.Role, &item.State, &item.Fingerprint, &item.ExpiresAt); err != nil {
 			return nil, err
 		}
+		populateVerificationDisplay(&item)
 		out = append(out, item)
 	}
 	return out, rows.Err()

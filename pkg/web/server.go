@@ -2092,7 +2092,7 @@ gossip coord-init &lt;project-name&gt;
 gossip coord-add --name &lt;agent-name&gt; --role worker --client-certificate &lt;cert.pem&gt;
 
 # 2. Generate secure FRP TCP proxy configuration:
-gossip coord-frp --server-addr &lt;frp.example.com&gt; --remote-port 8443
+gossip coord-frp --server-addr &lt;frp.example.com&gt; --remote-port 47282
 
 # 3. Start mutual TLS coordination service:
 gossip coord-serve --tls-cert &lt;server.pem&gt; --tls-key &lt;server-key.pem&gt; --client-ca &lt;ca.pem&gt;

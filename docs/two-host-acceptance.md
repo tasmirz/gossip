@@ -85,10 +85,10 @@ gossip coord-init --db /private/gossip/home.db --name two-host-check --owner acc
 gossip coord-access --db /private/gossip/home.db --credential-file /private/gossip/owner.json --action grant --certificate /private/gossip/owner.crt
 ```
 
-Start the authoritative home listener. Choose the LAN address or `0.0.0.0` only when the host firewall restricts access to the intended network. The server certificate must match the URL Host B will use. Keep the owner credential on Host A and start its loopback dashboard: `gossip coord-ui --db /private/gossip/home.db --port 8081`.
+Start the authoritative home listener. Choose the LAN address or `0.0.0.0` only when the host firewall restricts access to the intended network. The server certificate must match the URL Host B will use. Keep the owner credential on Host A and start its loopback dashboard: `gossip coord-ui --db /private/gossip/home.db --port 47281`.
 
 ```sh
-gossip coord-serve --db /private/gossip/home.db --listen 0.0.0.0:8443 --tls-cert /private/gossip/home.crt --tls-key /private/gossip/home.key --client-ca /private/gossip/ca.crt
+gossip coord-serve --db /private/gossip/home.db --listen 0.0.0.0:47282 --tls-cert /private/gossip/home.crt --tls-key /private/gossip/home.key --client-ca /private/gossip/ca.crt
 ```
 
 ### Critical Step: Enable Remote Access (`coord-remote`)
@@ -109,28 +109,28 @@ gossip coord-remote --db /private/gossip/home.db --action enable
 
 ### Reverse Proxy Setup with `coord-frp` (Optional)
 
-If Host A is behind NAT or a firewall and reachable only through a reverse proxy, use the built-in `coord-frp` generator to produce a secure, hardened `frpc.toml` configuration forwarding TCP to the mTLS listener (`:8443`). Never expose the unauthenticated HTTP dashboard over FRP:
+If Host A is behind NAT or a firewall and reachable only through a reverse proxy, use the built-in `coord-frp` generator to produce a secure, hardened `frpc.toml` configuration forwarding TCP to the mTLS listener (`:47282`). Never expose the unauthenticated HTTP dashboard over FRP:
 
 ```sh
 gossip coord-frp --server FRP_SERVER_HOST --server-port 7000 --token FRP_AUTH_TOKEN \
-  --local-port 8443 --remote-port 8443 --config-file /private/gossip/frpc.toml
+  --local-port 47282 --remote-port 18443 --config-file /private/gossip/frpc.toml
 chmod 600 /private/gossip/frpc.toml
 frpc -c /private/gossip/frpc.toml &
 ```
 
 ## Enroll the remote worker
 
-On Host A, create the worker membership and grant its client certificate to this project atomically. The command writes the worker credential locally with restrictive permissions; transfer that file securely to Host B.
+On Host A, create the worker membership and grant its client certificate to this project atomically (or use the File + 6-digit PIN `Share` / `coord-connect` flow documented in [`mcp-and-web-guide.md`](mcp-and-web-guide.md)). The command writes the worker credential locally with restrictive permissions; transfer that file securely to Host B.
 
 ```sh
-gossip coord-add --remote https://HOME_HOST:8443 --tls-ca /private/gossip/ca.crt --tls-cert /private/gossip/owner.crt --tls-key /private/gossip/owner.key --owner-credential /private/gossip/owner.json --name acceptance-worker --role worker --client-certificate /private/gossip/worker.crt --credential-file /private/gossip/worker.json
+gossip coord-add --remote https://HOME_HOST:47282 --tls-ca /private/gossip/ca.crt --tls-cert /private/gossip/owner.crt --tls-key /private/gossip/owner.key --owner-credential /private/gossip/owner.json --name acceptance-worker --role worker --client-certificate /private/gossip/worker.crt --credential-file /private/gossip/worker.json
 ```
 
 On Host B, protect the received credential and configure the coding-agent MCP host to start its project adapter with its working directory set to the registered checkout when testing source capture. (The adapter uses stdio, so the coding-agent MCP host should launch it.)
 
 ```sh
 chmod 600 /private/gossip/worker.json
-gossip coord-mcp --remote https://HOME_HOST:8443 --tls-ca /private/gossip/ca.crt --tls-cert /private/gossip/worker.crt --tls-key /private/gossip/worker.key --credential-file /private/gossip/worker.json
+gossip coord-mcp --remote https://HOME_HOST:47282 --tls-ca /private/gossip/ca.crt --tls-cert /private/gossip/worker.crt --tls-key /private/gossip/worker.key --credential-file /private/gossip/worker.json
 ```
 
 ## Exercise access control and collaboration
@@ -173,7 +173,7 @@ gossip coord-mcp --remote https://HOME_HOST:8443 --tls-ca /private/gossip/ca.crt
      --cert /private/gossip/worker.crt --key /private/gossip/worker.key \
      -H 'Content-Type: application/json' \
      --data '{"operation":"identity.read","project":"SECOND_PROJECT_ID"}' \
-     --write-out '\nHTTP %{http_code}\n' https://HOME_HOST:8443/v1/call
+     --write-out '\nHTTP %{http_code}\n' https://HOME_HOST:47282/v1/call
    rm -f "$auth_cfg"
    trap - EXIT
    ```
@@ -202,10 +202,10 @@ gossip coord-mcp --remote https://HOME_HOST:8443 --tls-ca /private/gossip/ca.crt
      curl --cacert /private/gossip/ca.crt --cert /private/gossip/worker.crt --key /private/gossip/worker.key \
        -H 'Content-Type: application/json' \
        --data '{"operation":"remote.access.set","enabled":true}' \
-       --write-out '\nHTTP %{http_code}\n' https://HOME_HOST:8443/v1/call
+       --write-out '\nHTTP %{http_code}\n' https://HOME_HOST:47282/v1/call
      ```
      Verify that remote RPC receives HTTP 503 (or HTTP 401 Unauthorized); remote tampering is strictly impossible.
-   - On Host A, confirm local operations (loopback Web dashboard at `http://127.0.0.1:8081` and direct CLI/DB operations) continue unhindered.
+   - On Host A, confirm local operations (loopback Web dashboard at `http://127.0.0.1:47281` and direct CLI/DB operations) continue unhindered.
    - On Host A, re-enable remote access:
      ```sh
      gossip coord-remote --db /private/gossip/home.db --action enable
@@ -232,7 +232,7 @@ Record evidence with secret values removed. Complete this table during external 
 | 5 | Host B (Worker) OS & Hardware | OS, arch, CPU, memory | Distinct physical computer | | |
 | 6 | Network Route Type & Topology | Direct LAN or FRP reverse proxy | Independent physical network connection | | |
 | 7 | Server Certificate & SAN Verification | `openssl x509 -noout -text -in home.crt` | SAN matches Host B dial target | | |
-| 8 | Kill Switch Default-Off Verification | `curl -k https://127.0.0.1:8443/v1/call` immediately after `coord-serve` | HTTP 503 Service Unavailable | | |
+| 8 | Kill Switch Default-Off Verification | `curl -k https://127.0.0.1:47282/v1/call` immediately after `coord-serve` | HTTP 503 Service Unavailable | | |
 | 9 | Kill Switch Local Enablement | `gossip coord-remote --action enable --db ...` | Status transitions to "enabled" | | |
 | 10 | mTLS RPC Handshake | Worker connects via `coord-mcp` | HTTP 200 / MCP tools list | | |
 | 11 | Workspace Registration & Path Privacy | `gossip_workspace(operation="register_git")` | Local path masked for non-owners | | |

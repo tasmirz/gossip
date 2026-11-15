@@ -34,7 +34,7 @@ func EnrollmentHandler(s *Store, peer http.Handler, ca *x509.Certificate, signer
 			window = time.Now()
 			requests = 0
 		}
-		if requests >= 60 {
+		if requests >= 180 {
 			return false
 		}
 		requests++

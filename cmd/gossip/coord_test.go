@@ -677,3 +677,19 @@ func TestCoordRemoteCLI(t *testing.T) {
 		t.Fatal("socket invalid action was accepted")
 	}
 }
+
+func TestCoordNonDevDefaultPortsAndSavedDashboardPort(t *testing.T) {
+	if coord.DefaultDashboardPort != 47281 || coord.DefaultPeerListenPort != 47282 {
+		t.Fatalf("expected dedicated non-dev defaults 47281/47282, got %d/%d", coord.DefaultDashboardPort, coord.DefaultPeerListenPort)
+	}
+	dir := t.TempDir()
+	if got := coord.LoadSavedDashboardPort(dir); got != coord.DefaultDashboardPort {
+		t.Fatalf("expected DefaultDashboardPort (%d) when peer-access.json does not exist, got %d", coord.DefaultDashboardPort, got)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "peer-access.json"), []byte(`{"dashboard_port": 49123}`), 0o600); err != nil {
+		t.Fatalf("write peer-access.json: %v", err)
+	}
+	if got := coord.LoadSavedDashboardPort(dir); got != 49123 {
+		t.Fatalf("expected saved dashboard port 49123, got %d", got)
+	}
+}

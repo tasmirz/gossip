@@ -10,7 +10,7 @@ Start the local dashboard from a terminal:
 gossip coord-ui
 ```
 
-Open `http://127.0.0.1:8081/` in a browser. Keep the dashboard on loopback. Do not open `pkg/coord/ui/index.html` as a `file://` URL: the screenshot in the issue is the browser rendering the HTML without its server-hosted CSS and API. The dashboard needs Gossip's HTTP server.
+Open `http://127.0.0.1:47281/` in a browser (override with `--port` or `GOSSIP_DASHBOARD_PORT`, or customize under **Settings → Connections**). Keep the dashboard on loopback. Do not open `pkg/coord/ui/index.html` as a `file://` URL: the screenshot in the issue is the browser rendering the HTML without its server-hosted CSS and API. The dashboard needs Gossip's HTTP server. See the [MCP & Web Dashboard guide](mcp-and-web-guide.md) for File + 6-digit PIN multi-machine pairing and custom ports.
 
 For a source checkout, use:
 

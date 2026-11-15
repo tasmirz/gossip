@@ -261,3 +261,32 @@ func TestComputeDisclosure(t *testing.T) {
 		t.Errorf("bad markdown banner: %s", banner)
 	}
 }
+
+func TestIsVirtualBridgeInterface(t *testing.T) {
+	bridges := []string{
+		"docker0",
+		"br-73a1b2c3d4e5",
+		"veth0a1b2c",
+		"virbr0",
+		"cni0",
+		"flannel.1",
+		"kube-ipvs0",
+		"podman0",
+		"lxcbr0",
+		"vboxnet0",
+		"vmnet8",
+		"DOCKER0",
+	}
+	for _, name := range bridges {
+		if !isVirtualBridgeInterface(name) {
+			t.Errorf("expected virtual bridge %q to be filtered", name)
+		}
+	}
+
+	realIfaces := []string{"eth0", "enp3s0", "wlan0", "wlp2s0", "en0", "tailscale0", "wg0"}
+	for _, name := range realIfaces {
+		if isVirtualBridgeInterface(name) {
+			t.Errorf("expected real interface %q NOT to be filtered", name)
+		}
+	}
+}

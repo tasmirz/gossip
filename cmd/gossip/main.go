@@ -46,7 +46,7 @@ func main() {
 
 	cmd := os.Args[1]
 	switch cmd {
-	case "coord-init", "coord-add", "coord-access", "coord-pair", "coord-frp", "coord-mcp", "coord-mcp-bootstrap", "coord-bootstrap-key", "coord-ui", "coord-serve", "coord-daemon", "coord-migrate", "coord-remote", "coord-connection", "file-edit":
+	case "coord-init", "coord-add", "coord-access", "coord-pair", "coord-connect", "coord-frp", "coord-mcp", "coord-mcp-bootstrap", "coord-bootstrap-key", "coord-ui", "coord-serve", "coord-daemon", "coord-migrate", "coord-remote", "coord-connection", "file-edit":
 		var err error
 		switch cmd {
 		case "coord-init":
@@ -57,6 +57,8 @@ func main() {
 			err = runCoordAccess(os.Args[2:])
 		case "coord-pair":
 			err = runCoordPair(os.Args[2:])
+		case "coord-connect":
+			err = runCoordConnect(os.Args[2:])
 		case "coord-frp":
 			err = runCoordFRP(os.Args[2:])
 		case "coord-mcp":

@@ -234,6 +234,36 @@ func Open(path string) (*Store, error) {
 			return nil, fmt.Errorf("migrate plan sequence: %w", queryErr)
 		}
 	}
+	enrollRows, enrollErr := db.Query(`PRAGMA table_info(remote_enrollments)`)
+	if enrollErr != nil {
+		db.Close()
+		return nil, enrollErr
+	}
+	autoApproveFound := false
+	for enrollRows.Next() {
+		var cid, notnull, pk int
+		var name, typ string
+		var defaultValue any
+		if enrollErr = enrollRows.Scan(&cid, &name, &typ, &notnull, &defaultValue, &pk); enrollErr != nil {
+			break
+		}
+		if name == "auto_approve" {
+			autoApproveFound = true
+		}
+	}
+	if closeErr := enrollRows.Close(); enrollErr == nil {
+		enrollErr = closeErr
+	}
+	if enrollErr != nil {
+		db.Close()
+		return nil, enrollErr
+	}
+	if !autoApproveFound {
+		if _, enrollErr = db.Exec(`ALTER TABLE remote_enrollments ADD COLUMN auto_approve INTEGER NOT NULL DEFAULT 0`); enrollErr != nil {
+			db.Close()
+			return nil, fmt.Errorf("migrate remote enrollments auto_approve: %w", enrollErr)
+		}
+	}
 	if _, queryErr = db.Exec(`UPDATE projects SET plan_sequence=MAX(plan_sequence,COALESCE((SELECT MAX(revision) FROM plans WHERE plans.project_id=projects.id),plan_revision))`); queryErr != nil {
 		db.Close()
 		return nil, fmt.Errorf("initialize plan sequence: %w", queryErr)
@@ -496,7 +526,7 @@ CREATE TABLE IF NOT EXISTS project_context_links (
  PRIMARY KEY(project_id,target_kind,target_id,context_id,revision),
  FOREIGN KEY(project_id,context_id,revision) REFERENCES project_context(project_id,id,revision)
 );
-CREATE TABLE IF NOT EXISTS remote_enrollments (id TEXT PRIMARY KEY,project_id TEXT NOT NULL REFERENCES projects(id),name TEXT NOT NULL,role_id TEXT NOT NULL,state TEXT NOT NULL,expires_at INTEGER NOT NULL,code_hash BLOB NOT NULL,issued_by TEXT NOT NULL REFERENCES principals(id),fingerprint TEXT NOT NULL DEFAULT '',csr BLOB,certificate BLOB,enrolled_principal TEXT NOT NULL DEFAULT '');
+CREATE TABLE IF NOT EXISTS remote_enrollments (id TEXT PRIMARY KEY,project_id TEXT NOT NULL REFERENCES projects(id),name TEXT NOT NULL,role_id TEXT NOT NULL,state TEXT NOT NULL,expires_at INTEGER NOT NULL,code_hash BLOB NOT NULL,issued_by TEXT NOT NULL REFERENCES principals(id),fingerprint TEXT NOT NULL DEFAULT '',csr BLOB,certificate BLOB,enrolled_principal TEXT NOT NULL DEFAULT '',auto_approve INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS project_roles (project_id TEXT NOT NULL REFERENCES projects(id),id TEXT NOT NULL,name TEXT NOT NULL,PRIMARY KEY(project_id,id));
 CREATE TABLE IF NOT EXISTS project_role_permissions (project_id TEXT NOT NULL,role_id TEXT NOT NULL,permission TEXT NOT NULL,PRIMARY KEY(project_id,role_id,permission),FOREIGN KEY(project_id,role_id) REFERENCES project_roles(project_id,id));
 CREATE TABLE IF NOT EXISTS project_role_assignments (project_id TEXT NOT NULL REFERENCES projects(id),principal_id TEXT NOT NULL REFERENCES principals(id),role_id TEXT NOT NULL,PRIMARY KEY(project_id,principal_id));

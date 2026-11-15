@@ -33,20 +33,78 @@ type enrollmentDevice struct {
 	Bundle     EnrollmentBundle
 }
 
+type EnrollmentAcceptOptions struct {
+	Bundle          EnrollmentBundle
+	Code            string
+	SSHTarget       string
+	SSHPort         int
+	SSHRemotePort   int
+	SSHIdentityFile string
+	TrustHostKey    bool
+}
+
+// KnownHostIdentity derives a stable SSH known_hosts identifier for direct or SSH-tunneled endpoints.
+func KnownHostIdentity(endpoint, sshTarget string, sshRemotePort int) string {
+	target := strings.TrimSpace(sshTarget)
+	if target != "" {
+		port := sshRemotePort
+		if port <= 0 {
+			port = ParseEndpointPort(endpoint)
+		}
+		if port <= 0 {
+			port = defaultSSHRemotePort
+		}
+		return fmt.Sprintf("ssh://%s:%d", strings.ToLower(target), port)
+	}
+	return NormalizeKnownHostKey(endpoint)
+}
+
 func (r *DeviceRegistry) AcceptEnrollment(ctx context.Context, profile string, bundle EnrollmentBundle, code string) (RemoteInvitation, error) {
+	return r.AcceptEnrollmentWithOptions(ctx, profile, EnrollmentAcceptOptions{
+		Bundle:       bundle,
+		Code:         code,
+		TrustHostKey: true,
+	})
+}
+
+func (r *DeviceRegistry) AcceptEnrollmentWithOptions(ctx context.Context, profile string, opts EnrollmentAcceptOptions) (RemoteInvitation, error) {
+	bundle := opts.Bundle
+	code := opts.Code
 	inv := bundle.Invitation
 	if err := validateEnrollmentHome(bundle.Endpoint, bundle.ServerCA); err != nil {
 		return inv, err
 	}
-	if (inv.ExpiresAt != 0 && inv.ExpiresAt <= time.Now().UnixMilli()) || inv.ID == "" || bundle.HomeID == "" || len(code) != 64 {
+	if (inv.ExpiresAt != 0 && inv.ExpiresAt <= time.Now().UnixMilli()) || inv.ID == "" || len(code) != 64 {
 		return inv, errors.New("valid invitation and pairing code required")
 	}
-	fingerprint := sha256.Sum256([]byte(profile + "\x00" + bundle.HomeID + "\x00" + inv.Project + "\x00" + inv.ID))
+	hostKey := KnownHostIdentity(bundle.Endpoint, opts.SSHTarget, opts.SSHRemotePort)
+	hostCheck, err := r.VerifyOrRecordKnownHost(ctx, hostKey, bundle.HomeID, bundle.ServerCA, opts.TrustHostKey)
+	if err != nil {
+		return inv, err
+	}
+	if hostCheck.Status == "untrusted" {
+		return inv, fmt.Errorf("host key %s is not trusted yet; inspect and accept the fingerprint before connecting", hostCheck.Fingerprint)
+	}
+
+	dialEndpoint := bundle.Endpoint
+	if strings.TrimSpace(opts.SSHTarget) != "" {
+		dialEndpoint, err = r.EnsureSSHClientForward(ctx, opts.SSHTarget, bundle.Endpoint, opts.SSHPort, opts.SSHRemotePort, opts.SSHIdentityFile)
+		if err != nil {
+			return inv, err
+		}
+	}
+
+	keyHomeID := bundle.HomeID
+	if keyHomeID == "" {
+		keyHomeID = hostCheck.Fingerprint
+	}
+	fingerprint := sha256.Sum256([]byte(profile + "\x00" + keyHomeID + "\x00" + inv.Project + "\x00" + inv.ID))
 	keyID := fmt.Sprintf("%x", fingerprint)
 	device, err := r.loadEnrollmentDevice(ctx, keyID, bundle)
 	if err != nil {
 		return inv, err
 	}
+	localDeviceFP := deviceFingerprint(device.CSR)
 	roots := x509.NewCertPool()
 	roots.AppendCertsFromPEM([]byte(bundle.ServerCA))
 	config := &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: roots}
@@ -55,12 +113,14 @@ func (r *DeviceRegistry) AcceptEnrollment(ctx context.Context, profile string, b
 	client := &http.Client{Transport: transport, Timeout: 10 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	input := enrollmentRequest{Project: inv.Project, ID: inv.ID, Code: code, CSR: device.CSR}
 	var accepted RemoteInvitation
-	if err = enrollmentCall(ctx, client, bundle.Endpoint, "accept", input, &accepted); err != nil {
+	if err = enrollmentCall(ctx, client, dialEndpoint, "accept", input, &accepted); err != nil {
 		return inv, err
 	}
-	if accepted.ID != inv.ID || accepted.Project != inv.Project || accepted.Fingerprint != deviceFingerprint(device.CSR) {
+	if accepted.ID != inv.ID || accepted.Project != inv.Project || accepted.Fingerprint != localDeviceFP {
 		return inv, ErrConflict
 	}
+	// Compute verification code locally from our CSR public key rather than trusting unverified display fields.
+	populateVerificationDisplay(&accepted)
 	if accepted.State == "pending" {
 		return accepted, nil
 	}
@@ -70,7 +130,7 @@ func (r *DeviceRegistry) AcceptEnrollment(ctx context.Context, profile string, b
 	var issued struct {
 		Certificate []byte `json:"certificate"`
 	}
-	if err = enrollmentCall(ctx, client, bundle.Endpoint, "certificate", input, &issued); err != nil {
+	if err = enrollmentCall(ctx, client, dialEndpoint, "certificate", input, &issued); err != nil {
 		return inv, err
 	}
 	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: issued.Certificate})
@@ -82,7 +142,7 @@ func (r *DeviceRegistry) AcceptEnrollment(ctx context.Context, profile string, b
 	finalTransport := &http.Transport{TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: roots, Certificates: []tls.Certificate{pair}}}
 	defer finalTransport.CloseIdleConnections()
 	finalClient := &http.Client{Transport: finalTransport, Timeout: 10 * time.Second, CheckRedirect: client.CheckRedirect}
-	if err = enrollmentCall(ctx, finalClient, bundle.Endpoint, "finalize", enrollmentRequest{Project: inv.Project, ID: inv.ID, Credential: device.Credential}, nil); err != nil {
+	if err = enrollmentCall(ctx, finalClient, dialEndpoint, "finalize", enrollmentRequest{Project: inv.Project, ID: inv.ID, Credential: device.Credential}, nil); err != nil {
 		return inv, err
 	}
 	for suffix, data := range map[string][]byte{"_ca": []byte(bundle.ServerCA), "_cert": certPEM, "_key": keyPEM} {
@@ -90,8 +150,27 @@ func (r *DeviceRegistry) AcceptEnrollment(ctx context.Context, profile string, b
 			return inv, err
 		}
 	}
-	conn := DeviceConnection{Profile: profile, HomeID: bundle.HomeID, ProjectID: inv.Project, PrincipalID: device.Credential.PrincipalID, Name: accepted.Name, Endpoint: bundle.Endpoint, CAFile: filepath.Join(r.configDir, "secrets", keyID+"_ca"), CertFile: filepath.Join(r.configDir, "secrets", keyID+"_cert"), KeyFile: filepath.Join(r.configDir, "secrets", keyID+"_key")}
-	remote, err := NewRemote(conn.Endpoint, conn.CAFile, conn.CertFile, conn.KeyFile, "")
+	sshPort := opts.SSHPort
+	if sshPort <= 0 {
+		sshPort = defaultSSHPort
+	}
+	conn := DeviceConnection{
+		Profile:         profile,
+		HomeID:          bundle.HomeID,
+		ProjectID:       inv.Project,
+		PrincipalID:     device.Credential.PrincipalID,
+		Name:            accepted.Name,
+		Endpoint:        bundle.Endpoint,
+		CAFile:          filepath.Join(r.configDir, "secrets", keyID+"_ca"),
+		CertFile:        filepath.Join(r.configDir, "secrets", keyID+"_cert"),
+		KeyFile:         filepath.Join(r.configDir, "secrets", keyID+"_key"),
+		HostFingerprint: hostCheck.Fingerprint,
+		SSHTarget:       strings.TrimSpace(opts.SSHTarget),
+		SSHPort:         sshPort,
+		SSHRemotePort:   opts.SSHRemotePort,
+		SSHIdentityFile: strings.TrimSpace(opts.SSHIdentityFile),
+	}
+	remote, err := NewRemote(dialEndpoint, conn.CAFile, conn.CertFile, conn.KeyFile, "")
 	if err != nil {
 		return inv, err
 	}
@@ -100,9 +179,10 @@ func (r *DeviceRegistry) AcceptEnrollment(ctx context.Context, profile string, b
 	if err != nil {
 		return inv, err
 	}
-	if frame.HomeInstanceID != bundle.HomeID {
+	if frame.HomeInstanceID == "" || (bundle.HomeID != "" && frame.HomeInstanceID != bundle.HomeID) {
 		return inv, ErrConflict
 	}
+	conn.HomeID = frame.HomeInstanceID
 	if err = r.Put(ctx, conn, device.Credential.Token); err != nil {
 		return inv, err
 	}

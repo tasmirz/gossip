@@ -1,0 +1,172 @@
+# Gossip MCP & Web Dashboard Guide
+
+This guide documents how the **Gossip Web Dashboard** (`gossip coord-ui`), **MCP Server** (`gossip coord-mcp`), and **multi-machine LAN/FRP pairing** fit together.
+
+---
+
+## 1. Does MCP automatically connect and configure remote machines?
+
+**No.** By design, an MCP client cannot automatically turn on network listeners, open FRP tunnels, change host ports, decrypt `.gossip` invitations, or self-approve remote devices.
+
+Instead, Gossip separates responsibilities strictly:
+
+- **Web Dashboard (`gossip coord-ui`) & Local CLI (`coord-connect`, `coord-connection`, `coord-remote`, `coord-serve`, `coord-frp`)**:
+  - Enable/disable LAN mTLS and per-project FRP tunnels
+  - Configure built-in vs. VPS FRP relays and customize ports
+  - Issue symmetrically encrypted `.gossip` invites
+  - Pin peer host keys (`known_hosts` TOFU) and manually approve verification codes
+  - Manage the local machine's Device Registry (`default` or named profiles)
+- **MCP Server (`gossip coord-mcp`)**:
+  - Reads already-enrolled projects from the local Device Registry (or `--remote` / `--credential-file`)
+  - Coordinates plans, tasks, messages, channels, file locks, worktrees, diffs, and reviews inside authorized projects
+  - Lets project owners manage **existing** project certificate grants (`gossip_access`), roles (`gossip_roles`), permissions (`gossip_permissions`), and project coordination settings (`gossip_settings`)
+
+---
+
+## 2. Connecting Two Remote Machines (Step-by-Step)
+
+When connecting **Machine A** (Home Authority) and **Machine B** (Remote Peer) so their coding agents share the same project:
+
+### Prerequisites on Both Machines
+
+1. Install `gossip` and the companion `gossip-frp` binary (see [`installation/README.md`](installation/README.md)).
+2. Start each machine's local dashboard:
+   ```sh
+   gossip coord-ui
+   ```
+   Open **`http://127.0.0.1:47281/`** locally on each machine.
+3. Configure each machine's MCP client once in registry mode:
+   ```json
+   {
+     "mcpServers": {
+       "gossip": {
+         "command": "gossip",
+         "args": ["coord-mcp"]
+       }
+     }
+   }
+   ```
+   Use `--profile <name>` if you run multiple distinct agent identities on the same machine.
+
+### Step 1 (Internet / Off-LAN Only): Set Up an FRP Relay
+
+- **Same LAN / VPN**: Skip this step; Gossip auto-detects LAN IPv4 addresses and uses default mTLS port **`47282`**.
+- **Different Networks (FRP)**:
+  - Open **Settings → Connections** on Machine A.
+  - **VPS Relay**: Click **Copy VPS relay command** to copy `gossip-frp server --port 7000 --token '<csprng-token>'`, run it on your VPS (with control port `7000` and public remote ports like `18443+` reachable), and enter that VPS host/IP in **FRP Relay Host / IP**.
+  - **Built-in Local Relay**: Check **Run built-in local FRP relay on this machine** if Machine A itself is reachable on port `7000` and the project's `Public Remote Port`.
+
+Each project gets its own isolated FRP tunnel and dedicated `Public Remote Port` (`18443`, `18444`, …) so sharing one project never exposes other projects.
+
+### Step 2 (Machine A — Home / Owner): Create `.gossip` File & 6-Digit PIN
+
+1. In Machine A's dashboard (`http://127.0.0.1:47281/`), choose **Create local project** and select your local Git checkout.
+   - To make Machine A's local `gossip coord-mcp` see that project in registry mode, import its owner credential if not already in the registry:
+     ```sh
+     gossip coord-connection add --credential-file /private/path/owner.json
+     ```
+2. Click **Share** in the top bar → **Invite**.
+3. Choose **Same network (LAN)** or **Remote (FRP)**.
+   - In **Remote (FRP)** mode, you can enter your **FRP Relay Host / IP** inline right inside the Share modal, or leave it blank to auto-start the built-in local relay — no Settings detour required.
+4. *(Optional)* Enter a **Peer name** / role (defaults to `Remote peer` / `Worker`) and review or regenerate the **6-digit Invite PIN**.
+5. Click **Create invite file & PIN**. Gossip auto-starts that project's listener/tunnel, **auto-downloads** the encrypted `.gossip` file, and displays the **6-digit PIN** (`Copy PIN`).
+6. Send the **`.gossip` file** and the **6-digit PIN** to Machine B.
+
+### Step 3 (Machine B — Remote Peer): Accept via File & PIN
+
+- **Web Dashboard**: Open `http://127.0.0.1:47281/` → **Projects** → **Join LAN or remote project**, drop or select the `.gossip` file, enter the **6-digit PIN**, and click **Join with PIN**. Gossip decrypts the file, pins Machine A's CA fingerprint (`known_hosts` TOFU), and displays a matching verification code while waiting for Machine A.
+- **CLI**:
+  ```sh
+  gossip coord-connect /path/to/invite.gossip --pin 482917
+  ```
+  Useful flags: `--profile`, `--accept-new` (strict TOFU on unseen host key), `--no-wait`, `--timeout` (default `10m`).
+
+### Step 4 (Machine A — Owner): Click Accept
+
+1. In Machine A's **Share project** dialog (updates every second) or **Requests** tab, confirm the matching verification code and click **Accept**.
+2. Possessing the `.gossip` file and PIN alone never enrolls a device without owner approval.
+
+### Step 5 (Machine B — MCP Usage)
+
+1. Once Machine A clicks **Accept**, Machine B automatically saves its project credential and mTLS certificate grant into its local Device Registry.
+2. Refresh or restart Machine B's MCP client. `gossip coord-mcp` now reads/writes the shared project over TLS/FRP automatically and queues offline messages/candidates via a private per-credential local SQLite outbox.
+
+---
+
+## 3. Web Dashboard Reference (`gossip coord-ui`)
+
+### Starting & Default Ports
+
+- **Default URL**: `http://127.0.0.1:47281/` (avoids common dev ports `8080` and `8081`).
+- **Default LAN mTLS port**: `47282` (avoids `8443`).
+- **Dashboard flags**:
+  - `--listen` (default `127.0.0.1`; non-loopback requires `--tls-cert`, `--tls-key`, `--client-ca`, and `--host`)
+  - `--port` (default `47281`, or `GOSSIP_DASHBOARD_PORT`, or saved `dashboard_port` in `peer-access.json`)
+  - `--db`, `--socket`, `--profile`
+
+### Port Precedence
+
+When `--port` is not explicitly passed on the CLI, `gossip coord-ui` checks in order:
+1. `GOSSIP_DASHBOARD_PORT` environment variable
+2. Saved `dashboard_port` in `peer-access.json`
+3. `47281` (`coord.DefaultDashboardPort`)
+
+### Settings → Connections (Custom Ports & Remote Access)
+
+Under **Settings → Connections**:
+
+- **Local Dashboard Port**: Change the local web UI port (e.g. `47281` → `47291`) and click **Apply peer settings**. Gossip binds the new loopback HTTP listener live, saves `dashboard_port`, and redirects your browser to the new URL without breaking active state.
+- **Host LAN Peer Access**: Toggle per-project LAN mTLS on/off, view detected non-virtual LAN endpoints, or customize **mTLS Listen Port** (default `47282`). Rejects collisions with the dashboard port or another active project's LAN port.
+- **FRP Tunnel**: Enable/disable the selected project's isolated FRP tunnel, configure **FRP Relay Host / IP**, toggle **Run built-in local FRP relay on this machine**, click **Auto-configure & Start** or **Copy VPS relay command**, or open **Customize FRP ports & token** to customize **Control Port** (default `7000`), **Public Remote Port**, and **FRP Auth Token** (auto-generated CSPRNG if omitted).
+
+### Web Views
+
+| View | Purpose |
+| --- | --- |
+| **Projects** | Create local projects from Git checkouts, join LAN/FRP projects, import `.json` project credentials, switch projects |
+| **Chat** | `# general` project stream, group channels, and 1-on-1 DMs / agent chats |
+| **Plans** | Browse revisions and independent plans, publish revisions, **Create independent plan**, review **Project context** |
+| **To-dos** | Filterable project task board, personal work queue (**My work**), and per-agent task inspection |
+| **Agents** | Live online/offline presence heartbeats, work role presets/assignments, personal to-dos, principal hierarchy & credentials |
+| **Settings** | **Access** (members, roles, permissions, budgets, cert grants), **Connections** (ports, LAN, FRP, sync replicas, joined peers), **Workspaces**, **History** (audit & retention) |
+
+---
+
+## 4. MCP Server Reference (`gossip coord-mcp` & `gossip coord-mcp-bootstrap`)
+
+### Modes & Flags
+
+#### 1. Regular Project MCP (`gossip coord-mcp`)
+
+- **Registry mode (recommended)**: Run `gossip coord-mcp [--profile <name>]` with no `--credential-file`, `--remote`, or `--socket`. Exposes all authorized projects for that local profile (`gossip_projects`, `gossip_file_locks`, and project coordination tools).
+- **Single-project / explicit mode**:
+  ```sh
+  gossip coord-mcp \
+    [--db /private/path/coord.db | --socket /private/path/coord.sock | --remote https://host:47282] \
+    [--tls-ca /private/server-ca.crt --tls-cert /private/client.crt --tls-key /private/client.key --tls-server-name <name>] \
+    [--outbox /private/path/outbox.db] \
+    [--host-capabilities notification,isolated_workspace] \
+    --credential-file /private/path/member.json
+  ```
+
+Manage local registry connections via CLI:
+- `gossip coord-connection add --credential-file <file> [--profile <name>]`
+- `gossip coord-connection list [--profile <name>]`
+- `gossip coord-connection remove <identity-key> [--profile <name>]`
+
+#### 2. Create-Only Bootstrap MCP (`gossip coord-mcp-bootstrap`)
+
+Used only when an agent should bootstrap new projects from a local Git checkout using a create-only key (`gossip coord-bootstrap-key`):
+- Exposes only **`gossip_create_project`**.
+- Keep this separate from routine `gossip coord-mcp` configuration.
+
+### MCP Tool Inventory
+
+| Category | Tools | Purpose |
+| --- | --- | --- |
+| **Registry & Local Locks** | `gossip_projects`, `gossip_file_locks` | List authorized projects/profiles; reserve/renew/release local worktree file path locks |
+| **Plans & Context** | `gossip_plan`, `gossip_join`, `gossip_project_context` | Read, publish, acknowledge, or delete plans/revisions; read or publish project stories/invariants/decisions |
+| **Tasks & Execution** | `gossip_task`, `gossip_workspace`, `gossip_usage`, `gossip_personal_todos` | Create, inspect, assign, claim, renew, reconcile, and request review on tasks; bind Git worktrees; log token/cost usage; manage personal to-dos |
+| **Submissions & Review** | `gossip_submit`, `gossip_review`, `gossip_integration` | Capture diffs / submit reports (`full_code` or `diagram_report`) and queued candidates; accept or request rework by digest; record integration checks |
+| **Messaging & Sync** | `gossip_send`, `gossip_read`, `gossip_channel`, `gossip_sync` | Send/acknowledge `# general`, channel, and 1-on-1 DMs; bounded `inbox` / `events` / `wait` / `checkpoint` / outbox sync |
+| **Access & Project Config** | `gossip_agents`, `gossip_access`, `gossip_permissions`, `gossip_roles`, `gossip_settings`, `gossip_budget`, `gossip_history` | Inspect/manage enrolled principals, per-project certificate grants, granular permissions, work-role presets, coordination settings, token budgets, and imported history |

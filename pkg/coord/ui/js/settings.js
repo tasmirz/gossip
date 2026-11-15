@@ -334,12 +334,304 @@ function renderSettingsAccessPanels(canManageMembers, canEditSettings) {
   }
 }
 
-function renderSettingsOtherPanels() {
+function lookupProjectDisplayName(projectID) {
+  if (!projectID) return 'this project';
+  const match = (state.localProjects || []).find(p => p.project_id === projectID)
+    || (state.projects || []).find(p => p.project_id === projectID);
+  return match?.project_name || projectID;
+}
+
+function syncPeerAccessPanel(force = false) {
+  const pa = state.peerAccess;
+  const form = $('#peer-access-form');
+  const activeProjID = state.project?.project_id || '';
+  const activeProjName = state.project?.project_name || activeProjID || 'this project';
+
   if ($('#remote-access-status')) {
-    $('#remote-access-status').textContent = state.remoteAccessEnabled
-      ? 'Remote TLS access is ENABLED on this Gossip host.'
-      : 'Remote LAN/internet access is currently DISABLED (loopback-only local authority mode).';
+    if (!pa) {
+      $('#remote-access-status').textContent = state.remoteAccessEnabled
+        ? 'Remote TLS access is ENABLED on this Gossip host.'
+        : 'Remote LAN/internet access is currently DISABLED (loopback-only local authority mode).';
+    } else if (pa.enabled) {
+      const parts = [];
+      if (pa.lan_enabled) {
+        parts.push('LAN (' + activeProjName + ') active on ' + ((pa.lan_endpoints && pa.lan_endpoints.length) ? pa.lan_endpoints.join(', ') : (pa.active_listen_addr || ('port ' + (pa.active_port || pa.listen_port || 47282)))));
+      } else if (Array.isArray(pa.lan_listeners) && pa.lan_listeners.some(l => l.enabled)) {
+        const count = pa.lan_listeners.filter(l => l.enabled).length;
+        parts.push(count + ' other project LAN port(s) active');
+      }
+      if (pa.frp_enabled) {
+        parts.push('Project FRP ' + (pa.frp_state || 'active') + (pa.frp_endpoint ? ' (' + pa.frp_endpoint + ')' : ''));
+      } else if (Array.isArray(pa.frp_tunnels) && pa.frp_tunnels.some(t => t.enabled)) {
+        const count = pa.frp_tunnels.filter(t => t.enabled).length;
+        parts.push(count + ' other project FRP tunnel(s) active');
+      }
+      /* Commented out: OpenSSH MCP relaying disabled; using SSH-like mTLS TOFU + separate per-project ports instead
+      if (pa.ssh_enabled) {
+        parts.push('Project SSH ' + (pa.ssh_state || 'active') + (pa.ssh_endpoint ? ' (' + pa.ssh_endpoint + ')' : ''));
+      } else if (Array.isArray(pa.ssh_tunnels) && pa.ssh_tunnels.some(t => t.enabled)) {
+        const count = pa.ssh_tunnels.filter(t => t.enabled).length;
+        parts.push(count + ' other project SSH listener(s) active');
+      }
+      */
+      if (pa.listener_error) parts.push('Listener error: ' + pa.listener_error);
+      $('#remote-access-status').textContent = parts.join(' · ') || 'Peer TLS access is ENABLED.';
+    } else {
+      $('#remote-access-status').textContent = 'Remote LAN/internet access is currently DISABLED (loopback-only local authority mode).';
+    }
   }
+
+  const hostFpEl = $('#peer-host-fingerprint');
+  if (hostFpEl) {
+    if (pa?.host_fingerprint) {
+      hostFpEl.hidden = false;
+      hostFpEl.textContent = 'Host CA fingerprint (TOFU): ' + pa.host_fingerprint;
+    } else {
+      hostFpEl.hidden = true;
+      hostFpEl.textContent = '';
+    }
+  }
+
+  const binEl = $('#peer-binary-status');
+  if (binEl) {
+    if (!pa) {
+      binEl.textContent = '';
+    } else {
+      const frpMsg = pa.frp_binary_available
+        ? ('FRP: ' + (pa.frp_binary_name || 'gossip-frp') + ' ready')
+        : 'FRP: companion gossip-frp not installed (LAN only)';
+      /* Commented out: OpenSSH relay binary status
+      const sshMsg = pa.ssh_binary_available
+        ? 'OpenSSH: ready'
+        : 'OpenSSH: ssh binary not found (direct loopback listener works; relay requires ssh)';
+      binEl.textContent = frpMsg + ' · ' + sshMsg;
+      */
+      binEl.textContent = frpMsg + ' · Auth: SSH-style TOFU host keys + manual verification code';
+    }
+  }
+
+  if (!form) return;
+  form.hidden = !pa;
+  if (!pa) return;
+
+  const lanTitleEl = $('#peer-lan-project-title');
+  if (lanTitleEl) {
+    const strong = createEl('strong', '', 'LAN Peer Access for ' + activeProjName);
+    const note = createEl('span', 'muted small', ' (auto-picks free mTLS port & real LAN IP)');
+    lanTitleEl.replaceChildren(strong, note);
+  }
+
+  const frpTitleEl = $('#peer-frp-project-title');
+  if (frpTitleEl) {
+    const strong = createEl('strong', '', 'FRP Tunnel for ' + activeProjName);
+    const note = createEl('span', 'muted small', ' (auto-assigns free port & CSPRNG token; isolated per project)');
+    frpTitleEl.replaceChildren(strong, note);
+  }
+
+  /* Commented out: OpenSSH MCP relaying UI
+  const sshTitleEl = $('#peer-ssh-project-title');
+  if (sshTitleEl) {
+    const strong = createEl('strong', '', 'SSH Access / Tunnel for ' + activeProjName);
+    const note = createEl('span', 'muted small', ' (isolated per-project loopback listener; peer connects via OpenSSH)');
+    sshTitleEl.replaceChildren(strong, note);
+  }
+  */
+
+  const endpointsEl = $('#peer-lan-endpoints');
+  if (endpointsEl) {
+    if (pa.lan_enabled && pa.lan_endpoints && pa.lan_endpoints.length) {
+      endpointsEl.textContent = pa.lan_endpoints.join(', ');
+    } else if (pa.detected_lan_ips && pa.detected_lan_ips.length) {
+      const nextPort = pa.listen_port || 47282;
+      const prefix = pa.lan_enabled ? 'Listening; detected LAN IP(s): ' : 'Off — ready on port ' + nextPort + ' (';
+      endpointsEl.textContent = pa.lan_enabled
+        ? (prefix + pa.detected_lan_ips.join(', '))
+        : (prefix + pa.detected_lan_ips.join(', ') + ')');
+    } else {
+      endpointsEl.textContent = pa.lan_enabled ? 'Listening on all interfaces (no non-loopback LAN IPv4 detected)' : 'Off (no non-loopback LAN IPv4 detected)';
+    }
+  }
+
+  const frpStatusEl = $('#peer-frp-status');
+  if (frpStatusEl) {
+    const bits = [];
+    if (!pa.frp_binary_available) {
+      frpStatusEl.textContent = 'Unavailable — running Gossip without companion gossip-frp binary.';
+    } else {
+      if (pa.frp_local_relay_enabled) {
+        bits.push('Local relay ' + (pa.frp_local_relay_state || 'running') + ' (:' + (pa.frp_relay_server_port || 7000) + ')');
+      }
+      if (pa.frp_enabled) {
+        bits.push('Tunnel ' + (pa.frp_state || 'running'));
+        if (pa.frp_endpoint) bits.push(pa.frp_endpoint);
+        if (pa.frp_local_addr) bits.push('isolated loopback ' + pa.frp_local_addr);
+        if (pa.frp_error) bits.push('Error: ' + pa.frp_error);
+      } else if (pa.frp_relay_server) {
+        bits.push('Off for ' + activeProjName + ' · Relay ready (' + pa.frp_relay_server + '; auto port ' + (pa.frp_remote_port || 18443) + ')');
+      } else {
+        bits.push('Off for ' + activeProjName + ' · Companion ready (' + (pa.frp_binary_name || 'gossip-frp') + ')');
+      }
+      if (pa.frp_local_relay_error) {
+        bits.push('Relay error: ' + pa.frp_local_relay_error);
+      }
+      frpStatusEl.textContent = bits.join(' · ');
+    }
+  }
+
+  if ($('#peer-frp-enabled')) {
+    $('#peer-frp-enabled').disabled = !pa.frp_binary_available && !pa.frp_enabled;
+  }
+  if ($('#peer-frp-local-relay')) {
+    $('#peer-frp-local-relay').disabled = !pa.frp_binary_available && !pa.frp_local_relay_enabled;
+  }
+
+  const tokenEl = $('#peer-frp-token');
+  if (tokenEl) {
+    const hasTok = pa.frp_token_configured || pa.frp_relay_token_configured;
+    const maskedTok = pa.frp_token_masked || pa.frp_relay_token_masked || 'saved';
+    tokenEl.placeholder = hasTok
+      ? ('Auto-managed CSPRNG (' + maskedTok + ') — leave blank to keep')
+      : 'Leave blank to auto-generate CSPRNG token';
+  }
+
+  const dashPort = Number(pa.dashboard_port) || Number(window.location.port) || 47281;
+  const dashPreviewEl = $('#peer-dashboard-url-preview');
+  if (dashPreviewEl) {
+    dashPreviewEl.textContent = 'http://' + (window.location.hostname || '127.0.0.1') + ':' + dashPort;
+  }
+
+  if (force || !form.contains(document.activeElement)) {
+    if ($('#peer-dashboard-port')) $('#peer-dashboard-port').value = String(dashPort);
+    if ($('#peer-lan-enabled')) $('#peer-lan-enabled').checked = Boolean(pa.lan_enabled);
+    if ($('#peer-lan-port')) $('#peer-lan-port').value = String(pa.listen_port || 47282);
+    if ($('#peer-frp-enabled')) $('#peer-frp-enabled').checked = Boolean(pa.frp_enabled);
+    if ($('#peer-frp-local-relay')) $('#peer-frp-local-relay').checked = Boolean(pa.frp_local_relay_enabled);
+    if ($('#peer-frp-server')) $('#peer-frp-server').value = pa.frp_server || pa.frp_relay_server || '';
+    if ($('#peer-frp-server-port')) $('#peer-frp-server-port').value = String(pa.frp_server_port || pa.frp_relay_server_port || 7000);
+    if ($('#peer-frp-remote-port')) $('#peer-frp-remote-port').value = String(pa.frp_remote_port || 18443);
+    if (tokenEl) tokenEl.value = '';
+    /* Commented out: OpenSSH MCP relaying fields
+    if ($('#peer-ssh-enabled')) $('#peer-ssh-enabled').checked = Boolean(pa.ssh_enabled);
+    if ($('#peer-ssh-mode')) $('#peer-ssh-mode').value = pa.ssh_mode === 'relay' ? 'relay' : 'direct';
+    if ($('#peer-ssh-local-port')) $('#peer-ssh-local-port').value = String(pa.ssh_local_port || 9443);
+    if ($('#peer-ssh-target')) $('#peer-ssh-target').value = pa.ssh_target || '';
+    if ($('#peer-ssh-port')) $('#peer-ssh-port').value = String(pa.ssh_port || 22);
+    if ($('#peer-ssh-remote-port')) $('#peer-ssh-remote-port').value = String(pa.ssh_remote_port || 19443);
+    if ($('#peer-ssh-identity')) $('#peer-ssh-identity').value = pa.ssh_identity_file || '';
+    */
+  }
+
+  /* Commented out: OpenSSH MCP relaying status
+  const sshRelayMode = ($('#peer-ssh-mode')?.value || pa.ssh_mode) === 'relay';
+  if ($('#peer-ssh-remote-port-wrap')) $('#peer-ssh-remote-port-wrap').hidden = !sshRelayMode;
+  if ($('#peer-ssh-identity-wrap')) $('#peer-ssh-identity-wrap').hidden = !sshRelayMode;
+
+  const sshStatusEl = $('#peer-ssh-status');
+  if (sshStatusEl) {
+    if (pa.ssh_enabled) {
+      const bits = ['SSH (' + (pa.ssh_mode || 'direct') + ') ' + (pa.ssh_state || 'running')];
+      if (pa.ssh_endpoint) bits.push('endpoint ' + pa.ssh_endpoint);
+      if (pa.ssh_local_addr) bits.push('isolated loopback ' + pa.ssh_local_addr);
+      if (pa.ssh_target) bits.push('target ' + pa.ssh_target);
+      if (pa.ssh_error) bits.push('Error: ' + pa.ssh_error);
+      sshStatusEl.textContent = bits.join(' · ');
+    } else {
+      sshStatusEl.textContent = 'Disabled for ' + activeProjName + ' · Isolated loopback listener only (peers tunnel via OpenSSH).';
+    }
+  }
+  */
+
+  const lanWrap = $('#peer-lan-tunnels-wrap');
+  const lanList = $('#peer-lan-tunnels-list');
+  const lanListeners = Array.isArray(pa.lan_listeners) ? pa.lan_listeners : [];
+  if (lanWrap && lanList) {
+    lanWrap.hidden = lanListeners.length === 0;
+    lanList.replaceChildren(...lanListeners.map(l => {
+      const row = createEl('div', 'peer-tunnel-row');
+      const info = createEl('div', '');
+      const label = lookupProjectDisplayName(l.project_id) + (l.project_id === activeProjID ? ' (current)' : '');
+      const epText = (l.endpoints && l.endpoints.length) ? l.endpoints.join(', ') : (l.listen_addr || ('port ' + (l.listen_port || '')));
+      const statusText = l.enabled
+        ? (epText + ' · ' + (l.state || 'listening') + (l.error ? ' (' + l.error + ')' : ''))
+        : ((l.listen_port ? ('Port ' + l.listen_port) : 'Not set') + ' · Disabled');
+      info.append(
+        createEl('div', 'list-item-title', label),
+        createEl('div', 'muted small', statusText)
+      );
+      row.appendChild(info);
+      if (l.enabled) {
+        const offBtn = createEl('button', 'btn btn-secondary btn-xs', 'Turn off');
+        offBtn.type = 'button';
+        offBtn.dataset.disableLanProject = l.project_id;
+        row.appendChild(offBtn);
+      }
+      return row;
+    }));
+  }
+
+  const tunnelsWrap = $('#peer-frp-tunnels-wrap');
+  const tunnelsList = $('#peer-frp-tunnels-list');
+  const tunnels = Array.isArray(pa.frp_tunnels) ? pa.frp_tunnels : [];
+  if (tunnelsWrap && tunnelsList) {
+    tunnelsWrap.hidden = tunnels.length === 0;
+    tunnelsList.replaceChildren(...tunnels.map(t => {
+      const row = createEl('div', 'peer-tunnel-row');
+      const info = createEl('div', '');
+      const label = lookupProjectDisplayName(t.project_id) + (t.project_id === activeProjID ? ' (current)' : '');
+      const statusText = t.enabled
+        ? ((t.endpoint || t.server || '') + ' · ' + (t.state || 'running') + (t.error ? ' (' + t.error + ')' : ''))
+        : ((t.endpoint || t.server || 'Not set') + ' · Disabled');
+      info.append(
+        createEl('div', 'list-item-title', label),
+        createEl('div', 'muted small', statusText)
+      );
+      row.appendChild(info);
+      if (t.enabled) {
+        const offBtn = createEl('button', 'btn btn-secondary btn-xs', 'Turn off');
+        offBtn.type = 'button';
+        offBtn.dataset.disableTunnelProject = t.project_id;
+        row.appendChild(offBtn);
+      }
+      return row;
+    }));
+  }
+
+  /* Commented out: OpenSSH MCP relaying tunnel list
+  const sshWrap = $('#peer-ssh-tunnels-wrap');
+  const sshList = $('#peer-ssh-tunnels-list');
+  const sshTunnels = Array.isArray(pa.ssh_tunnels) ? pa.ssh_tunnels : [];
+  if (sshWrap && sshList) {
+    sshWrap.hidden = sshTunnels.length === 0;
+    sshList.replaceChildren(...sshTunnels.map(t => {
+      const row = createEl('div', 'peer-tunnel-row');
+      const info = createEl('div', '');
+      const label = lookupProjectDisplayName(t.project_id) + (t.project_id === activeProjID ? ' (current)' : '');
+      const statusText = t.enabled
+        ? ((t.mode || 'direct') + ' · ' + (t.endpoint || t.local_addr || '') + ' · ' + (t.state || 'running') + (t.error ? ' (' + t.error + ')' : ''))
+        : ((t.mode || 'direct') + ' · Disabled');
+      info.append(
+        createEl('div', 'list-item-title', label),
+        createEl('div', 'muted small', statusText)
+      );
+      row.appendChild(info);
+      if (t.enabled) {
+        const offBtn = createEl('button', 'btn btn-secondary btn-xs', 'Turn off');
+        offBtn.type = 'button';
+        offBtn.dataset.disableSshProject = t.project_id;
+        row.appendChild(offBtn);
+      }
+      return row;
+    }));
+  }
+  */
+
+  if ($('#peer-access-disable-all')) {
+    $('#peer-access-disable-all').disabled = !pa.enabled;
+  }
+}
+
+function renderSettingsOtherPanels() {
+  syncPeerAccessPanel();
 
   renderList($('#replicas-list'), state.replicas, 'No peer replicas registered.', rep => {
     const row = createEl('div', 'list-item');
@@ -356,6 +648,20 @@ function renderSettingsOtherPanels() {
       createEl('div', 'list-item-title', `${rp.project_name || rp.project_id} (${rp.status})`),
       createEl('div', 'muted small', `${rp.endpoint} · Home: ${rp.home_id}`)
     );
+    return row;
+  });
+
+  renderList($('#known-hosts-list'), state.knownHosts || [], 'No trusted peer host keys pinned yet.', kh => {
+    const row = createEl('div', 'peer-tunnel-row');
+    const info = createEl('div', '');
+    info.append(
+      createEl('div', 'list-item-title', kh.host_key || ''),
+      createEl('div', 'muted small', kh.fingerprint || '')
+    );
+    const removeBtn = createEl('button', 'btn btn-secondary btn-xs', 'Forget');
+    removeBtn.type = 'button';
+    removeBtn.dataset.forgetKnownHost = kh.host_key || '';
+    row.append(info, removeBtn);
     return row;
   });
 
@@ -779,4 +1085,296 @@ function wireSettingsEvents() {
       through_sequence: Number($('#prune-sequence')?.value || 0)
     })
   });
+
+  const peerForm = $('#peer-access-form');
+  if (peerForm) {
+    const feedbackEl = $('#peer-access-feedback');
+    const saveBtn = $('#peer-access-save');
+    const disableAllBtn = $('#peer-access-disable-all');
+
+    const applyPeerUpdate = async (body, successText) => {
+      if (feedbackEl) feedbackEl.textContent = 'Updating peer access...';
+      if (saveBtn) saveBtn.disabled = true;
+      if (disableAllBtn) disableAllBtn.disabled = true;
+      try {
+        const updated = await request('/api/local/peer-access', { method: 'POST', body });
+        state.peerAccess = updated;
+        state.remoteAccessEnabled = Boolean(updated?.enabled);
+        syncPeerAccessPanel(true);
+        if (updated?.dashboard_redirect_url && updated.dashboard_redirect_url !== window.location.origin) {
+          if (feedbackEl) feedbackEl.textContent = 'Dashboard port updated — opening ' + updated.dashboard_redirect_url + '...';
+          render();
+          setTimeout(() => { window.location.href = updated.dashboard_redirect_url; }, 60);
+          return;
+        }
+        if (feedbackEl) feedbackEl.textContent = successText || 'Peer access settings applied.';
+        render();
+      } catch (error) {
+        syncPeerAccessPanel(true);
+        if (feedbackEl) feedbackEl.textContent = error.message;
+      } finally {
+        if (saveBtn) saveBtn.disabled = false;
+        if (disableAllBtn) disableAllBtn.disabled = !state.peerAccess?.enabled;
+      }
+    };
+
+    const readPeerBody = (opts = {}) => {
+      const dashPortVal = Number($('#peer-dashboard-port')?.value || 0);
+      const body = {
+        project_id: state.project?.project_id || '',
+        auto_setup: opts.auto_setup !== false,
+        lan_enabled: Boolean($('#peer-lan-enabled')?.checked),
+        listen_port: Number($('#peer-lan-port')?.value || 47282),
+        frp_local_relay: Boolean($('#peer-frp-local-relay')?.checked),
+        frp_enabled: Boolean($('#peer-frp-enabled')?.checked),
+        frp_server: ($('#peer-frp-server')?.value || '').trim(),
+        frp_server_port: Number($('#peer-frp-server-port')?.value || 7000),
+        frp_remote_port: Number($('#peer-frp-remote-port')?.value || 18443)
+        /* Commented out: OpenSSH MCP relaying fields
+        ssh_enabled: Boolean($('#peer-ssh-enabled')?.checked),
+        ssh_mode: ($('#peer-ssh-mode')?.value || 'direct'),
+        ssh_local_port: Number($('#peer-ssh-local-port')?.value || 9443),
+        ssh_target: ($('#peer-ssh-target')?.value || '').trim(),
+        ssh_port: Number($('#peer-ssh-port')?.value || 22),
+        ssh_remote_port: Number($('#peer-ssh-remote-port')?.value || 19443),
+        ssh_identity_file: ($('#peer-ssh-identity')?.value || '').trim()
+        */
+      };
+      if (dashPortVal > 0) body.dashboard_port = dashPortVal;
+      const tok = ($('#peer-frp-token')?.value || '').trim();
+      if (tok) body.frp_token = tok;
+      if (opts.frp_auto_generate) body.frp_auto_generate = true;
+      return body;
+    };
+
+    $('#peer-dashboard-port')?.addEventListener('input', () => {
+      const p = Number($('#peer-dashboard-port')?.value || 0);
+      const previewEl = $('#peer-dashboard-url-preview');
+      if (previewEl) {
+        previewEl.textContent = p >= 1 && p <= 65535
+          ? ('http://' + (window.location.hostname || '127.0.0.1') + ':' + p)
+          : 'Enter port 1–65535';
+      }
+    });
+
+    /* Commented out: OpenSSH MCP relaying UI handlers
+    $('#peer-ssh-mode')?.addEventListener('change', () => {
+      const relay = $('#peer-ssh-mode')?.value === 'relay';
+      if ($('#peer-ssh-remote-port-wrap')) $('#peer-ssh-remote-port-wrap').hidden = !relay;
+      if ($('#peer-ssh-identity-wrap')) $('#peer-ssh-identity-wrap').hidden = !relay;
+    });
+    */
+
+    peerForm.addEventListener('submit', async event => {
+      event.preventDefault();
+      await applyPeerUpdate(readPeerBody(), 'Peer access settings updated.');
+    });
+
+    $('#peer-lan-enabled')?.addEventListener('change', async () => {
+      const enabling = Boolean($('#peer-lan-enabled')?.checked);
+      await applyPeerUpdate(readPeerBody(), enabling ? 'LAN peer access enabled.' : 'LAN peer access disabled.');
+    });
+
+    $('#peer-frp-enabled')?.addEventListener('change', async () => {
+      const enabling = Boolean($('#peer-frp-enabled')?.checked);
+      if (!enabling) {
+        await applyPeerUpdate(readPeerBody({ auto_setup: false }), 'Project FRP tunnel disabled.');
+        return;
+      }
+      const hasServer = Boolean(($('#peer-frp-server')?.value || '').trim() || state.peerAccess?.frp_relay_server);
+      const localRelay = Boolean($('#peer-frp-local-relay')?.checked || state.peerAccess?.frp_local_relay_enabled);
+      if (hasServer || localRelay) {
+        await applyPeerUpdate(readPeerBody({ auto_setup: true }), 'Project FRP tunnel started (port & CSPRNG token auto-managed).');
+      } else {
+        $('#peer-frp-server')?.focus();
+        if (feedbackEl) feedbackEl.textContent = 'Enter your FRP Relay Host once, or turn on "Run built-in local FRP relay" / "Auto-configure & Start".';
+      }
+    });
+
+    $('#peer-frp-local-relay')?.addEventListener('change', async () => {
+      const enabling = Boolean($('#peer-frp-local-relay')?.checked);
+      await applyPeerUpdate(
+        readPeerBody({ auto_setup: true }),
+        enabling
+          ? 'Built-in local FRP relay started with auto-generated CSPRNG token.'
+          : 'Built-in local FRP relay stopped.'
+      );
+    });
+
+    $('#peer-frp-auto-btn')?.addEventListener('click', async () => {
+      const serverInput = ($('#peer-frp-server')?.value || '').trim();
+      const hasServer = Boolean(serverInput || state.peerAccess?.frp_relay_server);
+      const body = readPeerBody({ auto_setup: true });
+      body.frp_enabled = true;
+      if (!hasServer && !body.frp_local_relay) {
+        body.frp_local_relay = true;
+      }
+      await applyPeerUpdate(body, 'FRP auto-configured with CSPRNG token and dedicated project port.');
+    });
+
+    $('#peer-frp-regen-token')?.addEventListener('click', async () => {
+      await applyPeerUpdate(
+        readPeerBody({ auto_setup: true, frp_auto_generate: true }),
+        'Generated new CSPRNG FRP token and applied it.'
+      );
+    });
+
+    $('#peer-frp-copy-cmd')?.addEventListener('click', async () => {
+      if (feedbackEl) feedbackEl.textContent = 'Preparing VPS relay command with CSPRNG token...';
+      try {
+        const res = await request('/api/local/frp-relay-command', { method: 'POST', body: {} });
+        let copied = false;
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          try {
+            await navigator.clipboard.writeText(res.command || '');
+            copied = true;
+          } catch {
+            copied = false;
+          }
+        }
+        const refreshed = await request('/api/local/peer-access?project=' + encodeURIComponent(state.project?.project_id || '')).catch(() => null);
+        if (refreshed) {
+          state.peerAccess = refreshed;
+          syncPeerAccessPanel(true);
+        }
+        if (feedbackEl) {
+          feedbackEl.textContent = copied
+            ? ('Copied `gossip-frp server` command (port ' + (res.server_port || 7000) + ') with your saved CSPRNG token to clipboard — run it on your VPS, then enter your VPS IP above.')
+            : ('Generated CSPRNG token for port ' + (res.server_port || 7000) + ', but clipboard access was blocked here. Check browser clipboard permissions to copy the command.');
+        }
+      } catch (error) {
+        if (feedbackEl) feedbackEl.textContent = error.message;
+      }
+    });
+
+    /* Commented out: OpenSSH MCP relaying toggle handler
+    $('#peer-ssh-enabled')?.addEventListener('change', async () => {
+      const enabling = Boolean($('#peer-ssh-enabled')?.checked);
+      if (!enabling) {
+        await applyPeerUpdate(readPeerBody(), 'Project SSH listener disabled.');
+        return;
+      }
+      const mode = $('#peer-ssh-mode')?.value || 'direct';
+      const target = ($('#peer-ssh-target')?.value || '').trim();
+      if (mode === 'relay' && !target) {
+        if (feedbackEl) feedbackEl.textContent = 'Enter SSH Host / Login (user@host) for reverse relay, then click Apply peer settings.';
+        return;
+      }
+      await applyPeerUpdate(readPeerBody(), 'Project SSH access enabled.');
+    });
+    */
+
+    $('#peer-lan-tunnels-list')?.addEventListener('click', async event => {
+      const btn = event.target.closest('[data-disable-lan-project]');
+      if (!btn) return;
+      const targetProj = btn.dataset.disableLanProject;
+      if (!targetProj) return;
+      const activeProj = state.project?.project_id || '';
+      if (!activeProj || targetProj === activeProj) {
+        await applyPeerUpdate(
+          { project_id: targetProj, lan_enabled: false },
+          'Project LAN listener disabled.'
+        );
+        return;
+      }
+      if (feedbackEl) feedbackEl.textContent = 'Disabling LAN listener...';
+      try {
+        await request('/api/local/peer-access', {
+          method: 'POST',
+          body: { project_id: targetProj, lan_enabled: false }
+        });
+        const refreshed = await request('/api/local/peer-access?project=' + encodeURIComponent(activeProj));
+        state.peerAccess = refreshed;
+        state.remoteAccessEnabled = Boolean(refreshed?.enabled);
+        syncPeerAccessPanel(true);
+        if (feedbackEl) feedbackEl.textContent = 'Disabled LAN listener for ' + lookupProjectDisplayName(targetProj) + '.';
+        render();
+      } catch (error) {
+        if (feedbackEl) feedbackEl.textContent = error.message;
+      }
+    });
+
+    $('#peer-frp-tunnels-list')?.addEventListener('click', async event => {
+      const btn = event.target.closest('[data-disable-tunnel-project]');
+      if (!btn) return;
+      const targetProj = btn.dataset.disableTunnelProject;
+      if (!targetProj) return;
+      const activeProj = state.project?.project_id || '';
+      if (!activeProj || targetProj === activeProj) {
+        await applyPeerUpdate(
+          { project_id: targetProj, frp_enabled: false },
+          'Project FRP tunnel disabled.'
+        );
+        return;
+      }
+      if (feedbackEl) feedbackEl.textContent = 'Disabling FRP tunnel...';
+      try {
+        await request('/api/local/peer-access', {
+          method: 'POST',
+          body: { project_id: targetProj, frp_enabled: false }
+        });
+        const refreshed = await request('/api/local/peer-access?project=' + encodeURIComponent(activeProj));
+        state.peerAccess = refreshed;
+        state.remoteAccessEnabled = Boolean(refreshed?.enabled);
+        syncPeerAccessPanel(true);
+        if (feedbackEl) feedbackEl.textContent = 'Disabled FRP tunnel for ' + lookupProjectDisplayName(targetProj) + '.';
+        render();
+      } catch (error) {
+        if (feedbackEl) feedbackEl.textContent = error.message;
+      }
+    });
+
+    /* Commented out: OpenSSH MCP relaying list handler
+    $('#peer-ssh-tunnels-list')?.addEventListener('click', async event => {
+      const btn = event.target.closest('[data-disable-ssh-project]');
+      if (!btn) return;
+      const targetProj = btn.dataset.disableSshProject;
+      if (!targetProj) return;
+      const activeProj = state.project?.project_id || '';
+      if (!activeProj || targetProj === activeProj) {
+        await applyPeerUpdate(
+          { project_id: targetProj, ssh_enabled: false },
+          'Project SSH listener disabled.'
+        );
+        return;
+      }
+      if (feedbackEl) feedbackEl.textContent = 'Disabling SSH listener...';
+      try {
+        await request('/api/local/peer-access', {
+          method: 'POST',
+          body: { project_id: targetProj, ssh_enabled: false }
+        });
+        const refreshed = await request('/api/local/peer-access?project=' + encodeURIComponent(activeProj));
+        state.peerAccess = refreshed;
+        state.remoteAccessEnabled = Boolean(refreshed?.enabled);
+        syncPeerAccessPanel(true);
+        if (feedbackEl) feedbackEl.textContent = 'Disabled SSH listener for ' + lookupProjectDisplayName(targetProj) + '.';
+        render();
+      } catch (error) {
+        if (feedbackEl) feedbackEl.textContent = error.message;
+      }
+    });
+    */
+
+    $('#known-hosts-list')?.addEventListener('click', async event => {
+      const btn = event.target.closest('[data-forget-known-host]');
+      if (!btn) return;
+      const hostKey = btn.dataset.forgetKnownHost;
+      if (!hostKey) return;
+      try {
+        await request('/api/local/known-hosts?host_key=' + encodeURIComponent(hostKey), { method: 'DELETE' });
+        state.knownHosts = (state.knownHosts || []).filter(kh => kh.host_key !== hostKey);
+        renderSettingsOtherPanels();
+      } catch (error) {
+        if (feedbackEl) feedbackEl.textContent = error.message;
+      }
+    });
+
+    disableAllBtn?.addEventListener('click', async () => {
+      await applyPeerUpdate(
+        { disable_all: true, project_id: state.project?.project_id || '' },
+        'All LAN and FRP peer access disabled.'
+      );
+    });
+  }
 }

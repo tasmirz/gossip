@@ -66,7 +66,7 @@ with open(credential_file, encoding="utf-8") as source:
 context = ssl.create_default_context(cafile="/data/ca.crt")
 context.load_cert_chain(certfile=cert_file, keyfile=key_file)
 request = urllib.request.Request(
-    "https://home:8443/v1/call",
+    "https://home:47282/v1/call",
     data=json.dumps({"operation": "identity.read", "project": project}).encode(),
     headers={"Authorization": "Bearer " + credential["token"], "Content-Type": "application/json"},
     method="POST",
@@ -85,7 +85,7 @@ print(f"HTTP {actual} as expected for {project}")
 PY
 
 docker run -d --name "$home_name" --network "$network" --network-alias home -v "$data:/data" alpine:latest \
-	/data/gossip coord-serve --db /data/home.db --listen 0.0.0.0:8443 --tls-cert /data/server.crt \
+	/data/gossip coord-serve --db /data/home.db --listen 0.0.0.0:47282 --tls-cert /data/server.crt \
 	--tls-key /data/server.key --client-ca /data/ca.crt >/dev/null
 
 run_request() {

@@ -263,12 +263,23 @@ func GenerateFRPSINI(cfg FRPServerConfig) string {
 	return b.String()
 }
 
+func isVirtualBridgeInterface(name string) bool {
+	lower := strings.ToLower(strings.TrimSpace(name))
+	for _, prefix := range []string{"docker", "br-", "veth", "virbr", "cni", "flannel", "kube", "podman", "lxc", "vboxnet", "vmnet"} {
+		if strings.HasPrefix(lower, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
 // DetectLocalLANIPs enumerates non-loopback local network interfaces to identify accessible LAN endpoints.
+// Container/virtual bridges are excluded when real LAN or VPN interfaces are present.
 func DetectLocalLANIPs() []string {
-	var ips []string
+	var preferred, virtual []string
 	ifaces, err := net.Interfaces()
 	if err != nil {
-		return ips
+		return preferred
 	}
 
 	for _, iface := range ifaces {
@@ -280,6 +291,7 @@ func DetectLocalLANIPs() []string {
 		if err != nil {
 			continue
 		}
+		isBridge := isVirtualBridgeInterface(iface.Name)
 		for _, addr := range addrs {
 			var ip net.IP
 			switch v := addr.(type) {
@@ -293,11 +305,18 @@ func DetectLocalLANIPs() []string {
 			}
 			// Only IPv4 for clean readability
 			if ip.To4() != nil {
-				ips = append(ips, ip.String())
+				if isBridge {
+					virtual = append(virtual, ip.String())
+				} else {
+					preferred = append(preferred, ip.String())
+				}
 			}
 		}
 	}
-	return ips
+	if len(preferred) > 0 {
+		return preferred
+	}
+	return virtual
 }
 
 // SaveTunnelState saves the tunnel state to tunnel.json in storageDir with strict 0600 file permissions.

@@ -20,22 +20,28 @@ import (
 // device. Secrets are stored separately in owner-only files so registry reads
 // and project discovery never reveal credentials.
 type DeviceConnection struct {
-	Profile     string `json:"profile"`
-	HomeID      string `json:"home_id"`
-	ProjectID   string `json:"project_id"`
-	PrincipalID string `json:"principal_id"`
-	Name        string `json:"name"`
-	Endpoint    string `json:"endpoint,omitempty"`
-	CAFile      string `json:"ca_file,omitempty"`
-	CertFile    string `json:"cert_file,omitempty"`
-	KeyFile     string `json:"key_file,omitempty"`
-	Checkout    string `json:"checkout,omitempty"`
-	SecretID    string `json:"-"`
+	Profile         string `json:"profile"`
+	HomeID          string `json:"home_id"`
+	ProjectID       string `json:"project_id"`
+	PrincipalID     string `json:"principal_id"`
+	Name            string `json:"name"`
+	Endpoint        string `json:"endpoint,omitempty"`
+	CAFile          string `json:"ca_file,omitempty"`
+	CertFile        string `json:"cert_file,omitempty"`
+	KeyFile         string `json:"key_file,omitempty"`
+	Checkout        string `json:"checkout,omitempty"`
+	HostFingerprint string `json:"host_fingerprint,omitempty"`
+	SSHTarget       string `json:"ssh_target,omitempty"`
+	SSHPort         int    `json:"ssh_port,omitempty"`
+	SSHRemotePort   int    `json:"ssh_remote_port,omitempty"`
+	SSHIdentityFile string `json:"ssh_identity_file,omitempty"`
+	SecretID        string `json:"-"`
 }
 
 type DeviceRegistry struct {
 	db        *sql.DB
 	configDir string
+	sshPool   *SSHTunnelPool
 }
 
 func DefaultGossipConfigDir() (string, error) {
@@ -85,17 +91,69 @@ func OpenDeviceRegistry(dir string) (*DeviceRegistry, error) {
     CREATE TABLE IF NOT EXISTS service_inbox_wakes(profile TEXT, home TEXT, project TEXT, principal TEXT, item TEXT, PRIMARY KEY(profile,home,project,principal,item));
     CREATE TRIGGER IF NOT EXISTS clear_deleted_inbox_wake AFTER DELETE ON service_inbox BEGIN DELETE FROM service_inbox_wakes WHERE profile=OLD.profile AND home=OLD.home AND project=OLD.project AND principal=OLD.principal AND item=OLD.item; END;
     CREATE TRIGGER IF NOT EXISTS clear_removed_service_inbox AFTER DELETE ON device_connections BEGIN DELETE FROM service_inbox WHERE profile=OLD.profile AND home=OLD.home_id AND project=OLD.project_id AND principal=OLD.principal_id; END;
-	CREATE TABLE IF NOT EXISTS local_setup_requests(request_id TEXT PRIMARY KEY,payload_digest TEXT NOT NULL,project_id TEXT NOT NULL,principal_id TEXT NOT NULL,secret_id TEXT NOT NULL,created_at INTEGER NOT NULL)`); err != nil {
+	CREATE TABLE IF NOT EXISTS local_setup_requests(request_id TEXT PRIMARY KEY,payload_digest TEXT NOT NULL,project_id TEXT NOT NULL,principal_id TEXT NOT NULL,secret_id TEXT NOT NULL,created_at INTEGER NOT NULL);
+	CREATE TABLE IF NOT EXISTS known_hosts(host_key TEXT PRIMARY KEY,home_id TEXT NOT NULL DEFAULT '',fingerprint TEXT NOT NULL,server_ca TEXT NOT NULL,first_seen INTEGER NOT NULL,last_seen INTEGER NOT NULL)`); err != nil {
+		db.Close()
+		return nil, err
+	}
+	if err = ensureDeviceRegistryColumns(db); err != nil {
 		db.Close()
 		return nil, err
 	}
 	if runtime.GOOS != "windows" {
 		_ = os.Chmod(path, 0600)
 	}
-	return &DeviceRegistry{db: db, configDir: dir}, nil
+	return &DeviceRegistry{db: db, configDir: dir, sshPool: NewSSHTunnelPool()}, nil
 }
 
-func (r *DeviceRegistry) Close() error { return r.db.Close() }
+func ensureDeviceRegistryColumns(db *sql.DB) error {
+	cols := map[string]bool{}
+	rows, err := db.Query(`PRAGMA table_info(device_connections)`)
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		var cid int
+		var name, ctype string
+		var notnull, pk int
+		var dflt sql.NullString
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		cols[name] = true
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return err
+	}
+	_ = rows.Close()
+	alters := []struct {
+		name string
+		ddl  string
+	}{
+		{"host_fingerprint", `ALTER TABLE device_connections ADD COLUMN host_fingerprint TEXT NOT NULL DEFAULT ''`},
+		{"ssh_target", `ALTER TABLE device_connections ADD COLUMN ssh_target TEXT NOT NULL DEFAULT ''`},
+		{"ssh_port", `ALTER TABLE device_connections ADD COLUMN ssh_port INTEGER NOT NULL DEFAULT 22`},
+		{"ssh_remote_port", `ALTER TABLE device_connections ADD COLUMN ssh_remote_port INTEGER NOT NULL DEFAULT 0`},
+		{"ssh_identity_file", `ALTER TABLE device_connections ADD COLUMN ssh_identity_file TEXT NOT NULL DEFAULT ''`},
+	}
+	for _, a := range alters {
+		if !cols[a.name] {
+			if _, err := db.Exec(a.ddl); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (r *DeviceRegistry) Close() error {
+	if r.sshPool != nil {
+		_ = r.sshPool.Close()
+	}
+	return r.db.Close()
+}
 
 func (r *DeviceRegistry) Put(ctx context.Context, c DeviceConnection, token string) error {
 	if c.Profile == "" {
@@ -121,8 +179,13 @@ func (r *DeviceRegistry) Put(ctx context.Context, c DeviceConnection, token stri
 	if err := r.putSecret(c.SecretID, []byte(token)); err != nil {
 		return err
 	}
-	_, err := r.db.ExecContext(ctx, `INSERT INTO device_connections(profile,home_id,project_id,principal_id,name,endpoint,ca_file,cert_file,key_file,checkout,secret_id)
-	VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(profile,home_id,project_id,principal_id) DO UPDATE SET name=excluded.name,endpoint=excluded.endpoint,ca_file=excluded.ca_file,cert_file=excluded.cert_file,key_file=excluded.key_file,checkout=excluded.checkout,secret_id=excluded.secret_id`, c.Profile, c.HomeID, c.ProjectID, c.PrincipalID, c.Name, c.Endpoint, c.CAFile, c.CertFile, c.KeyFile, c.Checkout, c.SecretID)
+	sshPort := c.SSHPort
+	if sshPort <= 0 {
+		sshPort = defaultSSHPort
+	}
+	_, err := r.db.ExecContext(ctx, `INSERT INTO device_connections(profile,home_id,project_id,principal_id,name,endpoint,ca_file,cert_file,key_file,checkout,host_fingerprint,ssh_target,ssh_port,ssh_remote_port,ssh_identity_file,secret_id)
+	VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(profile,home_id,project_id,principal_id) DO UPDATE SET name=excluded.name,endpoint=excluded.endpoint,ca_file=excluded.ca_file,cert_file=excluded.cert_file,key_file=excluded.key_file,checkout=excluded.checkout,host_fingerprint=excluded.host_fingerprint,ssh_target=excluded.ssh_target,ssh_port=excluded.ssh_port,ssh_remote_port=excluded.ssh_remote_port,ssh_identity_file=excluded.ssh_identity_file,secret_id=excluded.secret_id`,
+		c.Profile, c.HomeID, c.ProjectID, c.PrincipalID, c.Name, c.Endpoint, c.CAFile, c.CertFile, c.KeyFile, c.Checkout, c.HostFingerprint, c.SSHTarget, sshPort, c.SSHRemotePort, c.SSHIdentityFile, c.SecretID)
 	if err != nil {
 		_ = os.Remove(filepath.Join(r.configDir, "secrets", c.SecretID))
 		return err
@@ -228,7 +291,7 @@ func (r *DeviceRegistry) Token(c DeviceConnection) (string, error) {
 }
 
 func (r *DeviceRegistry) List(ctx context.Context) ([]DeviceConnection, error) {
-	rows, err := r.db.QueryContext(ctx, `SELECT profile,home_id,project_id,principal_id,name,endpoint,ca_file,cert_file,key_file,checkout,secret_id FROM device_connections ORDER BY name,profile,principal_id`)
+	rows, err := r.db.QueryContext(ctx, `SELECT profile,home_id,project_id,principal_id,name,endpoint,ca_file,cert_file,key_file,checkout,host_fingerprint,ssh_target,ssh_port,ssh_remote_port,ssh_identity_file,secret_id FROM device_connections ORDER BY name,profile,principal_id`)
 	if err != nil {
 		return nil, err
 	}
@@ -236,12 +299,58 @@ func (r *DeviceRegistry) List(ctx context.Context) ([]DeviceConnection, error) {
 	out := []DeviceConnection{}
 	for rows.Next() {
 		var c DeviceConnection
-		if err = rows.Scan(&c.Profile, &c.HomeID, &c.ProjectID, &c.PrincipalID, &c.Name, &c.Endpoint, &c.CAFile, &c.CertFile, &c.KeyFile, &c.Checkout, &c.SecretID); err != nil {
+		if err = rows.Scan(&c.Profile, &c.HomeID, &c.ProjectID, &c.PrincipalID, &c.Name, &c.Endpoint, &c.CAFile, &c.CertFile, &c.KeyFile, &c.Checkout, &c.HostFingerprint, &c.SSHTarget, &c.SSHPort, &c.SSHRemotePort, &c.SSHIdentityFile, &c.SecretID); err != nil {
 			return nil, err
 		}
 		out = append(out, c)
 	}
 	return out, rows.Err()
+}
+
+// EnsureSSHClientForward resolves the effective HTTPS endpoint for a connection,
+// opening a reusable OpenSSH local port forward when c.SSHTarget is configured.
+func (r *DeviceRegistry) EnsureSSHClientForward(ctx context.Context, target, endpoint string, sshPort, remotePort int, identityFile string) (string, error) {
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return endpoint, nil
+	}
+	if r.sshPool == nil {
+		return "", errors.New("SSH tunnel pool is unavailable")
+	}
+	if remotePort == 0 {
+		remotePort = ParseEndpointPort(endpoint)
+	}
+	if remotePort == 0 {
+		remotePort = defaultSSHRemotePort
+	}
+	if endpoint == "" {
+		endpoint = fmt.Sprintf("https://127.0.0.1:%d", remotePort)
+	}
+	localAddr, err := r.sshPool.EnsureForward(ctx, SSHTunnelSpec{
+		Target:       target,
+		SSHPort:      sshPort,
+		RemoteHost:   "127.0.0.1",
+		RemotePort:   remotePort,
+		IdentityFile: identityFile,
+	})
+	if err != nil {
+		return "", err
+	}
+	return RewriteEndpointHostPort(endpoint, localAddr)
+}
+
+// DialRemote opens a mutually authenticated Remote client for c, automatically
+// bringing up its SSH local forward when c.SSHTarget is configured.
+func (r *DeviceRegistry) DialRemote(ctx context.Context, c DeviceConnection) (*Remote, error) {
+	endpoint := c.Endpoint
+	if strings.TrimSpace(c.SSHTarget) != "" {
+		var err error
+		endpoint, err = r.EnsureSSHClientForward(ctx, c.SSHTarget, c.Endpoint, c.SSHPort, c.SSHRemotePort, c.SSHIdentityFile)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return NewRemote(endpoint, c.CAFile, c.CertFile, c.KeyFile, "")
 }
 
 func (r *DeviceRegistry) Resolve(ctx context.Context, profile, project, checkout string) (DeviceConnection, string, error) {

@@ -552,7 +552,7 @@ func runRegistryCoordMCP(dbPath, defaultProfile string, hostCapabilities []strin
 		if c.Endpoint == "" {
 			backend = local
 		} else {
-			backend, err = coord.NewRemote(c.Endpoint, c.CAFile, c.CertFile, c.KeyFile, "")
+			backend, err = registry.DialRemote(context.Background(), c)
 			if err != nil {
 				return cachedAdapter{}, fmt.Errorf("connect to %s: %w", c.Name, err)
 			}
@@ -859,7 +859,7 @@ func runCoordAccess(args []string) error {
 func runCoordServe(args []string) error {
 	fs := flag.NewFlagSet("coord-serve", flag.ContinueOnError)
 	db := fs.String("db", coordDefaultDB(), "local coordination database")
-	listen := fs.String("listen", "127.0.0.1:8443", "TLS listening address")
+	listen := fs.String("listen", net.JoinHostPort("127.0.0.1", strconv.Itoa(coord.DefaultPeerListenPort)), "TLS listening address")
 	certFile := fs.String("tls-cert", "", "server certificate")
 	keyFile := fs.String("tls-key", "", "server private key")
 	clientCA := fs.String("client-ca", "", "trusted client CA certificate")
@@ -939,7 +939,19 @@ func runCoordServe(args []string) error {
 	defer listener.Close()
 	fmt.Fprintf(os.Stderr, "Coordination TLS endpoint: %s\n", listener.Addr())
 	web := &http.Server{Handler: handler, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second}
-	return web.Serve(listener)
+	sigCtx, stopSig := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stopSig()
+	go func() {
+		<-sigCtx.Done()
+		shutCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		_ = web.Shutdown(shutCtx)
+	}()
+	err = web.Serve(listener)
+	if errors.Is(err, http.ErrServerClosed) {
+		return nil
+	}
+	return err
 }
 
 func runCoordFRP(args []string) error {
@@ -947,7 +959,7 @@ func runCoordFRP(args []string) error {
 	server := fs.String("server", "", "FRP server host or IP")
 	serverPort := fs.Int("server-port", 7000, "FRP control port")
 	token := fs.String("token", "", "FRP server authentication token")
-	localPort := fs.Int("local-port", 8443, "local mutual-TLS coordination port")
+	localPort := fs.Int("local-port", coord.DefaultPeerListenPort, "local mutual-TLS coordination port")
 	remotePort := fs.Int("remote-port", 0, "public FRP TCP port assigned to this home node")
 	configFile := fs.String("config-file", "", "private destination path for generated FRP config")
 	if err := fs.Parse(args); err != nil {
@@ -1002,7 +1014,7 @@ func runCoordUI(args []string) error {
 	fs := flag.NewFlagSet("coord-ui", flag.ContinueOnError)
 	serviceCheck := fs.Bool("service-capability", false, "report installer service capability")
 	db := fs.String("db", coordDefaultDB(), "local coordination database")
-	port := fs.Int("port", 8081, "dashboard port")
+	port := fs.Int("port", coord.DefaultDashboardPort, "dashboard port (or GOSSIP_DASHBOARD_PORT)")
 	listen := fs.String("listen", "127.0.0.1", "dashboard listen address")
 	socket := fs.String("socket", "", "private local coordination daemon socket")
 	profile := fs.String("profile", "default", "local Gossip agent profile for this dashboard")
@@ -1018,7 +1030,25 @@ func runCoordUI(args []string) error {
 		fmt.Println("gossip-inbox-v1")
 		return nil
 	}
-	if *port < 0 || *port > 65535 {
+	portExplicit := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "port" {
+			portExplicit = true
+		}
+	})
+	selectedPort := *port
+	if !portExplicit {
+		if envPort := strings.TrimSpace(os.Getenv("GOSSIP_DASHBOARD_PORT")); envPort != "" {
+			parsed, convErr := strconv.Atoi(envPort)
+			if convErr != nil || parsed < 1 || parsed > 65535 {
+				return errors.New("invalid GOSSIP_DASHBOARD_PORT")
+			}
+			selectedPort = parsed
+		} else if *socket == "" {
+			selectedPort = coord.LoadSavedDashboardPort(filepath.Dir(*db))
+		}
+	}
+	if selectedPort < 0 || selectedPort > 65535 {
 		return errors.New("invalid dashboard port")
 	}
 	ip := net.ParseIP(*listen)
@@ -1044,14 +1074,30 @@ func runCoordUI(args []string) error {
 		defer store.Close()
 		backend = store
 	}
-	address := net.JoinHostPort(*listen, strconv.Itoa(*port))
+	address := net.JoinHostPort(*listen, strconv.Itoa(selectedPort))
 	listener, err := net.Listen("tcp", address)
 	if err != nil {
 		return err
 	}
-	defer listener.Close()
-	fmt.Fprintf(os.Stderr, "Coordination dashboard: http://%s\n", listener.Addr())
+	var srvMu sync.Mutex
+	activeListener := listener
+	activeAddr := listener.Addr().String()
+	var activeSrv *http.Server
+	closing := false
+	fatalErrCh := make(chan error, 1)
+	defer func() {
+		srvMu.Lock()
+		ln := activeListener
+		activeListener = nil
+		srvMu.Unlock()
+		if ln != nil {
+			_ = ln.Close()
+		}
+	}()
+	fmt.Fprintf(os.Stderr, "Coordination dashboard: http://%s\n", activeAddr)
+
 	var handler http.Handler = coord.NewWebHandler(backend)
+	var topHandler http.Handler = handler
 	if *socket == "" {
 		registry, regErr := coord.OpenDeviceRegistry("")
 		if regErr != nil {
@@ -1062,17 +1108,26 @@ func runCoordUI(args []string) error {
 		if local, ok := backend.(interface{ InstanceID() string }); ok {
 			homeID = local.InstanceID()
 		}
-		handler = coord.NewWebHandlerWithRegistry(backend, registry, *profile, homeID)
-		pollCtx, stopPoll := context.WithCancel(context.Background())
-		pollDone := make(chan struct{})
-		go func() {
-			defer close(pollDone)
-			registry.RunInboxWorker(pollCtx, backend.(*coord.Store))
-		}()
-		defer func() { stopPoll(); <-pollDone }()
-		dashboard := handler
-		handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.Method == http.MethodGet && r.URL.Path == "/healthz" && r.Host == listener.Addr().String() {
+		localStore := backend.(*coord.Store)
+		wh := coord.NewWebHandlerWithRegistry(backend, registry, *profile, homeID)
+		peerMgr, peerErr := coord.NewPeerRuntime(localStore, filepath.Dir(*db))
+		if peerErr != nil {
+			return fmt.Errorf("initialize local peer runtime: %w", peerErr)
+		}
+		defer func() { _ = peerMgr.Close() }()
+		if tcpAddr, ok := listener.Addr().(*net.TCPAddr); ok && tcpAddr.Port > 0 {
+			peerMgr.SetDashboardPort(tcpAddr.Port)
+		}
+		if startErr := peerMgr.StartIfEnabled(context.Background()); startErr != nil {
+			fmt.Fprintf(os.Stderr, "Peer access restore warning: %v\n", startErr)
+		}
+		wh.SetPeerRuntime(peerMgr)
+		dashboard := wh
+		topHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			srvMu.Lock()
+			curAddr := activeAddr
+			srvMu.Unlock()
+			if r.Method == http.MethodGet && r.URL.Path == "/healthz" && r.Host == curAddr {
 				w.Header().Set("Cache-Control", "no-store")
 				w.Header().Set("Gossip-Service-Pid", strconv.Itoa(os.Getpid()))
 				fmt.Fprint(w, "gossip-inbox-v1")
@@ -1080,9 +1135,95 @@ func runCoordUI(args []string) error {
 			}
 			dashboard.ServeHTTP(w, r)
 		})
+		peerMgr.SetDashboardPortChanger(func(newPort int) (string, error) {
+			newAddr := net.JoinHostPort(*listen, strconv.Itoa(newPort))
+			newLn, bindErr := net.Listen("tcp", newAddr)
+			if bindErr != nil {
+				return "", fmt.Errorf("bind dashboard port %d: %w", newPort, bindErr)
+			}
+			srvMu.Lock()
+			if closing {
+				srvMu.Unlock()
+				_ = newLn.Close()
+				return "", errors.New("dashboard is shutting down")
+			}
+			oldSrv := activeSrv
+			newSrv := &http.Server{Handler: topHandler, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second}
+			activeListener = newLn
+			activeAddr = newLn.Addr().String()
+			activeSrv = newSrv
+			boundURL := "http://" + activeAddr
+			srvMu.Unlock()
+
+			fmt.Fprintf(os.Stderr, "Coordination dashboard switched to: %s\n", boundURL)
+			go func() {
+				serveErr := newSrv.Serve(newLn)
+				if serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
+					srvMu.Lock()
+					isCurrent := activeSrv == newSrv && !closing
+					srvMu.Unlock()
+					if isCurrent {
+						select {
+						case fatalErrCh <- serveErr:
+						default:
+						}
+					}
+				}
+			}()
+			if oldSrv != nil {
+				time.AfterFunc(350*time.Millisecond, func() {
+					shutCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+					defer cancel()
+					_ = oldSrv.Shutdown(shutCtx)
+				})
+			}
+			return boundURL, nil
+		})
+		pollCtx, stopPoll := context.WithCancel(context.Background())
+		pollDone := make(chan struct{})
+		go func() {
+			defer close(pollDone)
+			registry.RunInboxWorker(pollCtx, localStore)
+		}()
+		defer func() { stopPoll(); <-pollDone }()
 	}
-	web := &http.Server{Handler: handler, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second}
-	return web.Serve(listener)
+	web := &http.Server{Handler: topHandler, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second}
+	srvMu.Lock()
+	activeSrv = web
+	srvMu.Unlock()
+
+	go func() {
+		serveErr := web.Serve(listener)
+		if serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
+			srvMu.Lock()
+			isCurrent := activeSrv == web && !closing
+			srvMu.Unlock()
+			if isCurrent {
+				select {
+				case fatalErrCh <- serveErr:
+				default:
+				}
+			}
+		}
+	}()
+
+	sigCtx, stopSig := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stopSig()
+	select {
+	case <-sigCtx.Done():
+		srvMu.Lock()
+		closing = true
+		curSrv := activeSrv
+		srvMu.Unlock()
+		if curSrv != nil {
+			shutCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			_ = curSrv.Shutdown(shutCtx)
+		}
+		return nil
+	case fatalErr := <-fatalErrCh:
+		return fatalErr
+	}
 }
 
 func runCoordRemote(args []string) error {

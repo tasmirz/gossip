@@ -55,7 +55,7 @@
     <symbol id="icon-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M4.9 4.9l1.4 1.4m11.4 11.4 1.4 1.4M2 12h2m16 0h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></symbol>
   </svg>
   <div id="file-warning" class="banner banner-warn" hidden>
-    Open this dashboard from the running Gossip HTTP server (for example <code>http://127.0.0.1:8081/</code>) rather than opening <code>index.html</code> as a local file.
+    Open this dashboard from the running Gossip HTTP server (for example <code>http://127.0.0.1:47281/</code>) rather than opening <code>index.html</code> as a local file.
   </div>
   <div id="connect-required" class="banner banner-warn" hidden>
     Unable to reach the Gossip dashboard API. Verify the service is running on loopback and refresh.
@@ -664,19 +664,6 @@
           </div>
           <div id="settings-load-status" class="settings-load-status muted small" role="status" hidden></div>
 
-          <div id="access-project-scope" class="scope-callout">
-            <div class="scope-callout-main">
-              <span class="badge">Project</span>
-              <strong id="access-project-name">No project</strong>
-              <div class="scope-id-pill">
-                <code id="access-project-id"></code>
-                <button id="copy-project-id" class="btn btn-xs btn-secondary" type="button"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-copy"></use></svg><span>Copy ID</span></button>
-                <span id="copy-project-status" class="small" role="status"></span>
-              </div>
-            </div>
-            <p class="muted small scope-callout-note">Every invite, member revocation, permission grant, and certificate change applies to this project.</p>
-          </div>
-
           <!-- SETTINGS: ACCESS -->
           <div id="settings-panel-access" class="settings-panel" data-settings-panel="access" role="tabpanel" aria-labelledby="settings-tab-access">
             <nav class="access-section-links" aria-label="Access sections">
@@ -692,6 +679,18 @@
               <select id="access-section-select" class="input" aria-label="Access section"></select>
             </label>
             <div class="settings-stack">
+              <div id="access-project-scope" class="scope-callout">
+                <div class="scope-callout-main">
+                  <span class="badge">Project</span>
+                  <strong id="access-project-name">No project</strong>
+                  <div class="scope-id-pill">
+                    <code id="access-project-id"></code>
+                    <button id="copy-project-id" class="btn btn-xs btn-secondary" type="button"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-copy"></use></svg><span>Copy ID</span></button>
+                    <span id="copy-project-status" class="small" role="status"></span>
+                  </div>
+                </div>
+                <p class="muted small scope-callout-note">Every invite, member revocation, permission grant, and certificate change applies to this project.</p>
+              </div>
               <section id="access-members" class="card" tabindex="-1">
                 <div class="card-head">
                   <div>
@@ -903,9 +902,147 @@
             <div class="settings-stack">
               <section id="remote-access-card" class="card" tabindex="-1">
                 <div class="card-head">
-                  <h3>Host Remote Access &amp; Sync</h3>
+                  <div>
+                    <h3>Host Remote Access &amp; Sync</h3>
+                    <p class="muted small">LAN and FRP access stay disabled by default until turned on. Each project uses its own separate port for strict isolation, and manual owner approval with a matching verification code is always required.</p>
+                  </div>
                 </div>
-                <div id="remote-access-status" class="muted"></div>
+                <div id="remote-access-status" class="muted small"></div>
+                <div id="peer-host-fingerprint" class="muted small peer-endpoint-preview" hidden></div>
+                <div id="peer-binary-status" class="muted small peer-binary-status"></div>
+                <form id="peer-access-form" class="single-col-form peer-access-form" hidden>
+                  <div class="peer-mode-card">
+                    <div class="peer-mode-grid">
+                      <label class="field">
+                        <span>Local Dashboard Port <small class="muted">(default 47281; avoids common dev ports 8080/8081)</small></span>
+                        <input id="peer-dashboard-port" class="input" type="number" min="1" max="65535" value="47281">
+                      </label>
+                      <div class="field">
+                        <span>Dashboard URL</span>
+                        <div id="peer-dashboard-url-preview" class="muted small peer-endpoint-preview">http://127.0.0.1:47281</div>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="peer-mode-card">
+                    <label class="field-checkbox">
+                      <input id="peer-lan-enabled" type="checkbox">
+                      <span id="peer-lan-project-title"><strong>LAN Peer Access for this project</strong> <span class="muted small">(auto-picks free mTLS port &amp; real LAN IP)</span></span>
+                    </label>
+                    <div class="field">
+                      <span>Detected LAN Endpoints</span>
+                      <div id="peer-lan-endpoints" class="muted small peer-endpoint-preview">Disabled</div>
+                    </div>
+                    <details class="peer-advanced-details">
+                      <summary class="muted small">Customize LAN mTLS port (default 47282)</summary>
+                      <div class="peer-mode-grid">
+                        <label class="field">
+                          <span>mTLS Listen Port</span>
+                          <input id="peer-lan-port" class="input" type="number" min="1" max="65535" value="47282">
+                        </label>
+                      </div>
+                    </details>
+                  </div>
+                  <div class="peer-mode-card">
+                    <label class="field-checkbox">
+                      <input id="peer-frp-enabled" type="checkbox">
+                      <span id="peer-frp-project-title"><strong>FRP Tunnel for this project</strong> <span class="muted small">(auto-assigns free port &amp; CSPRNG token; isolated per project)</span></span>
+                    </label>
+                    <div id="peer-frp-status" class="muted small"></div>
+                    <div class="peer-mode-grid">
+                      <label class="field">
+                        <span>FRP Relay Host / IP <small class="muted">(inherited host-wide once set)</small></span>
+                        <input id="peer-frp-server" class="input" type="text" placeholder="Auto on local relay, or e.g. relay.example.com" autocomplete="off">
+                      </label>
+                    </div>
+                    <label class="field-checkbox">
+                      <input id="peer-frp-local-relay" type="checkbox">
+                      <span>Run built-in local FRP relay on this machine <span class="muted small">(starts <code>gossip-frp server</code> with auto-generated CSPRNG token)</span></span>
+                    </label>
+                    <div class="btn-row">
+                      <button id="peer-frp-auto-btn" class="btn btn-secondary btn-sm" type="button">Auto-configure &amp; Start</button>
+                      <button id="peer-frp-copy-cmd" class="btn btn-secondary btn-sm" type="button">Copy VPS relay command</button>
+                    </div>
+                    <details id="peer-frp-advanced" class="peer-advanced-details">
+                      <summary class="muted small">Customize FRP ports &amp; token (auto-managed)</summary>
+                      <div class="peer-mode-grid">
+                        <label class="field">
+                          <span>Control Port</span>
+                          <input id="peer-frp-server-port" class="input" type="number" min="1" max="65535" value="7000">
+                        </label>
+                        <label class="field">
+                          <span>Public Remote Port <small class="muted">(auto-assigned per project)</small></span>
+                          <input id="peer-frp-remote-port" class="input" type="number" min="1" max="65535" value="18443">
+                        </label>
+                        <label class="field">
+                          <span>FRP Auth Token <small class="muted">(auto CSPRNG if blank)</small></span>
+                          <input id="peer-frp-token" class="input" type="password" placeholder="Leave blank to auto-generate CSPRNG token" autocomplete="off">
+                        </label>
+                      </div>
+                      <div class="btn-row">
+                        <button id="peer-frp-regen-token" class="btn btn-secondary btn-xs" type="button">Regenerate CSPRNG token</button>
+                      </div>
+                    </details>
+                    <p class="muted small">Each project uses its own isolated FRP connection and port (other projects cannot be reached over this tunnel). Having an invite file never grants access until you verify the code and click Accept.</p>
+                  </div>
+                  <!-- Commented out: OpenSSH MCP relaying disabled; using SSH-like mTLS TOFU + separate per-project ports instead
+                  <div class="peer-mode-card">
+                    <label class="field-checkbox">
+                      <input id="peer-ssh-enabled" type="checkbox">
+                      <span id="peer-ssh-project-title"><strong>SSH Access / Tunnel for this project</strong> <span class="muted small">(isolated per-project loopback listener; peer connects via OpenSSH)</span></span>
+                    </label>
+                    <div id="peer-ssh-status" class="muted small"></div>
+                    <div class="peer-mode-grid">
+                      <label class="field">
+                        <span>SSH Transport Mode</span>
+                        <select id="peer-ssh-mode" class="input">
+                          <option value="direct">Direct SSH (peer uses ssh -L)</option>
+                          <option value="relay">Reverse SSH Relay (host runs ssh -R)</option>
+                        </select>
+                      </label>
+                      <label class="field">
+                        <span>Local Loopback mTLS Port</span>
+                        <input id="peer-ssh-local-port" class="input" type="number" min="1" max="65535" value="9443">
+                      </label>
+                      <label class="field">
+                        <span>SSH Host / Login <small class="muted">(user@host)</small></span>
+                        <input id="peer-ssh-target" class="input" type="text" placeholder="alice@host.example" autocomplete="off">
+                      </label>
+                      <label class="field">
+                        <span>SSH Port</span>
+                        <input id="peer-ssh-port" class="input" type="number" min="1" max="65535" value="22">
+                      </label>
+                      <label id="peer-ssh-remote-port-wrap" class="field" hidden>
+                        <span>Relay Bind Port</span>
+                        <input id="peer-ssh-remote-port" class="input" type="number" min="1" max="65535" value="19443">
+                      </label>
+                      <label id="peer-ssh-identity-wrap" class="field" hidden>
+                        <span>Relay SSH Key <small class="muted">optional (-i)</small></span>
+                        <input id="peer-ssh-identity" class="input" type="text" placeholder="/home/user/.ssh/id_ed25519" autocomplete="off">
+                      </label>
+                    </div>
+                    <p class="muted small">Direct mode keeps this project bound to <code>127.0.0.1</code> only so peers must tunnel via OpenSSH (no plaintext LAN exposure, isolated per project).</p>
+                  </div>
+                  -->
+                  <div id="peer-lan-tunnels-wrap" class="peer-mode-card" hidden>
+                    <strong>All configured project LAN ports</strong>
+                    <div id="peer-lan-tunnels-list" class="stack-list"></div>
+                  </div>
+                  <div id="peer-frp-tunnels-wrap" class="peer-mode-card" hidden>
+                    <strong>All configured project FRP tunnels</strong>
+                    <div id="peer-frp-tunnels-list" class="stack-list"></div>
+                  </div>
+                  <!-- Commented out: OpenSSH MCP relaying disabled; using separate per-project ports instead
+                  <div id="peer-ssh-tunnels-wrap" class="peer-mode-card" hidden>
+                    <strong>All configured project SSH listeners &amp; tunnels</strong>
+                    <div id="peer-ssh-tunnels-list" class="stack-list"></div>
+                  </div>
+                  -->
+                  <div class="field-actions peer-access-actions">
+                    <button id="peer-access-save" class="btn btn-primary btn-sm" type="submit">Apply peer settings</button>
+                    <button id="peer-access-disable-all" class="btn btn-secondary btn-sm" type="button">Disable all remote access</button>
+                  </div>
+                  <p id="peer-access-feedback" class="form-feedback muted small" role="status"></p>
+                </form>
               </section>
 
               <section id="connections-replicas-card" class="card" tabindex="-1" hidden>
@@ -920,6 +1057,10 @@
                   <h3>Joined Remote Peers</h3>
                 </div>
                 <div id="connections-remote-list" class="stack-list"></div>
+                <div class="card-head">
+                  <h4>Trusted Host Keys (known_hosts)</h4>
+                </div>
+                <div id="known-hosts-list" class="stack-list"></div>
               </section>
             </div>
           </div>
@@ -1136,24 +1277,69 @@
       <div class="modal-head"><h3 id="share-project-title">Share project</h3><button class="btn icon-btn btn-ghost modal-close" type="button" data-close-dialog="share-project-dialog" aria-label="Close" title="Close"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-close"></use></svg></button></div>
       <div class="view-switch" role="group" aria-label="Share project">
         <button id="share-invite-tab" class="btn btn-secondary" type="button" aria-controls="share-invite-panel" aria-pressed="true">Invite</button>
-        <button id="share-requests-tab" class="btn btn-secondary" type="button" aria-controls="share-requests-panel" aria-pressed="false">Requests</button>
+        <button id="share-requests-tab" class="btn btn-secondary" type="button" aria-controls="share-requests-panel" aria-pressed="false">Requests <span id="share-requests-badge" class="tab-badge" hidden>0</span></button>
       </div>
       <div id="share-invite-panel" class="stack-list">
-      <p class="muted">Send the invitation file and pairing code separately.</p>
+      <p class="muted small">Create an encrypted <code>.gossip</code> invite file and a 6-digit PIN. Share both with your peer, then verify &amp; click Accept when their request appears.</p>
       <p id="share-setup-status" class="muted small" role="status"></p>
-      <details id="share-setup-help" class="muted small">
-        <summary>How to enable peer access</summary>
-        <p>On the home device, run <code>gossip coord-remote --action enable</code>, then start <code>gossip coord-serve</code> with a TLS certificate and enrollment CA key. Reopen Share project when the peer listener is ready.</p>
-      </details>
       <form id="share-project-form" class="single-col-form">
-        <label class="field"><span>Invitee name</span><input name="invitee" class="input" maxlength="160" required></label>
-        <label class="field"><span>Project role</span><select name="role" class="input"></select></label>
+        <div class="view-switch" role="group" aria-label="Connection mode">
+          <button id="share-mode-lan" class="btn btn-secondary" type="button" aria-pressed="true">Same network (LAN)</button>
+          <button id="share-mode-frp" class="btn btn-secondary" type="button" aria-pressed="false">Remote (FRP)</button>
+          <!-- Commented out: OpenSSH MCP relaying disabled; using SSH-like mTLS TOFU + separate per-project ports instead
+          <button id="share-mode-ssh" class="btn btn-secondary" type="button" aria-pressed="false">SSH tunnel</button>
+          -->
+        </div>
+        <div id="share-lan-box" class="peer-mode-card">
+          <div class="field">
+            <span>Detected LAN endpoint</span>
+            <p id="share-lan-endpoint-preview" class="muted small peer-endpoint-preview"></p>
+          </div>
+          <label id="share-lan-select-field" class="field" hidden>
+            <span>Network interface IP</span>
+            <select id="share-lan-select" name="lanIP" class="input"></select>
+          </label>
+        </div>
+        <div id="share-frp-box" class="peer-mode-card" hidden>
+          <div class="card-head">
+            <div>
+              <strong>Project FRP tunnel</strong>
+              <p id="share-frp-summary" class="muted small"></p>
+            </div>
+            <button id="share-open-frp-settings" class="btn btn-secondary btn-xs" type="button">Settings</button>
+          </div>
+          <label id="share-frp-server-wrap" class="field">
+            <span>FRP Relay Host / IP <small class="muted">(optional — blank auto-starts built-in relay)</small></span>
+            <input id="share-frp-server" name="frpServer" class="input" type="text" placeholder="e.g. relay.example.com (optional)" autocomplete="off">
+          </label>
+        </div>
+        <!-- Commented out: OpenSSH MCP relaying disabled
+        <div id="share-ssh-box" class="peer-mode-card" hidden>
+          <div class="card-head">
+            <div>
+              <strong>Project SSH access</strong>
+              <p id="share-ssh-summary" class="muted small"></p>
+            </div>
+            <button id="share-open-ssh-settings" class="btn btn-secondary btn-xs" type="button">Configure in Settings</button>
+          </div>
+        </div>
+        -->
+        <div class="peer-mode-grid">
+          <label class="field"><span>Peer name <small class="muted">(optional)</small></span><input name="invitee" class="input" maxlength="160" placeholder="Remote peer"></label>
+          <label class="field"><span>Project role</span><select name="role" class="input"></select></label>
+        </div>
         <p id="share-role-permissions" class="muted small"></p>
-        <label class="field"><span>LAN or FRP peer URL</span><input name="endpoint" class="input" type="url" placeholder="https://host.example:8443" required></label>
-        <label class="field"><span>Public server CA certificate (PEM)</span><textarea name="serverCA" class="input" rows="3" required></textarea></label>
+        <div class="field">
+          <span>6-digit Invite PIN <span class="muted small">(share with .gossip file)</span></span>
+          <div class="passphrase-row">
+            <input id="share-passphrase" name="passphrase" class="input pin-input" type="text" inputmode="numeric" minlength="6" autocomplete="off" required>
+            <button id="share-gen-passphrase" class="btn btn-secondary btn-sm" type="button">New PIN</button>
+          </div>
+        </div>
+        <p class="muted small">Having the file and PIN only opens a pairing request — you still confirm &amp; click Accept manually.</p>
         <div class="modal-foot">
           <button class="btn btn-secondary" type="button" data-close-dialog="share-project-dialog">Cancel</button>
-          <button class="btn btn-primary" type="submit">Create invitation</button>
+          <button class="btn btn-primary" type="submit">Create invite file &amp; PIN</button>
         </div>
       </form>
       <div id="share-project-result" class="stack-list" aria-live="polite"></div>
@@ -1173,13 +1359,19 @@
       <div class="modal-head"><h3 id="join-remote-title">Join LAN or remote project</h3><button class="btn icon-btn btn-ghost modal-close" type="button" data-close-dialog="join-remote-dialog" aria-label="Close" title="Close"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-close"></use></svg></button></div>
       <div class="view-switch" role="group" aria-label="Join method">
         <button id="join-invitation-tab" class="btn btn-secondary" type="button" aria-pressed="true" aria-controls="accept-invitation-form"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-link"></use></svg><span>Invitation</span></button>
+        <button id="join-ssh-tab" class="btn btn-secondary" type="button" aria-pressed="false" aria-controls="join-ssh-section"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-lock"></use></svg><span>Direct / Host Key</span></button>
         <button id="join-credential-tab" class="btn btn-secondary" type="button" aria-pressed="false" aria-controls="join-existing-credential"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-lock"></use></svg><span>Credential file</span></button>
       </div>
       <form id="accept-invitation-form" class="single-col-form">
-        <p class="muted small">Use the invitation and pairing code from the project owner.</p>
-        <label class="field"><span>Invitation file</span><input id="accept-invitation-file" type="file" class="input" accept=".json,application/json"></label>
-        <details>
-          <summary>Enter invitation details manually</summary>
+        <p class="muted small">Drop or select the <code>.gossip</code> invite file and enter its 6-digit PIN. Gossip verifies the host key automatically and notifies the owner to accept.</p>
+        <label id="accept-invitation-dropzone" class="field invite-dropzone">
+          <span>Invite file (<code>.gossip</code> — click or drag &amp; drop)</span>
+          <input id="accept-invitation-file" type="file" class="input" accept=".gossip,.json,application/json">
+        </label>
+        <p id="accept-invitation-preview" class="muted small" aria-live="polite"></p>
+        <label class="field"><span>6-digit PIN <small class="muted">(or legacy passphrase)</small></span><input id="accept-invitation-code" class="input pin-input" type="text" inputmode="numeric" autocomplete="one-time-code" placeholder="Enter 6-digit PIN from owner" required></label>
+        <details id="accept-manual-details">
+          <summary>Enter legacy invitation details manually</summary>
           <div class="single-col-form">
             <label class="field"><span>Peer HTTPS URL</span><input name="endpoint" class="input" type="url"></label>
             <label class="field"><span>Home ID</span><input name="home" class="input"></label>
@@ -1188,18 +1380,58 @@
             <label class="field"><span>Public server CA certificate</span><textarea name="ca" class="input" rows="3"></textarea></label>
           </div>
         </details>
-        <p id="accept-invitation-preview" class="muted" aria-live="polite"></p>
-        <label class="field"><span>Pairing code</span><input id="accept-invitation-code" class="input" type="password" autocomplete="off" required></label>
-        <button class="btn btn-primary" type="submit">Accept invitation</button>
+        <button class="btn btn-primary" type="submit">Join with PIN</button>
+        <div id="accept-verification-box" class="verify-code-box" hidden></div>
         <p id="accept-invitation-status" class="agent-dm-body" aria-live="polite"></p>
       </form>
+      <section id="join-ssh-section" hidden>
+        <form id="join-ssh-form" class="single-col-form">
+          <p class="muted small">Connect directly over LAN or FRP mTLS with SSH-style TOFU host-key pinning (<code>known_hosts</code>) and manual owner verification code approval.</p>
+          <label class="field">
+            <span>Peer HTTPS Endpoint</span>
+            <input id="join-ssh-endpoint" class="input" type="text" placeholder="https://192.168.1.50:47282 or https://relay.example.com:18443" autocomplete="off" required>
+          </label>
+          <!-- Commented out: OpenSSH MCP relaying inputs disabled; keep direct TOFU host-key mTLS active
+          <div class="peer-mode-grid">
+            <label class="field">
+              <span>SSH Login <small class="muted">(optional user@host)</small></span>
+              <input id="join-ssh-target" class="input" type="text" placeholder="alice@host.example" autocomplete="off">
+            </label>
+            <label class="field">
+              <span>SSH Port</span>
+              <input id="join-ssh-port" class="input" type="number" min="1" max="65535" value="22">
+            </label>
+            <label class="field">
+              <span>Forwarded Peer Port</span>
+              <input id="join-ssh-remote-port" class="input" type="number" min="1" max="65535" value="9443">
+            </label>
+          </div>
+          <label class="field">
+            <span>SSH Identity File <small class="muted">optional (-i)</small></span>
+            <input id="join-ssh-identity" class="input" type="text" placeholder="/home/user/.ssh/id_ed25519" autocomplete="off">
+          </label>
+          -->
+          <div class="peer-mode-grid">
+            <label class="field"><span>Project ID</span><input id="join-ssh-project" class="input" type="text" autocomplete="off" required></label>
+            <label class="field"><span>Invitation ID</span><input id="join-ssh-invite" class="input" type="text" autocomplete="off" required></label>
+          </div>
+          <label class="field"><span>Pairing secret code</span><input id="join-ssh-code" class="input" type="password" autocomplete="off" placeholder="64-character pairing secret" required></label>
+          <div class="peer-access-actions">
+            <button id="join-ssh-probe" class="btn btn-secondary btn-sm" type="button">Check host fingerprint</button>
+            <button id="join-ssh-connect" class="btn btn-primary btn-sm" type="submit">Trust host &amp; request access</button>
+          </div>
+          <div id="join-ssh-probe-box" class="tofu-prompt-card" hidden></div>
+          <div id="join-ssh-verification-box" class="verify-code-box" hidden></div>
+          <p id="join-ssh-status" class="agent-dm-body" aria-live="polite"></p>
+        </form>
+      </section>
       <section id="join-existing-credential" hidden>
         <form id="join-remote-form" method="dialog" class="single-col-form">
           <p class="muted small">Import an existing project credential, then connect using this device’s client certificate.</p>
           <label class="field"><span>Project credential file</span><input id="join-credential-file" class="input" type="file" accept=".json,application/json"></label>
           <p id="join-credential-status" class="muted small" aria-live="polite">Choose the credential JSON issued for this project.</p>
           <div class="join-connection-basics">
-            <label class="field"><span>Remote Gossip endpoint</span><input id="join-endpoint" class="input" type="url" placeholder="https://host.example:8443" autocomplete="url"></label>
+            <label class="field"><span>Remote Gossip endpoint</span><input id="join-endpoint" class="input" type="url" placeholder="https://host.example:47282" autocomplete="url"></label>
             <label class="field"><span>Home ID <small class="muted">optional</small></span><input id="join-home-id" class="input" type="text" placeholder="Verified after connection"></label>
             <label class="field"><span>Display name <small class="muted">optional</small></span><input id="join-name" class="input" type="text" placeholder="Remote project"></label>
           </div>
@@ -1265,12 +1497,12 @@
         <button class="btn icon-btn btn-ghost modal-close" data-close-dialog="plan-dialog" type="button" aria-label="Close" title="Close"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-close"></use></svg></button>
       </div>
       <div id="plan-conflict-banner" class="banner banner-warn" hidden></div>
+      <label id="new-plan-title-wrap" class="field" hidden><span>Plan name</span><input id="new-plan-title" class="input" maxlength="160" placeholder="e.g. Launch readiness"></label>
       <div class="view-switch plan-editor-switch" role="group" aria-label="Plan editor view">
         <button id="plan-write-tab" class="btn btn-secondary" type="button" aria-pressed="true" aria-controls="plan-write-pane"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-edit"></use></svg><span>Write</span></button>
         <button id="plan-preview-tab" class="btn btn-secondary" type="button" aria-pressed="false" aria-controls="plan-preview-pane"><svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-plans"></use></svg><span>Preview</span></button>
       </div>
       <div class="plan-editor-split" data-pane="write">
-        <label id="new-plan-title-wrap" class="field" hidden><span>Plan name</span><input id="new-plan-title" class="input" maxlength="160" placeholder="e.g. Launch readiness"></label>
         <label id="plan-write-pane" class="field">
           <span>Markdown plan body</span>
           <textarea id="plan-editor-body" class="input textarea-tall" rows="16" required></textarea>

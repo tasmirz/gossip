@@ -89,19 +89,20 @@ SERVICE
       launchctl bootstrap "$domain" "$plist" || return
       ;;
   esac
+  dashboard_port="${GOSSIP_DASHBOARD_PORT:-47281}"
   local pid response_pid
   for _ in {1..15}; do
     case "$(uname -s)" in
       Linux) pid="$(systemctl --user show -p MainPID --value gossip-dashboard.service)" ;;
       Darwin) pid="$(launchctl print "$domain/$label" 2>/dev/null | awk '$1 == "pid" && $2 == "=" { print $3; exit }')" ;;
     esac
-    response_pid="$(curl --noproxy '*' -fsS --max-time 1 -D - -o /dev/null http://127.0.0.1:8081/healthz 2>/dev/null | awk 'tolower($1) == "gossip-service-pid:" { gsub(/\r/, "", $2); print $2 }' || true)"
+    response_pid="$(curl --noproxy '*' -fsS --max-time 1 -D - -o /dev/null "http://127.0.0.1:${dashboard_port}/healthz" 2>/dev/null | awk 'tolower($1) == "gossip-service-pid:" { gsub(/\r/, "", $2); print $2 }' || true)"
     if [[ "$pid" =~ ^[1-9][0-9]*$ && "$pid" == "$response_pid" ]]; then
       return 0
     fi
     sleep 1
   done
-  echo "Gossip service did not become healthy on port 8081. Check the service logs and whether the port is occupied." >&2
+  echo "Gossip service did not become healthy on port ${dashboard_port}. Check the service logs and whether the port is occupied." >&2
   return 1
 }
 
@@ -202,8 +203,9 @@ PY
 fi
 
 echo ""
+dashboard_port="${GOSSIP_DASHBOARD_PORT:-47281}"
 if [ "$service_capability" = gossip-inbox-v1 ] && start_dashboard_service; then
-  echo "Gossip starts at sign-in. Open http://127.0.0.1:8081 to add a project."
+  echo "Gossip starts at sign-in. Open http://127.0.0.1:${dashboard_port} to add a project."
 else
   echo "Automatic startup is unavailable. Start Gossip with: '$bin' coord-ui"
 fi

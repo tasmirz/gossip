@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -59,6 +60,7 @@ type WebHandler struct {
 	queryStore               DashboardQueryBackend
 	channelStore             ChannelBackend
 	registry                 *DeviceRegistry
+	peerManager              *PeerRuntime
 	profile                  string
 	homeID                   string
 	localAuthority           bool
@@ -112,6 +114,10 @@ func NewWebHandlerWithRegistry(store WebBackend, registry *DeviceRegistry, profi
 		}
 	}
 	return h
+}
+
+func (h *WebHandler) SetPeerRuntime(pm *PeerRuntime) {
+	h.peerManager = pm
 }
 
 // NewWebHandlerWithHosts enables an explicit HTTPS deployment host allowlist.
@@ -327,6 +333,10 @@ func (h *WebHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.login(w, r)
 	case r.URL.Path == "/api/remote-access" && r.Method == http.MethodGet:
 		h.localRemoteAccess(w, r)
+	case r.URL.Path == "/api/local/peer-access" && (r.Method == http.MethodGet || r.Method == http.MethodPost):
+		h.localPeerAccess(w, r)
+	case r.URL.Path == "/api/local/frp-relay-command" && r.Method == http.MethodPost:
+		h.localFRPRelayCommand(w, r)
 	case r.URL.Path == "/api/logout" && r.Method == "POST":
 		h.logout(w, r)
 	case r.URL.Path == "/api/projects" && r.Method == "GET":
@@ -339,6 +349,10 @@ func (h *WebHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.pickLocalCheckout(w, r)
 	case r.URL.Path == "/api/local/accept-invitation" && r.Method == http.MethodPost:
 		h.acceptInvitation(w, r)
+	case r.URL.Path == "/api/local/probe-host" && r.Method == http.MethodPost:
+		h.probePeerHost(w, r)
+	case r.URL.Path == "/api/local/known-hosts" && (r.Method == http.MethodGet || r.Method == http.MethodPost || r.Method == http.MethodDelete):
+		h.localKnownHosts(w, r)
 	case r.URL.Path == "/api/local/join-remote" && r.Method == http.MethodPost:
 		h.joinRemoteProject(w, r)
 	case r.URL.Path == "/api/projects/create" && r.Method == "POST":
@@ -366,14 +380,84 @@ func (h *WebHandler) localRemoteAccess(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "remote access controls are available only from the local loopback dashboard", http.StatusForbidden)
 		return
 	}
+	if h.peerManager != nil {
+		status, err := h.peerManager.StatusForProject(r.Context(), r.URL.Query().Get("project"))
+		if err != nil {
+			jsonError(w, err)
+			return
+		}
+		jsonReply(w, status)
+		return
+	}
 	enabled, err := h.store.RemoteAccessEnabled(r.Context())
 	if err != nil {
 		jsonError(w, err)
 		return
 	}
 	jsonReply(w, struct {
-		Enabled bool `json:"enabled"`
-	}{enabled})
+		Enabled        bool     `json:"enabled"`
+		DetectedLANIPs []string `json:"detected_lan_ips,omitempty"`
+	}{Enabled: enabled, DetectedLANIPs: orderedLANIPs()})
+}
+
+func (h *WebHandler) localPeerAccess(w http.ResponseWriter, r *http.Request) {
+	if !h.hasLocalDashboardAccess(r) || r.TLS != nil || !localHost(r.Host) || !loopbackPeer(r.RemoteAddr) {
+		http.Error(w, "peer access configuration is available only from the local loopback dashboard", http.StatusForbidden)
+		return
+	}
+	if h.peerManager == nil {
+		if r.Method == http.MethodGet {
+			h.localRemoteAccess(w, r)
+			return
+		}
+		http.Error(w, "managed peer access is unavailable on this backend", http.StatusNotImplemented)
+		return
+	}
+	if r.Method == http.MethodGet {
+		status, err := h.peerManager.StatusForProject(r.Context(), r.URL.Query().Get("project"))
+		if err != nil {
+			jsonError(w, err)
+			return
+		}
+		jsonReply(w, status)
+		return
+	}
+	var update PeerAccessUpdate
+	if err := decodeBody(w, r, &update); err != nil {
+		jsonError(w, err)
+		return
+	}
+	status, err := h.peerManager.Configure(r.Context(), update)
+	if err != nil {
+		jsonError(w, err)
+		return
+	}
+	jsonReply(w, status)
+}
+
+func (h *WebHandler) localFRPRelayCommand(w http.ResponseWriter, r *http.Request) {
+	if !h.hasLocalDashboardAccess(r) || r.TLS != nil || !localHost(r.Host) || !loopbackPeer(r.RemoteAddr) {
+		http.Error(w, "FRP relay command helper is available only from the local loopback dashboard", http.StatusForbidden)
+		return
+	}
+	if h.peerManager == nil {
+		http.Error(w, "managed peer access is unavailable on this backend", http.StatusNotImplemented)
+		return
+	}
+	cmd, port, localActive, err := h.peerManager.FRPRelaySetupCommand(r.Context())
+	if err != nil {
+		jsonError(w, err)
+		return
+	}
+	jsonReply(w, struct {
+		Command          string `json:"command"`
+		ServerPort       int    `json:"server_port"`
+		LocalRelayActive bool   `json:"local_relay_active"`
+	}{
+		Command:          cmd,
+		ServerPort:       port,
+		LocalRelayActive: localActive,
+	})
 }
 
 // createLocalProject is an onboarding shortcut for a dashboard bound to the
@@ -786,15 +870,17 @@ type DashboardProjectLocal struct {
 }
 
 type DashboardProjectRemote struct {
-	ProjectID     string `json:"project_id"`
-	ProjectName   string `json:"project_name"`
-	HomeID        string `json:"home_id"`
-	PrincipalID   string `json:"principal_id"`
-	PrincipalName string `json:"principal_name,omitempty"`
-	Role          string `json:"role,omitempty"`
-	Endpoint      string `json:"endpoint"`
-	Status        string `json:"status"` // "connected", "unauthorized", "offline"
-	Error         string `json:"error,omitempty"`
+	ProjectID       string `json:"project_id"`
+	ProjectName     string `json:"project_name"`
+	HomeID          string `json:"home_id"`
+	PrincipalID     string `json:"principal_id"`
+	PrincipalName   string `json:"principal_name,omitempty"`
+	Role            string `json:"role,omitempty"`
+	Endpoint        string `json:"endpoint"`
+	HostFingerprint string `json:"host_fingerprint,omitempty"`
+	SSHTarget       string `json:"ssh_target,omitempty"`
+	Status          string `json:"status"` // "connected", "unauthorized", "offline"
+	Error           string `json:"error,omitempty"`
 }
 
 type DashboardProjectsResponse struct {
@@ -849,7 +935,7 @@ func (h *WebHandler) resolveProjectCall(r *http.Request, projectID string) (back
 		if err != nil || tok == "" {
 			return nil, nil, "", "", ctx, true, http.StatusUnauthorized, "saved remote credential is unavailable"
 		}
-		remote, err := NewRemote(c.Endpoint, c.CAFile, c.CertFile, c.KeyFile, "")
+		remote, err := h.registry.DialRemote(ctx, c)
 		if err != nil {
 			return nil, nil, "", "", ctx, true, http.StatusBadGateway, "remote connection is misconfigured: " + err.Error()
 		}
@@ -973,12 +1059,14 @@ func (h *WebHandler) dashboardProjects(w http.ResponseWriter, r *http.Request) {
 	if err == nil {
 		for _, c := range conns {
 			item := DashboardProjectRemote{
-				ProjectID:   c.ProjectID,
-				ProjectName: c.Name,
-				HomeID:      c.HomeID,
-				PrincipalID: c.PrincipalID,
-				Endpoint:    c.Endpoint,
-				Status:      "offline",
+				ProjectID:       c.ProjectID,
+				ProjectName:     c.Name,
+				HomeID:          c.HomeID,
+				PrincipalID:     c.PrincipalID,
+				Endpoint:        c.Endpoint,
+				HostFingerprint: c.HostFingerprint,
+				SSHTarget:       c.SSHTarget,
+				Status:          "offline",
 			}
 			tok, tokErr := h.registry.Token(c)
 			if tokErr != nil || tok == "" {
@@ -987,13 +1075,18 @@ func (h *WebHandler) dashboardProjects(w http.ResponseWriter, r *http.Request) {
 				resp.Remote = append(resp.Remote, item)
 				continue
 			}
-			remote, remErr := NewRemote(c.Endpoint, c.CAFile, c.CertFile, c.KeyFile, "")
+			timeout := 1500 * time.Millisecond
+			if c.SSHTarget != "" {
+				timeout = 5 * time.Second
+			}
+			checkCtx, cancel := context.WithTimeout(r.Context(), timeout)
+			remote, remErr := h.registry.DialRemote(checkCtx, c)
 			if remErr != nil {
+				cancel()
 				item.Error = remErr.Error()
 				resp.Remote = append(resp.Remote, item)
 				continue
 			}
-			checkCtx, cancel := context.WithTimeout(r.Context(), 1500*time.Millisecond)
 			who, whoErr := remote.WhoAmI(checkCtx, c.ProjectID, tok)
 			cancel()
 			if whoErr != nil {
@@ -1441,23 +1534,128 @@ func (h *WebHandler) project(w http.ResponseWriter, r *http.Request) {
 			value, err = store.RemoteInvitations(ctx, project, token)
 		case http.MethodPost:
 			var req struct {
-				Operation string `json:"operation"`
-				ID        string `json:"id"`
-				Name      string `json:"name"`
-				Role      string `json:"role"`
-				Endpoint  string `json:"endpoint"`
-				ServerCA  string `json:"server_ca"`
+				Operation      string `json:"operation"`
+				ID             string `json:"id"`
+				Name           string `json:"name"`
+				Role           string `json:"role"`
+				Mode           string `json:"mode"`
+				LanIP          string `json:"lan_ip"`
+				FRPServer      string `json:"frp_server"`
+				AutoLocalRelay bool   `json:"auto_local_relay"`
+				Endpoint       string `json:"endpoint"`
+				ServerCA       string `json:"server_ca"`
+				Encrypt        bool   `json:"encrypt"`
+				Passphrase     string `json:"passphrase"`
+				AutoApprove    *bool  `json:"auto_approve"`
 			}
 			if err = decodeBody(w, r, &req); err == nil {
 				switch req.Operation {
 				case "create":
-					if err = validateEnrollmentHome(req.Endpoint, req.ServerCA); err != nil {
+					if strings.TrimSpace(req.Name) == "" {
+						req.Name = "Remote peer"
+					}
+					if strings.TrimSpace(req.Role) == "" {
+						req.Role = "worker"
+					}
+					endpoint := strings.TrimSpace(req.Endpoint)
+					serverCA := strings.TrimSpace(req.ServerCA)
+					mode := strings.ToLower(strings.TrimSpace(req.Mode))
+					var details InviteEndpointInfo
+					if endpoint == "" && serverCA == "" && mode != "" {
+						if h.peerManager == nil || !h.hasLocalDashboardAccess(r) || r.TLS != nil || !localHost(r.Host) || !loopbackPeer(r.RemoteAddr) {
+							err = errors.New("automatic LAN/FRP/SSH sharing requires the local loopback dashboard")
+							break
+						}
+						if mode == "lan" {
+							if _, err = h.peerManager.EnsureLANActiveForProject(ctx, project); err != nil {
+								break
+							}
+						} else if mode == "frp" {
+							if _, err = h.peerManager.EnsureFRPActiveForProjectWithOptions(ctx, project, req.FRPServer, req.AutoLocalRelay); err != nil {
+								break
+							}
+						}
+						details, err = h.peerManager.ResolveInviteDetails(ctx, project, mode, req.LanIP)
+						if err != nil {
+							break
+						}
+						endpoint = details.Endpoint
+						serverCA = details.ServerCA
+					}
+					if err = validateEnrollmentHome(endpoint, serverCA); err != nil {
 						break
 					}
+					hostFP := details.HostFingerprint
+					if hostFP == "" {
+						hostFP = HostCertSSHFingerprint(serverCA)
+					}
+					// Manual owner approval with matching verification code is always required.
+					const autoApprove = false
 					var invite RemoteInvitation
 					var code string
-					invite, code, err = store.CreateRemoteInvitation(ctx, project, token, req.Name, req.Role)
-					value = map[string]any{"invitation": invite, "code": code, "endpoint": req.Endpoint, "server_ca": req.ServerCA, "home_id": store.InstanceID()}
+					invite, code, err = store.CreateRemoteInvitationWithOptions(ctx, project, token, req.Name, req.Role, autoApprove)
+					if err != nil {
+						break
+					}
+					if req.Encrypt {
+						passphrase := strings.TrimSpace(req.Passphrase)
+						if passphrase == "" {
+							passphrase, err = GenerateInvitePIN()
+							if err != nil {
+								break
+							}
+						}
+						projectName := project
+						if who, whoErr := store.WhoAmI(ctx, project, token); whoErr == nil && who.ProjectName != "" {
+							projectName = who.ProjectName
+						}
+						var sealed []byte
+						sealed, err = EncryptEnrollmentBundle(EncryptedInvitePayload{
+							Version:         1,
+							ProjectName:     projectName,
+							Mode:            mode,
+							Invitation:      invite,
+							Endpoint:        endpoint,
+							ServerCA:        serverCA,
+							HostFingerprint: hostFP,
+							HomeID:          store.InstanceID(),
+							Code:            code,
+							SSHTarget:       details.SSHTarget,
+							SSHPort:         details.SSHPort,
+							SSHRemotePort:   details.SSHRemotePort,
+						}, passphrase)
+						if err != nil {
+							break
+						}
+						value = map[string]any{
+							"invitation":       invite,
+							"endpoint":         endpoint,
+							"home_id":          store.InstanceID(),
+							"mode":             mode,
+							"host_fingerprint": hostFP,
+							"ssh_target":       details.SSHTarget,
+							"ssh_port":         details.SSHPort,
+							"ssh_remote_port":  details.SSHRemotePort,
+							"auto_approve":     false,
+							"encrypted_file":   string(sealed),
+							"passphrase":       passphrase,
+							"pin":              passphrase,
+							"filename":         inviteFileName(projectName, req.Name),
+						}
+						break
+					}
+					value = map[string]any{
+						"invitation":       invite,
+						"code":             code,
+						"endpoint":         endpoint,
+						"server_ca":        serverCA,
+						"home_id":          store.InstanceID(),
+						"host_fingerprint": hostFP,
+						"ssh_target":       details.SSHTarget,
+						"ssh_port":         details.SSHPort,
+						"ssh_remote_port":  details.SSHRemotePort,
+						"auto_approve":     false,
+					}
 				case "approved", "denied", "cancelled":
 					err = store.DecideRemoteInvitation(ctx, project, token, req.ID, req.Operation)
 					value = map[string]bool{"ok": err == nil}
@@ -2275,19 +2473,270 @@ func (h *WebHandler) acceptInvitation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var input struct {
-		Bundle EnrollmentBundle `json:"bundle"`
-		Code   string           `json:"code"`
+		Bundle          EnrollmentBundle `json:"bundle"`
+		Endpoint        string           `json:"endpoint"`
+		ProjectID       string           `json:"project_id"`
+		InvitationID    string           `json:"invitation_id"`
+		ServerCA        string           `json:"server_ca"`
+		Code            string           `json:"code"`
+		EncryptedFile   string           `json:"encrypted_file"`
+		Passphrase      string           `json:"passphrase"`
+		SSHTarget       string           `json:"ssh_target"`
+		SSHPort         int              `json:"ssh_port"`
+		SSHRemotePort   int              `json:"ssh_remote_port"`
+		SSHIdentityFile string           `json:"ssh_identity_file"`
+		TrustHostKey    *bool            `json:"trust_host_key"`
 	}
 	if err := decodeBody(w, r, &input); err != nil {
 		jsonError(w, err)
 		return
 	}
+	bundle := input.Bundle
+	if bundle.Endpoint == "" && strings.TrimSpace(input.Endpoint) != "" {
+		bundle.Endpoint = strings.TrimSpace(input.Endpoint)
+	}
+	if bundle.ServerCA == "" && strings.TrimSpace(input.ServerCA) != "" {
+		bundle.ServerCA = input.ServerCA
+	}
+	if bundle.Invitation.Project == "" && strings.TrimSpace(input.ProjectID) != "" {
+		bundle.Invitation.Project = strings.TrimSpace(input.ProjectID)
+	}
+	if bundle.Invitation.ID == "" && strings.TrimSpace(input.InvitationID) != "" {
+		bundle.Invitation.ID = strings.TrimSpace(input.InvitationID)
+	}
+	code := strings.TrimSpace(input.Code)
+	mode := ""
+	projectName := ""
+	sshTarget := strings.TrimSpace(input.SSHTarget)
+	sshPort := input.SSHPort
+	sshRemotePort := input.SSHRemotePort
+	trustHost := true
+	if input.TrustHostKey != nil {
+		trustHost = *input.TrustHostKey
+	}
+	encryptedUsed := strings.TrimSpace(input.EncryptedFile) != ""
+	if encryptedUsed {
+		payload, err := DecryptEnrollmentBundle([]byte(input.EncryptedFile), input.Passphrase)
+		if err != nil {
+			jsonError(w, err)
+			return
+		}
+		bundle = EnrollmentBundle{
+			Invitation: payload.Invitation,
+			Endpoint:   payload.Endpoint,
+			ServerCA:   payload.ServerCA,
+			HomeID:     payload.HomeID,
+		}
+		code = payload.Code
+		mode = payload.Mode
+		projectName = payload.ProjectName
+		if sshTarget == "" {
+			sshTarget = payload.SSHTarget
+		}
+		if sshPort == 0 {
+			sshPort = payload.SSHPort
+		}
+		if sshRemotePort == 0 {
+			sshRemotePort = payload.SSHRemotePort
+		}
+	}
+	if bundle.Endpoint == "" && sshTarget != "" {
+		remPort := sshRemotePort
+		if remPort <= 0 {
+			remPort = DefaultPeerListenPort
+		}
+		bundle.Endpoint = fmt.Sprintf("https://127.0.0.1:%d", remPort)
+	}
+	if bundle.Endpoint != "" && !strings.Contains(bundle.Endpoint, "://") {
+		bundle.Endpoint = "https://" + bundle.Endpoint
+	}
 	ctx, cancel := context.WithTimeout(r.Context(), 40*time.Second)
 	defer cancel()
-	invite, err := h.registry.AcceptEnrollment(ctx, h.profile, input.Bundle, strings.TrimSpace(input.Code))
+	if bundle.ServerCA == "" && bundle.Endpoint != "" {
+		dialEndpoint := bundle.Endpoint
+		if sshTarget != "" {
+			var err error
+			dialEndpoint, err = h.registry.EnsureSSHClientForward(ctx, sshTarget, bundle.Endpoint, sshPort, sshRemotePort, input.SSHIdentityFile)
+			if err != nil {
+				jsonError(w, err)
+				return
+			}
+		}
+		probe, err := ProbePeerEndpoint(ctx, dialEndpoint)
+		if err != nil {
+			jsonError(w, err)
+			return
+		}
+		bundle.ServerCA = probe.ServerCA
+	}
+	invite, err := h.registry.AcceptEnrollmentWithOptions(ctx, h.profile, EnrollmentAcceptOptions{
+		Bundle:          bundle,
+		Code:            code,
+		SSHTarget:       sshTarget,
+		SSHPort:         sshPort,
+		SSHRemotePort:   sshRemotePort,
+		SSHIdentityFile: input.SSHIdentityFile,
+		TrustHostKey:    trustHost,
+	})
 	if err != nil {
 		jsonError(w, err)
 		return
 	}
-	jsonReply(w, invite)
+	hostFP := HostCertSSHFingerprint(bundle.ServerCA)
+	jsonReply(w, map[string]any{
+		"id":                invite.ID,
+		"project_id":        invite.Project,
+		"name":              invite.Name,
+		"role":              invite.Role,
+		"state":             invite.State,
+		"fingerprint":       invite.Fingerprint,
+		"ssh_fingerprint":   invite.SSHFingerprint,
+		"verification_code": invite.VerificationCode,
+		"host_fingerprint":  hostFP,
+		"expires_at":        invite.ExpiresAt,
+		"auto_approve":      false,
+		"home_id":           bundle.HomeID,
+		"endpoint":          bundle.Endpoint,
+		"project_name":      projectName,
+		"mode":              mode,
+		"ssh_target":        sshTarget,
+		"ssh_port":          sshPort,
+		"ssh_remote_port":   sshRemotePort,
+	})
+}
+
+func (h *WebHandler) probePeerHost(w http.ResponseWriter, r *http.Request) {
+	if !h.hasLocalDashboardAccess(r) || h.registry == nil {
+		http.Error(w, "local dashboard required", http.StatusForbidden)
+		return
+	}
+	var req struct {
+		Endpoint        string `json:"endpoint"`
+		SSHTarget       string `json:"ssh_target"`
+		SSHPort         int    `json:"ssh_port"`
+		SSHRemotePort   int    `json:"ssh_remote_port"`
+		SSHIdentityFile string `json:"ssh_identity_file"`
+		HomeID          string `json:"home_id"`
+		TrustHostKey    bool   `json:"trust_host_key"`
+		ResetKnownHost  bool   `json:"reset_known_host"`
+	}
+	if err := decodeBody(w, r, &req); err != nil {
+		jsonError(w, err)
+		return
+	}
+	endpoint := strings.TrimSpace(req.Endpoint)
+	if endpoint != "" && !strings.Contains(endpoint, "://") {
+		endpoint = "https://" + endpoint
+	}
+	if endpoint == "" && strings.TrimSpace(req.SSHTarget) != "" {
+		remPort := req.SSHRemotePort
+		if remPort <= 0 {
+			remPort = defaultSSHRemotePort
+		}
+		endpoint = fmt.Sprintf("https://127.0.0.1:%d", remPort)
+	}
+	if endpoint == "" {
+		jsonError(w, errors.New("enter a host endpoint or SSH target"))
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	defer cancel()
+	hostKey := KnownHostIdentity(endpoint, req.SSHTarget, req.SSHRemotePort)
+	if req.ResetKnownHost {
+		_ = h.registry.RemoveKnownHost(ctx, hostKey)
+	}
+	dialEndpoint := endpoint
+	if strings.TrimSpace(req.SSHTarget) != "" {
+		var err error
+		dialEndpoint, err = h.registry.EnsureSSHClientForward(ctx, req.SSHTarget, endpoint, req.SSHPort, req.SSHRemotePort, req.SSHIdentityFile)
+		if err != nil {
+			jsonError(w, err)
+			return
+		}
+	}
+	probe, err := ProbePeerEndpoint(ctx, dialEndpoint)
+	if err != nil {
+		jsonError(w, err)
+		return
+	}
+	check, err := h.registry.VerifyOrRecordKnownHost(ctx, hostKey, req.HomeID, probe.ServerCA, req.TrustHostKey)
+	if err != nil {
+		if errors.Is(err, ErrHostKeyChanged) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusConflict)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"status":               "changed",
+				"host_key":             hostKey,
+				"host_fingerprint":     check.Fingerprint,
+				"expected_fingerprint": check.ExpectedFingerprint,
+				"error":                err.Error(),
+			})
+			return
+		}
+		jsonError(w, err)
+		return
+	}
+	jsonReply(w, map[string]any{
+		"status":           check.Status,
+		"host_key":         check.HostKey,
+		"endpoint":         endpoint,
+		"host_fingerprint": probe.HostFingerprint,
+		"server_ca":        probe.ServerCA,
+	})
+}
+
+func (h *WebHandler) localKnownHosts(w http.ResponseWriter, r *http.Request) {
+	if !h.hasLocalDashboardAccess(r) || h.registry == nil {
+		http.Error(w, "local dashboard required", http.StatusForbidden)
+		return
+	}
+	if r.Method == http.MethodGet {
+		hosts, err := h.registry.ListKnownHosts(r.Context())
+		if err != nil {
+			jsonError(w, err)
+			return
+		}
+		jsonReply(w, hosts)
+		return
+	}
+	var req struct {
+		HostKey string `json:"host_key"`
+	}
+	if r.Method == http.MethodDelete {
+		req.HostKey = strings.TrimSpace(r.URL.Query().Get("host_key"))
+	} else if err := decodeBody(w, r, &req); err != nil {
+		jsonError(w, err)
+		return
+	}
+	if err := h.registry.RemoveKnownHost(r.Context(), req.HostKey); err != nil {
+		jsonError(w, err)
+		return
+	}
+	jsonReply(w, map[string]bool{"ok": true})
+}
+
+func inviteFileName(projectName, invitee string) string {
+	slug := func(s string) string {
+		s = strings.ToLower(strings.TrimSpace(s))
+		var b strings.Builder
+		for _, r := range s {
+			if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+				b.WriteRune(r)
+			} else if r == '-' || r == '_' || r == ' ' {
+				if b.Len() > 0 && b.String()[b.Len()-1] != '-' {
+					b.WriteByte('-')
+				}
+			}
+		}
+		return strings.Trim(b.String(), "-")
+	}
+	p := slug(projectName)
+	n := slug(invitee)
+	if p == "" {
+		p = "project"
+	}
+	if n == "" {
+		return "gossip-" + p + "-invite.gossip"
+	}
+	return "gossip-" + p + "-" + n + "-invite.gossip"
 }
