@@ -47,6 +47,8 @@ The installer checks the downloaded release archive's SHA-256 against the checks
 
 ## Agent tutorials
 
+- [Detailed LLM installation guide (all 8 agents)](llm-install.md)
+- [All coding-agent configs (human Markdown reference)](agent-configs.md)
 - [Codex](codex.md)
 - [Antigravity](antigravity.md)
 - [OpenCode](opencode.md)
@@ -62,8 +64,15 @@ The installer checks the downloaded release archive's SHA-256 against the checks
 
 ## Ask your LLM to install it
 
-Open the repository in your coding agent and ask:
+Copy and paste this prompt into your coding agent (works inside or outside this repository):
 
-> Install Gossip for this machine using the official setup guide at `https://github.com/tasmirz/gossip/blob/main/docs/installation/README.md`. Download the matching prebuilt release binary, install the Gossip skill for this agent, and configure only this agent's MCP client with the private credential file I select. Preserve existing agent configuration. If I do not have a project credential, start the loopback dashboard and help me connect this local Git checkout first. Do not enable remote access or expose credentials. Verify MCP initialization and explain any action that needs my choice.
+```text
+Install and configure Gossip from https://github.com/tasmirz/gossip using the LLM setup guide at https://github.com/tasmirz/gossip/blob/main/docs/installation/llm-install.md and agent config reference at https://github.com/tasmirz/gossip/blob/main/docs/installation/agent-configs.md.
 
-The agent should follow [`AGENTS.md`](../../AGENTS.md) when working inside this repository.
+1. Check `command -v gossip`. If missing, install the official prebuilt binary (`curl -fsSL https://raw.githubusercontent.com/tasmirz/gossip/main/scripts/setup.sh | bash -s -- --binary-only` on Linux/macOS, or `$env:GOSSIP_BINARY_ONLY='1'; irm https://raw.githubusercontent.com/tasmirz/gossip/main/scripts/setup.ps1 | iex` on Windows).
+2. Preview with `gossip install --dry-run`, then run `gossip install` to install `SKILL.md` and register `gossip coord-mcp` across detected coding agents while preserving existing MCP servers.
+3. Start `gossip coord-ui` on http://127.0.0.1:47281 and help me connect this Git checkout (or join via .gossip invite + 6-digit PIN). Keep remote access disabled and never print or commit private credentials or keys.
+4. Verify MCP initialization (`gossip_projects`) and report the connected project name, branch, and configured agents.
+```
+
+See the [detailed LLM installation guide](llm-install.md) for the complete agent support matrix, flags, and troubleshooting steps. When working inside this checkout, coding agents should also read [`AGENTS.md`](../../AGENTS.md).

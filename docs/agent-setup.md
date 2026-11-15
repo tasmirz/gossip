@@ -4,7 +4,9 @@ Use this guide when you want an AI coding agent to connect a repository and coor
 
 ## Prompt to give your agent
 
-> Set up Gossip for this project. Read `AGENTS.md`, use the official prebuilt installer, help me connect this Git folder as a project, and configure this agent with the project-scoped MCP credential. Explain any step that needs my choice or access.
+```text
+Set up Gossip from https://github.com/tasmirz/gossip for this project. Read AGENTS.md, follow https://github.com/tasmirz/gossip/blob/main/docs/installation/llm-install.md (and https://github.com/tasmirz/gossip/blob/main/docs/installation/agent-configs.md), install the official prebuilt binary, run `gossip install`, help me connect this Git folder in `gossip coord-ui`, and verify `gossip_projects`. Explain any step that needs my choice or access.
+```
 
 ## What the agent should do
 

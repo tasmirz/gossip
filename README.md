@@ -54,12 +54,19 @@ gossip coord-ui
 
 Open **`http://127.0.0.1:47281/`** and either click **Create local project** (select a local Git checkout—Gossip infers remote, branch, and workspace metadata) or **Join LAN or remote project** (drop a `.gossip` invite file + 6-digit PIN). Restart your coding agent and call `gossip_projects` to confirm the connection.
 
-<details>
-<summary>Prefer asking your coding agent to run setup inside this repo?</summary>
+### Or copy this prompt into any coding agent
 
-> Set up Gossip for this project. Read `AGENTS.md`, install the official prebuilt binary, run `gossip install` for this agent, help me connect this Git checkout in `gossip coord-ui`, and verify `gossip_projects`. Explain any step that needs my choice.
+```text
+Install and configure Gossip from https://github.com/tasmirz/gossip using the LLM setup guide at https://github.com/tasmirz/gossip/blob/main/docs/installation/llm-install.md and agent config reference at https://github.com/tasmirz/gossip/blob/main/docs/installation/agent-configs.md.
 
-</details>
+1. Check `command -v gossip`. If missing, install the official binary (`curl -fsSL https://raw.githubusercontent.com/tasmirz/gossip/main/scripts/setup.sh | bash -s -- --binary-only` on Linux/macOS, or `$env:GOSSIP_BINARY_ONLY='1'; irm https://raw.githubusercontent.com/tasmirz/gossip/main/scripts/setup.ps1 | iex` on Windows).
+2. Preview with `gossip install --dry-run`, then run `gossip install` to install `SKILL.md` and register `gossip coord-mcp` across detected coding agents while preserving existing MCP configs.
+3. Start `gossip coord-ui` on http://127.0.0.1:47281 and help me connect this Git checkout (or join via .gossip invite + 6-digit PIN). Keep remote access disabled and never print or commit credentials or keys.
+4. Verify MCP initialization (`gossip_projects`) and report the connected project, branch, and configured agents.
+```
+
+- **LLM setup guide (all 8 agents, flags & verification):** [`docs/installation/llm-install.md`](docs/installation/llm-install.md)
+- **Human agent config reference (all JSON / TOML / CLI configs):** [`docs/installation/agent-configs.md`](docs/installation/agent-configs.md)
 
 ---
 
@@ -195,7 +202,9 @@ Gossip is an active preview. Local SQLite coordination, project-scoped messaging
 ## Documentation
 
 - [Product site](https://tasmirz.github.io/gossip/)
-- [Installation & per-agent guides (`gossip install`)](docs/installation/README.md)
+- [Installation overview (`gossip install`)](docs/installation/README.md)
+- [Detailed LLM installation guide](docs/installation/llm-install.md)
+- [All coding-agent configs (human Markdown reference)](docs/installation/agent-configs.md)
 - [MCP & Web Dashboard guide (Messaging, Ports & Pairing)](docs/mcp-and-web-guide.md)
 - [Coding agent setup instructions (`AGENTS.md`)](AGENTS.md)
 - [Security, access control & remote deployment](docs/coordination-preview.md)

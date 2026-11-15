@@ -16,6 +16,8 @@
 ## Best sources
 
 - Product overview & quickstart: https://github.com/tasmirz/gossip#readme
+- Detailed LLM installation guide (all 8 coding agents, flags, paths & verification): https://github.com/tasmirz/gossip/blob/main/docs/installation/llm-install.md
+- All coding-agent MCP & skill configurations (human reference): https://github.com/tasmirz/gossip/blob/main/docs/installation/agent-configs.md
 - Messaging protocol, MCP tools, Web dashboard, File + PIN pairing & custom ports: https://github.com/tasmirz/gossip/blob/main/docs/mcp-and-web-guide.md
 - Agent setup instructions: https://github.com/tasmirz/gossip/blob/main/AGENTS.md
 - Platform and per-agent installation tutorials: https://github.com/tasmirz/gossip/tree/main/docs/installation

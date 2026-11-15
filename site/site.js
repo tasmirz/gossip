@@ -1,6 +1,7 @@
 const copySetupPromptButton = document.querySelector("#copy-setup-prompt");
 const copySetupStatus = document.querySelector("#copy-setup-status");
-const setupPrompt = "Set up Gossip using https://github.com/tasmirz/gossip/blob/main/docs/installation/README.md. Download the prebuilt binary for this OS, install the Gossip skill, and configure this agent's MCP using the private project credential I choose. Preserve other settings. If I don't have a project yet, start the loopback dashboard and help me connect this checkout. Keep remote access disabled. Verify the MCP connection.";
+const setupPromptElement = document.querySelector("#setup-prompt-text");
+const setupPrompt = setupPromptElement?.textContent.trim() || "Install and configure Gossip from https://github.com/tasmirz/gossip using the LLM setup guide at https://github.com/tasmirz/gossip/blob/main/docs/installation/llm-install.md and agent config reference at https://github.com/tasmirz/gossip/blob/main/docs/installation/agent-configs.md.";
 
 copySetupPromptButton?.addEventListener("click", async () => {
   const label = copySetupPromptButton.querySelector("span");
