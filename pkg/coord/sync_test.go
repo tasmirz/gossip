@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/tasmirz/gossip/pkg/coord"
@@ -292,5 +293,270 @@ func TestRecommendedPollIntervalBackoffAndReset(t *testing.T) {
 	_ = json.Unmarshal([]byte(res.Content[0].(mcp.TextContent).Text), &fReset)
 	if fReset.NextIdlePolls != 0 || fReset.RecommendedPollSeconds != 30 {
 		t.Fatalf("expected immediate reset to 30s on new message, got idle=%d seconds=%d", fReset.NextIdlePolls, fReset.RecommendedPollSeconds)
+	}
+}
+
+func TestCheckAfterHintsOnAckSendAndSync(t *testing.T) {
+	s, _, project, owner, worker := setup(t)
+	ctx := context.Background()
+
+	ownerMCP := coord.MCPServer(s, project.ID, owner.Token)
+	workerMCP := coord.MCPServer(s, project.ID, worker.Token)
+
+	// Owner sends a task message to worker.
+	res, err := ownerMCP.GetTool("gossip_send").Handler(ctx, mcp.CallToolRequest{Params: mcp.CallToolParams{
+		Name:      "gossip_send",
+		Arguments: map[string]any{"recipient": worker.PrincipalID, "body": "Please analyze module X", "request_id": "eta-req-1"},
+	}})
+	if err != nil || res.IsError {
+		t.Fatalf("owner send: err=%v res=%+v", err, res)
+	}
+	var taskMsg coord.Message
+	_ = json.Unmarshal([]byte(res.Content[0].(mcp.TextContent).Text), &taskMsg)
+
+	// Worker acknowledges with checkAfter="4m" (240s).
+	res, err = workerMCP.GetTool("gossip_read").Handler(ctx, mcp.CallToolRequest{Params: mcp.CallToolParams{
+		Name:      "gossip_read",
+		Arguments: map[string]any{"operation": "acknowledge", "message_id": taskMsg.ID, "checkAfter": "4m"},
+	}})
+	if err != nil || res.IsError {
+		t.Fatalf("worker ack with checkAfter: err=%v res=%+v", err, res)
+	}
+	var ack coord.MessageAcknowledgment
+	_ = json.Unmarshal([]byte(res.Content[0].(mcp.TextContent).Text), &ack)
+	if ack.CheckAfterSeconds != 240 || ack.CheckAfterAt <= ack.AcknowledgedAt {
+		t.Fatalf("expected 240s checkAfter on ack, got %+v", ack)
+	}
+
+	// Owner's inbox sync sees worker's active checkAfter ETA and recommends checking back near 240s (not 30s),
+	// whereas worker's own inbox does not delay itself for its own ack.
+	res, err = ownerMCP.GetTool("gossip_sync").Handler(ctx, mcp.CallToolRequest{Params: mcp.CallToolParams{
+		Name:      "gossip_sync",
+		Arguments: map[string]any{"operation": "inbox"},
+	}})
+	if err != nil || res.IsError {
+		t.Fatalf("owner sync: err=%v res=%+v", err, res)
+	}
+	var ownerFrame coord.ProjectSyncFrame
+	_ = json.Unmarshal([]byte(res.Content[0].(mcp.TextContent).Text), &ownerFrame)
+	if ownerFrame.CheckAfterSeconds < 230 || ownerFrame.CheckAfterSeconds > 240 || ownerFrame.RecommendedPollSeconds != ownerFrame.CheckAfterSeconds {
+		t.Fatalf("expected owner recommended_poll_seconds near 240s from worker ack, got %+v", ownerFrame)
+	}
+
+	res, err = workerMCP.GetTool("gossip_sync").Handler(ctx, mcp.CallToolRequest{Params: mcp.CallToolParams{
+		Name:      "gossip_sync",
+		Arguments: map[string]any{"operation": "inbox"},
+	}})
+	if err != nil || res.IsError {
+		t.Fatalf("worker sync: err=%v res=%+v", err, res)
+	}
+	var workerFrame coord.ProjectSyncFrame
+	_ = json.Unmarshal([]byte(res.Content[0].(mcp.TextContent).Text), &workerFrame)
+	if workerFrame.CheckAfterSeconds != 0 || workerFrame.RecommendedPollSeconds != 30 {
+		t.Fatalf("expected worker not to wait on its own ack, got %+v", workerFrame)
+	}
+
+	// Worker finishes early and sends completion message with no checkAfter -> clears ETA and resets owner poll back to 30s!
+	res, err = workerMCP.GetTool("gossip_send").Handler(ctx, mcp.CallToolRequest{Params: mcp.CallToolParams{
+		Name:      "gossip_send",
+		Arguments: map[string]any{"recipient": owner.PrincipalID, "body": "Finished early!", "request_id": "eta-req-2"},
+	}})
+	if err != nil || res.IsError {
+		t.Fatalf("worker early reply: err=%v res=%+v", err, res)
+	}
+	res, err = ownerMCP.GetTool("gossip_sync").Handler(ctx, mcp.CallToolRequest{Params: mcp.CallToolParams{
+		Name:      "gossip_sync",
+		Arguments: map[string]any{"operation": "inbox", "after": ownerFrame.NextEventCursor, "message_after": ownerFrame.NextInboxCursor},
+	}})
+	if err != nil || res.IsError {
+		t.Fatalf("owner sync after completion: err=%v res=%+v", err, res)
+	}
+	var afterDone coord.ProjectSyncFrame
+	_ = json.Unmarshal([]byte(res.Content[0].(mcp.TextContent).Text), &afterDone)
+	if afterDone.CheckAfterSeconds != 0 || afterDone.RecommendedPollSeconds != 30 {
+		t.Fatalf("expected completion message to clear checkAfter ETA back to 30s, got %+v", afterDone)
+	}
+
+	// Also verify gossip_send supports checkAfter (e.g. 90s) directly on messages.
+	res, err = workerMCP.GetTool("gossip_send").Handler(ctx, mcp.CallToolRequest{Params: mcp.CallToolParams{
+		Name:      "gossip_send",
+		Arguments: map[string]any{"body": "Starting phase 2, might take 90s", "checkAfter": 90, "request_id": "eta-req-3"},
+	}})
+	if err != nil || res.IsError {
+		t.Fatalf("worker send with checkAfter=90: err=%v res=%+v", err, res)
+	}
+	var msgWithETA coord.Message
+	_ = json.Unmarshal([]byte(res.Content[0].(mcp.TextContent).Text), &msgWithETA)
+	if msgWithETA.CheckAfterSeconds != 90 || msgWithETA.CheckAfterAt <= msgWithETA.CreatedAt {
+		t.Fatalf("expected check_after_seconds=90 on sent message, got %+v", msgWithETA)
+	}
+}
+
+func TestPeerModesAndCommunicationTTLRTO(t *testing.T) {
+	s, _, project, owner, worker := setup(t)
+	ctx := context.Background()
+
+	ownerMCP := coord.MCPServer(s, project.ID, owner.Token)
+	workerMCP := coord.MCPServer(s, project.ID, worker.Token)
+
+	// 1. Worker explicitly advertises working mode with checkAfter="3m".
+	res, err := workerMCP.GetTool("gossip_agents").Handler(ctx, mcp.CallToolRequest{Params: mcp.CallToolParams{
+		Name:      "gossip_agents",
+		Arguments: map[string]any{"operation": "set_mode", "mode": "working", "checkAfter": "3m"},
+	}})
+	if err != nil || res.IsError {
+		t.Fatalf("worker set_mode: err=%v res=%+v", err, res)
+	}
+	var pm coord.PeerMode
+	_ = json.Unmarshal([]byte(res.Content[0].(mcp.TextContent).Text), &pm)
+	if pm.Mode != "working" || pm.CheckAfterSeconds != 180 || pm.PrincipalID != worker.PrincipalID {
+		t.Fatalf("unexpected peer mode from set_mode: %+v", pm)
+	}
+
+	// Owner inspects advertised modes via gossip_agents(operation="modes").
+	res, err = ownerMCP.GetTool("gossip_agents").Handler(ctx, mcp.CallToolRequest{Params: mcp.CallToolParams{
+		Name:      "gossip_agents",
+		Arguments: map[string]any{"operation": "modes"},
+	}})
+	if err != nil || res.IsError {
+		t.Fatalf("owner list modes: err=%v res=%+v", err, res)
+	}
+	var modes []coord.PeerMode
+	_ = json.Unmarshal([]byte(res.Content[0].(mcp.TextContent).Text), &modes)
+	if len(modes) != 1 || modes[0].Mode != "working" || modes[0].PrincipalID != worker.PrincipalID {
+		t.Fatalf("expected 1 advertised working mode, got %+v", modes)
+	}
+
+	// 2. Owner sends a planning-mode message negotiating checkAfter="45s".
+	res, err = ownerMCP.GetTool("gossip_send").Handler(ctx, mcp.CallToolRequest{Params: mcp.CallToolParams{
+		Name: "gossip_send",
+		Arguments: map[string]any{
+			"recipient":  worker.PrincipalID,
+			"subject":    "Architecture check",
+			"body":       "Let's align on schema",
+			"mode":       "planning",
+			"checkAfter": "45s",
+			"request_id": "plan-msg-1",
+		},
+	}})
+	if err != nil || res.IsError {
+		t.Fatalf("owner planning send: err=%v res=%+v", err, res)
+	}
+	var planMsg coord.Message
+	_ = json.Unmarshal([]byte(res.Content[0].(mcp.TextContent).Text), &planMsg)
+	if planMsg.Mode != "planning" || planMsg.CheckAfterSeconds != 45 {
+		t.Fatalf("expected mode=planning checkAfter=45, got %+v", planMsg)
+	}
+
+	// Worker acknowledges in working mode with checkAfter="2m".
+	res, err = workerMCP.GetTool("gossip_read").Handler(ctx, mcp.CallToolRequest{Params: mcp.CallToolParams{
+		Name:      "gossip_read",
+		Arguments: map[string]any{"operation": "acknowledge", "message_id": planMsg.ID, "mode": "working", "checkAfter": "2m"},
+	}})
+	if err != nil || res.IsError {
+		t.Fatalf("worker ack mode=working: err=%v res=%+v", err, res)
+	}
+	var ack coord.MessageAcknowledgment
+	_ = json.Unmarshal([]byte(res.Content[0].(mcp.TextContent).Text), &ack)
+	if ack.Mode != "working" || ack.CheckAfterSeconds != 120 {
+		t.Fatalf("expected ack mode=working checkAfter=120, got %+v", ack)
+	}
+
+	// 3. Communication mode with TCP-like TTL + RTO:
+	// Owner sends two communication messages:
+	// - commMsg1: ttl=300s, rto=1s (should trigger RTODueMessages after 1.1s with doubled next_rto_seconds=2)
+	// - commMsgExpired: ttl=1s, rto=1s (expires after 1.1s, so it must be marked expired=true and excluded from RTODueMessages)
+	res, err = ownerMCP.GetTool("gossip_send").Handler(ctx, mcp.CallToolRequest{Params: mcp.CallToolParams{
+		Name: "gossip_send",
+		Arguments: map[string]any{
+			"recipient":  worker.PrincipalID,
+			"subject":    "SYN ping",
+			"body":       "Need quick ACK",
+			"mode":       "communication",
+			"ttl":        "5m",
+			"rto":        1,
+			"request_id": "comm-msg-1",
+		},
+	}})
+	if err != nil || res.IsError {
+		t.Fatalf("owner comm send 1: err=%v res=%+v", err, res)
+	}
+	var commMsg1 coord.Message
+	_ = json.Unmarshal([]byte(res.Content[0].(mcp.TextContent).Text), &commMsg1)
+	if commMsg1.Mode != "communication" || commMsg1.TTLSeconds != 300 || commMsg1.RTOSeconds != 1 || commMsg1.ExpiresAt <= commMsg1.CreatedAt {
+		t.Fatalf("unexpected commMsg1 fields: %+v", commMsg1)
+	}
+
+	res, err = ownerMCP.GetTool("gossip_send").Handler(ctx, mcp.CallToolRequest{Params: mcp.CallToolParams{
+		Name: "gossip_send",
+		Arguments: map[string]any{
+			"recipient":  worker.PrincipalID,
+			"subject":    "Short-lived ping",
+			"body":       "Expires in 1s",
+			"mode":       "communication",
+			"ttl":        1,
+			"rto":        1,
+			"request_id": "comm-msg-expired",
+		},
+	}})
+	if err != nil || res.IsError {
+		t.Fatalf("owner comm send expired: err=%v res=%+v", err, res)
+	}
+	var commMsgExpired coord.Message
+	_ = json.Unmarshal([]byte(res.Content[0].(mcp.TextContent).Text), &commMsgExpired)
+
+	time.Sleep(1100 * time.Millisecond)
+
+	// Owner syncs inbox: should see peer_modes (owner=communication, worker=working) AND rto_due_messages containing ONLY commMsg1!
+	res, err = ownerMCP.GetTool("gossip_sync").Handler(ctx, mcp.CallToolRequest{Params: mcp.CallToolParams{
+		Name:      "gossip_sync",
+		Arguments: map[string]any{"operation": "inbox"},
+	}})
+	if err != nil || res.IsError {
+		t.Fatalf("owner sync comm: err=%v res=%+v", err, res)
+	}
+	var ownerSync coord.ProjectSyncFrame
+	_ = json.Unmarshal([]byte(res.Content[0].(mcp.TextContent).Text), &ownerSync)
+	if len(ownerSync.PeerModes) != 2 {
+		t.Fatalf("expected 2 advertised peer_modes in inbox sync, got %+v", ownerSync.PeerModes)
+	}
+	if len(ownerSync.RTODueMessages) != 1 || ownerSync.RTODueMessages[0].ID != commMsg1.ID || ownerSync.RTODueMessages[0].NextRTOSeconds < 2 {
+		t.Fatalf("expected commMsg1 in rto_due_messages with doubled next_rto_seconds>=2, got %+v", ownerSync.RTODueMessages)
+	}
+
+	// Check that commMsgExpired is flagged Expired=true in inbox_messages.
+	foundExpired := false
+	for _, im := range ownerSync.InboxMessages {
+		if im.ID == commMsgExpired.ID {
+			if !im.Expired {
+				t.Fatalf("expected commMsgExpired to be marked expired=true in inbox, got %+v", im)
+			}
+			foundExpired = true
+		}
+	}
+	if !foundExpired {
+		t.Fatalf("expected commMsgExpired in inbox_messages")
+	}
+
+	// Worker acknowledges commMsg1 -> clears it from owner's rto_due_messages!
+	res, err = workerMCP.GetTool("gossip_read").Handler(ctx, mcp.CallToolRequest{Params: mcp.CallToolParams{
+		Name:      "gossip_read",
+		Arguments: map[string]any{"operation": "acknowledge", "message_id": commMsg1.ID},
+	}})
+	if err != nil || res.IsError {
+		t.Fatalf("worker ack commMsg1: err=%v res=%+v", err, res)
+	}
+
+	res, err = ownerMCP.GetTool("gossip_sync").Handler(ctx, mcp.CallToolRequest{Params: mcp.CallToolParams{
+		Name:      "gossip_sync",
+		Arguments: map[string]any{"operation": "inbox"},
+	}})
+	if err != nil || res.IsError {
+		t.Fatalf("owner sync after comm ack: err=%v res=%+v", err, res)
+	}
+	var ownerSyncAfterAck coord.ProjectSyncFrame
+	_ = json.Unmarshal([]byte(res.Content[0].(mcp.TextContent).Text), &ownerSyncAfterAck)
+	if len(ownerSyncAfterAck.RTODueMessages) != 0 {
+		t.Fatalf("expected rto_due_messages to be empty after recipient ack, got %+v", ownerSyncAfterAck.RTODueMessages)
 	}
 }

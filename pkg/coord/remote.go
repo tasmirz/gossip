@@ -65,6 +65,10 @@ type rpcRequest struct {
 	Before              int64                  `json:"before,omitempty"`
 	MessageAfter        int64                  `json:"message_after,omitempty"`
 	LastReadHash        string                 `json:"last_read_hash,omitempty"`
+	CheckAfterSeconds   int                    `json:"check_after_seconds,omitempty"`
+	Mode                string                 `json:"mode,omitempty"`
+	TTLSeconds          int                    `json:"ttl_seconds,omitempty"`
+	RTOSeconds          int                    `json:"rto_seconds,omitempty"`
 	PruneThrough        int64                  `json:"prune_through,omitempty"`
 	Limit               int                    `json:"limit,omitempty"`
 	MaxChars            int                    `json:"max_chars,omitempty"`
@@ -629,7 +633,12 @@ func rpcHandler(s *Store, requireTLS bool, pins map[[32]byte]map[string]bool, ce
 		case "report.page":
 			v, err = s.GetReportPage(ctx, q.Project, token, q.ID, int(q.After), q.Limit)
 		case "message.send":
-			v, err = s.SendMessageWithID(ctx, q.Project, token, q.Recipient, q.Thread, q.Subject, q.Body, q.RequestID)
+			v, err = s.SendMessageWithOptions(ctx, q.Project, token, q.Recipient, q.Thread, q.Subject, q.Body, q.RequestID, MessageOptions{
+				Mode:              q.Mode,
+				CheckAfterSeconds: q.CheckAfterSeconds,
+				TTLSeconds:        q.TTLSeconds,
+				RTOSeconds:        q.RTOSeconds,
+			})
 		case "message.list":
 			if strings.TrimSpace(q.LastReadHash) != "" {
 				v, err = s.ListMessagesSinceHash(ctx, q.Project, token, q.LastReadHash, q.Limit)
@@ -668,9 +677,18 @@ func rpcHandler(s *Store, requireTLS bool, pins map[[32]byte]map[string]bool, ce
 		case "message.conversation":
 			v, err = s.ConversationMessages(ctx, q.Project, token, q.Recipient, q.After, q.Before, q.Limit, q.Recent)
 		case "message.acknowledge":
-			v, err = s.AcknowledgeMessage(ctx, q.Project, token, q.ID)
+			v, err = s.AcknowledgeMessageWithOptions(ctx, q.Project, token, q.ID, MessageOptions{
+				Mode:              q.Mode,
+				CheckAfterSeconds: q.CheckAfterSeconds,
+				TTLSeconds:        q.TTLSeconds,
+				RTOSeconds:        q.RTOSeconds,
+			})
 		case "message.acknowledgments":
 			v, err = s.MessageAcknowledgments(ctx, q.Project, token, q.ID)
+		case "agent.set_mode":
+			v, err = s.SetPeerMode(ctx, q.Project, token, q.Mode, q.CheckAfterSeconds, q.TTLSeconds, q.RTOSeconds)
+		case "agent.modes":
+			v, err = s.ListPeerModes(ctx, q.Project, token)
 		case "event.list":
 			v, err = s.ReadEvents(ctx, q.Project, token, q.After, q.Limit)
 		case "project.sync":

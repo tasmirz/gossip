@@ -200,6 +200,51 @@ func (r *Remote) SendMessage(c context.Context, p, t, to, thread, subject, body 
 func (r *Remote) SendMessageWithID(c context.Context, p, t, to, thread, subject, body, requestID string) (Message, error) {
 	return remoteCall[Message](c, r, t, rpcRequest{Operation: "message.send", Project: p, Recipient: to, Thread: thread, Subject: subject, Body: body, RequestID: requestID})
 }
+func (r *Remote) SendMessageWithCheckAfter(c context.Context, p, t, to, thread, subject, body, requestID string, checkAfterSeconds int) (Message, error) {
+	return r.SendMessageWithOptions(c, p, t, to, thread, subject, body, requestID, MessageOptions{CheckAfterSeconds: checkAfterSeconds})
+}
+func (r *Remote) SendMessageWithOptions(c context.Context, p, t, to, thread, subject, body, requestID string, opts MessageOptions) (Message, error) {
+	return remoteCall[Message](c, r, t, rpcRequest{
+		Operation:         "message.send",
+		Project:           p,
+		Recipient:         to,
+		Thread:            thread,
+		Subject:           subject,
+		Body:              body,
+		RequestID:         requestID,
+		Mode:              opts.Mode,
+		CheckAfterSeconds: opts.CheckAfterSeconds,
+		TTLSeconds:        opts.TTLSeconds,
+		RTOSeconds:        opts.RTOSeconds,
+	})
+}
+func (r *Remote) AcknowledgeMessageWithCheckAfter(c context.Context, p, t, id string, checkAfterSeconds int) (MessageAcknowledgment, error) {
+	return r.AcknowledgeMessageWithOptions(c, p, t, id, MessageOptions{CheckAfterSeconds: checkAfterSeconds})
+}
+func (r *Remote) AcknowledgeMessageWithOptions(c context.Context, p, t, id string, opts MessageOptions) (MessageAcknowledgment, error) {
+	return remoteCall[MessageAcknowledgment](c, r, t, rpcRequest{
+		Operation:         "message.acknowledge",
+		Project:           p,
+		ID:                id,
+		Mode:              opts.Mode,
+		CheckAfterSeconds: opts.CheckAfterSeconds,
+		TTLSeconds:        opts.TTLSeconds,
+		RTOSeconds:        opts.RTOSeconds,
+	})
+}
+func (r *Remote) SetPeerMode(c context.Context, p, t, mode string, checkAfterSeconds, ttlSeconds, rtoSeconds int) (PeerMode, error) {
+	return remoteCall[PeerMode](c, r, t, rpcRequest{
+		Operation:         "agent.set_mode",
+		Project:           p,
+		Mode:              mode,
+		CheckAfterSeconds: checkAfterSeconds,
+		TTLSeconds:        ttlSeconds,
+		RTOSeconds:        rtoSeconds,
+	})
+}
+func (r *Remote) ListPeerModes(c context.Context, p, t string) ([]PeerMode, error) {
+	return remoteCall[[]PeerMode](c, r, t, rpcRequest{Operation: "agent.modes", Project: p})
+}
 func (r *Remote) ListMessages(c context.Context, p, t string, after int64, n int) ([]Message, error) {
 	return remoteCall[[]Message](c, r, t, rpcRequest{Operation: "message.list", Project: p, After: after, Limit: n})
 }

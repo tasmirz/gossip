@@ -33,12 +33,16 @@ type ProjectSyncFrame struct {
 	HomeInstanceID       string         `json:"home_instance_id"`
 	EventsMayContinue    bool           `json:"events_may_continue"`
 	ResetRequired        bool           `json:"reset_required"`
-	InboxMessages          []InboxMessage `json:"inbox_messages,omitempty"`
-	NextInboxCursor        int64          `json:"next_inbox_cursor,omitempty"`
-	InboxHasMore           bool           `json:"inbox_has_more,omitempty"`
-	LatestMessageHash      string         `json:"latest_message_hash,omitempty"`
-	NextIdlePolls          int            `json:"next_idle_polls,omitempty"`
-	RecommendedPollSeconds int            `json:"recommended_poll_seconds,omitempty"`
+	InboxMessages          []InboxMessage  `json:"inbox_messages,omitempty"`
+	NextInboxCursor        int64           `json:"next_inbox_cursor,omitempty"`
+	InboxHasMore           bool            `json:"inbox_has_more,omitempty"`
+	LatestMessageHash      string          `json:"latest_message_hash,omitempty"`
+	NextIdlePolls          int             `json:"next_idle_polls,omitempty"`
+	RecommendedPollSeconds int             `json:"recommended_poll_seconds,omitempty"`
+	CheckAfterSeconds      int             `json:"check_after_seconds,omitempty"`
+	CheckAfterAt           int64           `json:"check_after_at,omitempty"`
+	PeerModes              []PeerMode      `json:"peer_modes,omitempty"`
+	RTODueMessages         []RTODueMessage `json:"rto_due_messages,omitempty"`
 }
 
 const (
@@ -70,18 +74,120 @@ func RecommendedPollInterval(idlePolls int, hadActivity bool) (nextIdle int, sec
 	return nextIdle, seconds
 }
 
+func activePeerCheckAfterTx(ctx context.Context, tx *sql.Tx, project string, actor identity, nowMs int64) (int64, int, error) {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT peer_id, ts, check_after_at FROM (
+			SELECT sender AS peer_id, created_at AS ts, check_after_at
+			FROM messages
+			WHERE project_id=? AND sender<>? AND `+visibleMessageSQL("messages")+`
+			UNION ALL
+			SELECT ma.principal_id AS peer_id, ma.acknowledged_at AS ts, ma.check_after_at
+			FROM message_acknowledgments ma
+			JOIN messages ON messages.id=ma.message_id
+			WHERE messages.project_id=? AND ma.principal_id<>? AND `+visibleMessageSQL("messages")+`
+			UNION ALL
+			SELECT principal_id AS peer_id, updated_at AS ts, check_after_at
+			FROM peer_modes
+			WHERE project_id=? AND principal_id<>? AND check_after_at>0
+		)
+		ORDER BY ts DESC, check_after_at DESC`,
+		project, actor.ID, actor.Role, actor.ID, actor.ID, actor.ID, actor.ID,
+		project, actor.ID, actor.Role, actor.ID, actor.ID, actor.ID, actor.ID,
+		project, actor.ID,
+	)
+	if err != nil {
+		return 0, 0, err
+	}
+	defer rows.Close()
+
+	seenPeer := map[string]bool{}
+	var earliestAt int64
+	for rows.Next() {
+		var peerID string
+		var ts, checkAt int64
+		if err := rows.Scan(&peerID, &ts, &checkAt); err != nil {
+			return 0, 0, err
+		}
+		if seenPeer[peerID] {
+			continue
+		}
+		seenPeer[peerID] = true
+		if checkAt > nowMs && (earliestAt == 0 || checkAt < earliestAt) {
+			earliestAt = checkAt
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return 0, 0, err
+	}
+	if earliestAt <= nowMs {
+		return 0, 0, nil
+	}
+	secs := int((earliestAt - nowMs + 999) / 1000)
+	if secs < 1 {
+		secs = 1
+	}
+	return earliestAt, secs, nil
+}
+
+func activeOutboundRTOTx(ctx context.Context, tx *sql.Tx, project, actorID string, nowMs int64) ([]RTODueMessage, error) {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT seq, id, COALESCE(recipient,''), thread_id, subject, created_at, mode, rto_seconds, ttl_seconds, expires_at
+		FROM messages
+		WHERE project_id=? AND sender=? AND rto_seconds>0
+		  AND (expires_at=0 OR expires_at>?)
+		  AND NOT EXISTS(
+		    SELECT 1 FROM message_acknowledgments ma
+		    WHERE ma.message_id=messages.id
+		      AND ((messages.recipient IS NOT NULL AND ma.principal_id=messages.recipient)
+		        OR (messages.recipient IS NULL AND ma.principal_id<>messages.sender))
+		  )
+		ORDER BY seq ASC`, project, actorID, nowMs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var due []RTODueMessage
+	for rows.Next() {
+		var item RTODueMessage
+		if err := rows.Scan(&item.Sequence, &item.ID, &item.Recipient, &item.ThreadID, &item.Subject, &item.CreatedAt, &item.Mode, &item.RTOSeconds, &item.TTLSeconds, &item.ExpiresAt); err != nil {
+			return nil, err
+		}
+		item.DueAt = item.CreatedAt + int64(item.RTOSeconds)*1000
+		if nowMs >= item.DueAt {
+			nextRTO := item.RTOSeconds * 2
+			for step := item.RTOSeconds; step > 0 && nowMs >= item.DueAt+int64(step)*1000 && nextRTO < maxPollIntervalSeconds; step *= 2 {
+				nextRTO *= 2
+			}
+			if nextRTO > maxPollIntervalSeconds && item.RTOSeconds <= maxPollIntervalSeconds {
+				nextRTO = maxPollIntervalSeconds
+			}
+			item.NextRTOSeconds = nextRTO
+			due = append(due, item)
+		}
+	}
+	return due, rows.Err()
+}
+
 // InboxMessage carries a bounded preview; full authorized bodies remain
 // available through gossip_read by message reference.
 type InboxMessage struct {
-	Sequence  int64  `json:"sequence"`
-	ID        string `json:"id"`
-	Hash      string `json:"hash,omitempty"`
-	Sender    string `json:"sender"`
-	Recipient string `json:"recipient,omitempty"`
-	ThreadID  string `json:"thread_id"`
-	Subject   string `json:"subject"`
-	Preview   string `json:"preview"`
-	CreatedAt int64  `json:"created_at"`
+	Sequence          int64  `json:"sequence"`
+	ID                string `json:"id"`
+	Hash              string `json:"hash,omitempty"`
+	Sender            string `json:"sender"`
+	Recipient         string `json:"recipient,omitempty"`
+	ThreadID          string `json:"thread_id"`
+	Subject           string `json:"subject"`
+	Preview           string `json:"preview"`
+	CreatedAt         int64  `json:"created_at"`
+	CheckAfterSeconds int    `json:"check_after_seconds,omitempty"`
+	CheckAfterAt      int64  `json:"check_after_at,omitempty"`
+	Mode              string `json:"mode,omitempty"`
+	TTLSeconds        int    `json:"ttl_seconds,omitempty"`
+	ExpiresAt         int64  `json:"expires_at,omitempty"`
+	RTOSeconds        int    `json:"rto_seconds,omitempty"`
+	Expired           bool   `json:"expired,omitempty"`
 }
 
 // ProjectReplica records a remote MCP host that has synchronized this project.
@@ -199,14 +305,15 @@ func (s *Store) syncProject(ctx context.Context, project, token, replicaID, fing
 		}
 		queryArgs := append([]any{project, seqVal}, visArgs[1:]...)
 		queryArgs = append(queryArgs, limit+1)
-		rows, e := tx.QueryContext(ctx, `SELECT seq,id,sender,COALESCE(recipient,''),thread_id,subject,body,created_at FROM messages WHERE project_id=? AND `+seqOp+` AND `+visibleMessageSQL("messages")+` ORDER BY seq LIMIT ?`, queryArgs...)
+		rows, e := tx.QueryContext(ctx, `SELECT seq,id,sender,COALESCE(recipient,''),thread_id,subject,body,created_at,check_after_seconds,check_after_at,mode,ttl_seconds,expires_at,rto_seconds FROM messages WHERE project_id=? AND `+seqOp+` AND `+visibleMessageSQL("messages")+` ORDER BY seq LIMIT ?`, queryArgs...)
 		if e != nil {
 			return frame, e
 		}
+		nowMs := time.Now().UnixMilli()
 		for rows.Next() {
 			var m InboxMessage
 			var body string
-			if e = rows.Scan(&m.Sequence, &m.ID, &m.Sender, &m.Recipient, &m.ThreadID, &m.Subject, &body, &m.CreatedAt); e != nil {
+			if e = rows.Scan(&m.Sequence, &m.ID, &m.Sender, &m.Recipient, &m.ThreadID, &m.Subject, &body, &m.CreatedAt, &m.CheckAfterSeconds, &m.CheckAfterAt, &m.Mode, &m.TTLSeconds, &m.ExpiresAt, &m.RTOSeconds); e != nil {
 				rows.Close()
 				return frame, e
 			}
@@ -224,6 +331,7 @@ func (s *Store) syncProject(ctx context.Context, project, token, replicaID, fing
 				Body:      body,
 				CreatedAt: m.CreatedAt,
 			})
+			m.Expired = m.ExpiresAt > 0 && nowMs >= m.ExpiresAt
 			runes := []rune(body)
 			if len(runes) > 240 {
 				body = string(runes[:240]) + "…"
@@ -242,6 +350,22 @@ func (s *Store) syncProject(ctx context.Context, project, token, replicaID, fing
 		}
 		if len(frame.InboxMessages) == 0 {
 			frame.NextInboxCursor = *messageAfter
+		}
+		if etaAt, etaSecs, etaErr := activePeerCheckAfterTx(ctx, tx, project, actor, nowMs); etaErr != nil {
+			return frame, etaErr
+		} else if etaAt > 0 {
+			frame.CheckAfterAt = etaAt
+			frame.CheckAfterSeconds = etaSecs
+		}
+		if peerModes, pmErr := listPeerModesTx(ctx, tx, project); pmErr != nil {
+			return frame, pmErr
+		} else if len(peerModes) > 0 {
+			frame.PeerModes = peerModes
+		}
+		if rtoDue, rtoErr := activeOutboundRTOTx(ctx, tx, project, actor.ID, nowMs); rtoErr != nil {
+			return frame, rtoErr
+		} else if len(rtoDue) > 0 {
+			frame.RTODueMessages = rtoDue
 		}
 	}
 

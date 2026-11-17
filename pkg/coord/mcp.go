@@ -303,6 +303,59 @@ func mcpServer(store Backend, project, token string, keeper *leaseKeeper, outbox
 		}
 		return strings.TrimSpace(str(a, "last_msg_hash"))
 	}
+	durationArg := func(a map[string]any, label string, keys ...string) (int, error) {
+		for _, k := range keys {
+			if raw, ok := a[k]; ok && raw != nil {
+				return ParseDurationSeconds(label, raw)
+			}
+		}
+		return 0, nil
+	}
+	messageOptionsFromArgs := func(a map[string]any) (MessageOptions, error) {
+		mode, err := NormalizeAgentMode(str(a, "mode"))
+		if err != nil {
+			return MessageOptions{}, err
+		}
+		checkAfter, err := durationArg(a, "checkAfter", "checkAfter", "check_after", "check_after_seconds")
+		if err != nil {
+			return MessageOptions{}, err
+		}
+		ttl, err := durationArg(a, "ttl", "ttl", "ttl_seconds")
+		if err != nil {
+			return MessageOptions{}, err
+		}
+		rto, err := durationArg(a, "rto", "rto", "rto_seconds")
+		if err != nil {
+			return MessageOptions{}, err
+		}
+		return MessageOptions{
+			Mode:              mode,
+			CheckAfterSeconds: checkAfter,
+			TTLSeconds:        ttl,
+			RTOSeconds:        rto,
+		}, nil
+	}
+	sendMessage := func(ctx context.Context, recipient, thread, subject, body, reqID string, a map[string]any) (Message, error) {
+		opts, err := messageOptionsFromArgs(a)
+		if err != nil {
+			return Message{}, err
+		}
+		if opts.Mode != "" || opts.CheckAfterSeconds > 0 || opts.TTLSeconds > 0 || opts.RTOSeconds > 0 {
+			if mo, ok := store.(interface {
+				SendMessageWithOptions(context.Context, string, string, string, string, string, string, string, MessageOptions) (Message, error)
+			}); ok {
+				return mo.SendMessageWithOptions(ctx, project, token, recipient, thread, subject, body, reqID, opts)
+			}
+			if opts.CheckAfterSeconds > 0 {
+				if ca, ok := store.(interface {
+					SendMessageWithCheckAfter(context.Context, string, string, string, string, string, string, string, int) (Message, error)
+				}); ok {
+					return ca.SendMessageWithCheckAfter(ctx, project, token, recipient, thread, subject, body, reqID, opts.CheckAfterSeconds)
+				}
+			}
+		}
+		return store.SendMessageWithID(ctx, project, token, recipient, thread, subject, body, reqID)
+	}
 	flag := func(a map[string]any, k string, defaultVal bool) bool {
 		if v, ok := a[k].(bool); ok {
 			return v
@@ -507,23 +560,51 @@ func mcpServer(store Backend, project, token string, keeper *leaseKeeper, outbox
 			p, err := store.CurrentPlan(ctx, project, token)
 			return result(p, err)
 		})
-	srv.AddTool(mcp.NewTool("gossip_agents", mcp.WithDescription("List enrolled project principals, assign an explicit parent to preserve an agent/subagent tree, or revoke a principal's project credential. Parentage is display metadata and grants no permissions. Hierarchy changes require project owner authority."),
-		mcp.WithString("operation", mcp.Description("list (default), revoke, or parent")), mcp.WithString("principal_id", mcp.Description("Principal to revoke or the child whose parent changes")), mcp.WithString("parent_id", mcp.Description("Parent principal ID; empty detaches the child at the project root"))),
+	srv.AddTool(mcp.NewTool("gossip_agents", mcp.WithDescription("List enrolled project principals, advertise or inspect active peer coordination modes (working, planning, decision, communication), assign an explicit parent to preserve an agent/subagent tree, or revoke a principal's project credential. Hierarchy changes and revocations require project owner authority."),
+		mcp.WithString("operation", mcp.Description("list (default), set_mode, modes, revoke, or parent")),
+		mcp.WithString("principal_id", mcp.Description("Principal to revoke or the child whose parent changes")),
+		mcp.WithString("parent_id", mcp.Description("Parent principal ID; empty detaches the child at the project root")),
+		mcp.WithString("mode", mcp.Description("For set_mode: working, planning, decision, or communication")),
+		mcp.WithString("checkAfter", mcp.Description("For set_mode: optional ETA hint (e.g. \"4m\", \"90s\", or seconds) before peers should check back")),
+		mcp.WithString("ttl", mcp.Description("For set_mode (communication): default message time-to-live (e.g. \"10m\" or seconds)")),
+		mcp.WithString("rto", mcp.Description("For set_mode (communication): default retransmission timeout before follow-up (e.g. \"60s\" or seconds)"))),
 		func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			a := args(r)
-			if str(a, "operation") == "parent" {
+			switch str(a, "operation") {
+			case "parent":
 				err := store.SetAgentParent(ctx, project, token, str(a, "principal_id"), str(a, "parent_id"))
 				return result(map[string]bool{"updated": err == nil}, err)
-			}
-			if str(a, "operation") == "revoke" {
+			case "revoke":
 				err := store.RevokePrincipal(ctx, project, token, str(a, "principal_id"))
 				return result(map[string]bool{"revoked": err == nil}, err)
-			}
-			if op := str(a, "operation"); op != "" && op != "list" {
+			case "set_mode":
+				opts, err := messageOptionsFromArgs(a)
+				if err != nil {
+					return result(nil, err)
+				}
+				mb, ok := store.(interface {
+					SetPeerMode(context.Context, string, string, string, int, int, int) (PeerMode, error)
+				})
+				if !ok {
+					return result(nil, errors.New("peer mode advertisement is unavailable on this backend"))
+				}
+				v, err := mb.SetPeerMode(ctx, project, token, opts.Mode, opts.CheckAfterSeconds, opts.TTLSeconds, opts.RTOSeconds)
+				return result(v, err)
+			case "modes":
+				mb, ok := store.(interface {
+					ListPeerModes(context.Context, string, string) ([]PeerMode, error)
+				})
+				if !ok {
+					return result(nil, errors.New("peer mode inspection is unavailable on this backend"))
+				}
+				v, err := mb.ListPeerModes(ctx, project, token)
+				return result(v, err)
+			case "", "list":
+				v, err := store.ListPrincipals(ctx, project, token)
+				return result(v, err)
+			default:
 				return result(nil, fmt.Errorf("unknown agent operation"))
 			}
-			v, err := store.ListPrincipals(ctx, project, token)
-			return result(v, err)
 		})
 	srv.AddTool(mcp.NewTool("gossip_access", mcp.WithDescription("List, grant, or revoke client certificate access to this project. Granting and revoking require the owner role; members still need a project credential."),
 		mcp.WithString("operation", mcp.Required(), mcp.Description("list, grant, or revoke")), mcp.WithString("fingerprint", mcp.Description("SHA-256 fingerprint of the client certificate")), mcp.WithInteger("expires_at", mcp.Description("Optional future Unix milliseconds; zero grants indefinitely"))),
@@ -1036,11 +1117,15 @@ func mcpServer(store Backend, project, token string, keeper *leaseKeeper, outbox
 				return result(nil, fmt.Errorf("unknown review operation"))
 			}
 		})
-	srv.AddTool(mcp.NewTool("gossip_send", mcp.WithDescription("Send a project message, a group channel message (via channel_id), or a 1-on-1 direct message (via recipient)."),
+	srv.AddTool(mcp.NewTool("gossip_send", mcp.WithDescription("Send a project message, a group channel message (via channel_id), or a 1-on-1 direct message (via recipient). Optionally advertise mode (working, planning, decision, communication), checkAfter ETA (e.g. \"3m\" or 180), or TCP-like ttl / rto for communication mode."),
 		mcp.WithString("operation", mcp.Description("send (default), enqueue, outbox, retry, or prune_delivered")),
 		mcp.WithString("recipient", mcp.Description("Principal ID for a 1-on-1 direct message, or empty for broadcast / channel")),
 		mcp.WithString("channel_id", mcp.Description("Group channel ID (sets thread_id to channel:<id>)")),
-		mcp.WithString("thread_id"), mcp.WithString("subject"), mcp.WithString("body"), mcp.WithInteger("limit"), mcp.WithString("request_id", mcp.Description("Stable unique ID for safe retries of the same message"))),
+		mcp.WithString("thread_id"), mcp.WithString("subject"), mcp.WithString("body"), mcp.WithInteger("limit"), mcp.WithString("request_id", mcp.Description("Stable unique ID for safe retries of the same message")),
+		mcp.WithString("mode", mcp.Description("Optional advertised peer mode: working, planning, decision, or communication")),
+		mcp.WithString("checkAfter", mcp.Description("Optional follow-up ETA hint (duration like \"3m\", \"90s\" or seconds) telling peers when to check back (used in planning/decision or working mode)")),
+		mcp.WithString("ttl", mcp.Description("Optional message time-to-live (e.g. \"10m\" or seconds) for communication mode")),
+		mcp.WithString("rto", mcp.Description("Optional retransmission timeout (e.g. \"60s\" or seconds) before unacknowledged follow-up in communication mode"))),
 		func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			a := args(r)
 			threadID := str(a, "thread_id")
@@ -1049,7 +1134,7 @@ func mcpServer(store Backend, project, token string, keeper *leaseKeeper, outbox
 			}
 			switch str(a, "operation") {
 			case "", "send":
-				message, err := store.SendMessageWithID(ctx, project, token, str(a, "recipient"), threadID, str(a, "subject"), str(a, "body"), str(a, "request_id"))
+				message, err := sendMessage(ctx, str(a, "recipient"), threadID, str(a, "subject"), str(a, "body"), str(a, "request_id"), a)
 				return result(message, err)
 			case "enqueue", "outbox", "retry", "prune_delivered":
 				if outbox == nil {
@@ -1079,6 +1164,8 @@ func mcpServer(store Backend, project, token string, keeper *leaseKeeper, outbox
 		mcp.WithString("report_id"), mcp.WithString("message_id"),
 		mcp.WithString("last_read_hash", mcp.Description("Hash of the last read message; returns that 1 previous message plus all newer ones. Omit to deliver all visible messages.")),
 		mcp.WithString("last_msg_hash", mcp.Description("Alias for last_read_hash")),
+		mcp.WithString("mode", mcp.Description("For operation=acknowledge: optional advertised peer mode (e.g. \"working\", \"planning\", \"decision\", \"communication\")")),
+		mcp.WithString("checkAfter", mcp.Description("For operation=acknowledge: optional ETA hint (e.g. \"4m\", \"90s\", or seconds) telling the sender how long finishing may take before checking back")),
 		mcp.WithInteger("after"), mcp.WithInteger("limit"), mcp.WithInteger("offset", mcp.Description("Report offset in Unicode code points")), mcp.WithInteger("max_chars", mcp.Description("Report excerpt size, 1 to 16384; defaults to 2048"))),
 		func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			a := args(r)
@@ -1095,6 +1182,26 @@ func mcpServer(store Backend, project, token string, keeper *leaseKeeper, outbox
 				return result(messages, err)
 			}
 			if str(a, "operation") == "acknowledge" {
+				opts, err := messageOptionsFromArgs(a)
+				if err != nil {
+					return result(nil, err)
+				}
+				if opts.Mode != "" || opts.CheckAfterSeconds > 0 {
+					if ao, ok := store.(interface {
+						AcknowledgeMessageWithOptions(context.Context, string, string, string, MessageOptions) (MessageAcknowledgment, error)
+					}); ok {
+						v, err := ao.AcknowledgeMessageWithOptions(ctx, project, token, str(a, "message_id"), opts)
+						return result(v, err)
+					}
+					if opts.CheckAfterSeconds > 0 {
+						if ca, ok := store.(interface {
+							AcknowledgeMessageWithCheckAfter(context.Context, string, string, string, int) (MessageAcknowledgment, error)
+						}); ok {
+							v, err := ca.AcknowledgeMessageWithCheckAfter(ctx, project, token, str(a, "message_id"), opts.CheckAfterSeconds)
+							return result(v, err)
+						}
+					}
+				}
 				v, err := store.AcknowledgeMessage(ctx, project, token, str(a, "message_id"))
 				return result(v, err)
 			}
@@ -1150,6 +1257,35 @@ func mcpServer(store Backend, project, token string, keeper *leaseKeeper, outbox
 					hasNewMsg := len(v.InboxMessages) > 0 && !(lastHash != "" && len(v.InboxMessages) == 1 && strings.EqualFold(v.InboxMessages[0].Hash, lastHash))
 					hadActivity := len(v.Events) > 0 || hasNewMsg
 					v.NextIdlePolls, v.RecommendedPollSeconds = RecommendedPollInterval(num(a, "idle_polls", 0), hadActivity)
+					if v.CheckAfterSeconds > 0 {
+						eta := v.CheckAfterSeconds
+						if eta < minPollIntervalSeconds {
+							eta = minPollIntervalSeconds
+						}
+						if eta > maxPollIntervalSeconds {
+							eta = maxPollIntervalSeconds
+						}
+						v.RecommendedPollSeconds = eta
+					}
+					if len(v.RTODueMessages) > 0 {
+						minRTO := 0
+						for _, d := range v.RTODueMessages {
+							if d.NextRTOSeconds > 0 && (minRTO == 0 || d.NextRTOSeconds < minRTO) {
+								minRTO = d.NextRTOSeconds
+							}
+						}
+						if minRTO > 0 {
+							if minRTO < minPollIntervalSeconds {
+								minRTO = minPollIntervalSeconds
+							}
+							if minRTO > maxPollIntervalSeconds {
+								minRTO = maxPollIntervalSeconds
+							}
+							if v.CheckAfterSeconds == 0 || minRTO < v.RecommendedPollSeconds {
+								v.RecommendedPollSeconds = minRTO
+							}
+						}
+					}
 				}
 				return result(v, err)
 			case "", "events":
@@ -1208,6 +1344,10 @@ func mcpServer(store Backend, project, token string, keeper *leaseKeeper, outbox
 		mcp.WithString("note"), mcp.WithString("subject"), mcp.WithString("body"), mcp.WithString("request_id"),
 		mcp.WithString("last_read_hash", mcp.Description("For operation=messages: hash of the last read message; returns that 1 previous message plus newer ones. Omit to fetch all recent messages.")),
 		mcp.WithString("last_msg_hash", mcp.Description("Alias for last_read_hash")),
+		mcp.WithString("mode", mcp.Description("For operation=send: optional advertised peer mode (working, planning, decision, or communication)")),
+		mcp.WithString("checkAfter", mcp.Description("For operation=send: optional ETA hint (e.g. \"4m\", \"90s\", or seconds) telling peers when to check back")),
+		mcp.WithString("ttl", mcp.Description("For operation=send (communication mode): optional message time-to-live (e.g. \"10m\" or seconds)")),
+		mcp.WithString("rto", mcp.Description("For operation=send (communication mode): optional retransmission timeout (e.g. \"60s\" or seconds)")),
 		mcp.WithInteger("after"), mcp.WithInteger("limit")),
 		func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			if channelBackend == nil {
@@ -1231,7 +1371,7 @@ func mcpServer(store Backend, project, token string, keeper *leaseKeeper, outbox
 				v, err := channelBackend.RespondChannelMembership(ctx, project, token, str(a, "channel_id"), str(a, "principal_id"), str(a, "operation"))
 				return result(v, err)
 			case "send":
-				v, err := store.SendMessageWithID(ctx, project, token, "", channelThreadID(str(a, "channel_id")), str(a, "subject"), str(a, "body"), str(a, "request_id"))
+				v, err := sendMessage(ctx, "", channelThreadID(str(a, "channel_id")), str(a, "subject"), str(a, "body"), str(a, "request_id"), a)
 				return result(v, err)
 			case "messages":
 				if lastHash := lastHashArg(a); lastHash != "" {

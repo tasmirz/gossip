@@ -170,9 +170,21 @@ func Open(path string) (*Store, error) {
 			return nil, e
 		}
 	}
-	// Add descriptive MCP client fields to existing databases without replacing their data.
-	for _, column := range []struct{ name, ddl string }{{"client_name", `ALTER TABLE agent_sessions ADD COLUMN client_name TEXT NOT NULL DEFAULT ''`}, {"client_version", `ALTER TABLE agent_sessions ADD COLUMN client_version TEXT NOT NULL DEFAULT ''`}} {
-		rows, queryErr := db.Query(`PRAGMA table_info(agent_sessions)`)
+	// Add descriptive MCP client fields and message checkAfter metadata to existing databases.
+	for _, column := range []struct{ table, name, ddl string }{
+		{"agent_sessions", "client_name", `ALTER TABLE agent_sessions ADD COLUMN client_name TEXT NOT NULL DEFAULT ''`},
+		{"agent_sessions", "client_version", `ALTER TABLE agent_sessions ADD COLUMN client_version TEXT NOT NULL DEFAULT ''`},
+		{"messages", "check_after_seconds", `ALTER TABLE messages ADD COLUMN check_after_seconds INTEGER NOT NULL DEFAULT 0`},
+		{"messages", "check_after_at", `ALTER TABLE messages ADD COLUMN check_after_at INTEGER NOT NULL DEFAULT 0`},
+		{"messages", "mode", `ALTER TABLE messages ADD COLUMN mode TEXT NOT NULL DEFAULT ''`},
+		{"messages", "ttl_seconds", `ALTER TABLE messages ADD COLUMN ttl_seconds INTEGER NOT NULL DEFAULT 0`},
+		{"messages", "expires_at", `ALTER TABLE messages ADD COLUMN expires_at INTEGER NOT NULL DEFAULT 0`},
+		{"messages", "rto_seconds", `ALTER TABLE messages ADD COLUMN rto_seconds INTEGER NOT NULL DEFAULT 0`},
+		{"message_acknowledgments", "check_after_seconds", `ALTER TABLE message_acknowledgments ADD COLUMN check_after_seconds INTEGER NOT NULL DEFAULT 0`},
+		{"message_acknowledgments", "check_after_at", `ALTER TABLE message_acknowledgments ADD COLUMN check_after_at INTEGER NOT NULL DEFAULT 0`},
+		{"message_acknowledgments", "mode", `ALTER TABLE message_acknowledgments ADD COLUMN mode TEXT NOT NULL DEFAULT ''`},
+	} {
+		rows, queryErr := db.Query(`PRAGMA table_info(` + column.table + `)`)
 		if queryErr != nil {
 			db.Close()
 			return nil, queryErr
@@ -699,7 +711,10 @@ CREATE TABLE IF NOT EXISTS messages (
   seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE,
   project_id TEXT NOT NULL REFERENCES projects(id), sender TEXT NOT NULL REFERENCES principals(id),
   recipient TEXT REFERENCES principals(id), thread_id TEXT NOT NULL,
-  subject TEXT NOT NULL, body TEXT NOT NULL, created_at INTEGER NOT NULL
+  subject TEXT NOT NULL, body TEXT NOT NULL, created_at INTEGER NOT NULL,
+  check_after_seconds INTEGER NOT NULL DEFAULT 0, check_after_at INTEGER NOT NULL DEFAULT 0,
+  mode TEXT NOT NULL DEFAULT '', ttl_seconds INTEGER NOT NULL DEFAULT 0,
+  expires_at INTEGER NOT NULL DEFAULT 0, rto_seconds INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS messages_project_seq ON messages(project_id,seq);
 CREATE TABLE IF NOT EXISTS message_requests (
@@ -711,7 +726,21 @@ CREATE TABLE IF NOT EXISTS message_acknowledgments (
   message_id TEXT NOT NULL REFERENCES messages(id),
   principal_id TEXT NOT NULL REFERENCES principals(id),
   acknowledged_at INTEGER NOT NULL,
+  check_after_seconds INTEGER NOT NULL DEFAULT 0,
+  check_after_at INTEGER NOT NULL DEFAULT 0,
+  mode TEXT NOT NULL DEFAULT '',
   PRIMARY KEY(message_id,principal_id)
+);
+CREATE TABLE IF NOT EXISTS peer_modes (
+  project_id TEXT NOT NULL REFERENCES projects(id),
+  principal_id TEXT NOT NULL REFERENCES principals(id),
+  mode TEXT NOT NULL DEFAULT '',
+  check_after_seconds INTEGER NOT NULL DEFAULT 0,
+  check_after_at INTEGER NOT NULL DEFAULT 0,
+  ttl_seconds INTEGER NOT NULL DEFAULT 0,
+  rto_seconds INTEGER NOT NULL DEFAULT 0,
+  updated_at INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY(project_id,principal_id)
 );
 CREATE TABLE IF NOT EXISTS candidate_reports (
   id TEXT PRIMARY KEY, task_id TEXT NOT NULL REFERENCES tasks(id), attempt INTEGER NOT NULL,
