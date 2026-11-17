@@ -18,6 +18,7 @@ Instead, Gossip separates responsibilities strictly:
   - Manage the local machine's Device Registry (`default` or named profiles)
 - **MCP Server (`gossip coord-mcp`)**:
   - Reads already-enrolled projects from the local Device Registry (or `--remote` / `--credential-file`)
+  - For **local-only** sessions on the home machine (never LAN/FRP peers), `gossip_projects` also lists `local_available` projects on this machine and supports `operation="join"` with `user_permission=true` so the local agent can join a local project/conversation **only after getting the user's explicit permission**
   - Coordinates plans, tasks, messages, channels, file locks, worktrees, diffs, and reviews inside authorized projects
   - Lets project owners manage **existing** project certificate grants (`gossip_access`), roles (`gossip_roles`), permissions (`gossip_permissions`), and project coordination settings (`gossip_settings`)
 
@@ -157,7 +158,7 @@ Used only when an agent should bootstrap new projects from a local Git checkout 
 
 | Category | Tools | Purpose |
 | --- | --- | --- |
-| **Registry & Local Locks** | `gossip_projects`, `gossip_file_locks` | List authorized projects/profiles; reserve/renew/release local worktree file path locks |
+| **Registry & Local Locks** | `gossip_projects`, `gossip_file_locks` | List authorized connections and local-only `local_available` projects, or `join` a local project after explicit `user_permission=true`; reserve/renew/release local worktree file path locks |
 | **Plans & Context** | `gossip_plan`, `gossip_join`, `gossip_project_context` | Read, publish, acknowledge, or delete plans/revisions; read or publish project stories/invariants/decisions |
 | **Tasks & Execution** | `gossip_task`, `gossip_workspace`, `gossip_usage`, `gossip_personal_todos` | Create, inspect, assign, claim, renew, reconcile, and request review on tasks; bind Git worktrees; log token/cost usage; manage personal to-dos |
 | **Submissions & Review** | `gossip_submit`, `gossip_review`, `gossip_integration` | Capture diffs / submit reports (`full_code` or `diagram_report`) and queued candidates; accept or request rework by digest; record integration checks |

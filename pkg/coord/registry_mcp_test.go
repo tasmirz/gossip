@@ -2,6 +2,8 @@ package coord
 
 import (
 	"context"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -37,5 +39,94 @@ func TestRegistryMCPResolvesEachRequestAndExposesDiscovery(t *testing.T) {
 	}
 	if len(result.Content) != 1 || result.Content[0].(mcp.TextContent).Text != "selected:read" {
 		t.Fatalf("unexpected result %#v", result.Content)
+	}
+}
+
+func TestRegistryMCPProjectsJoinRequiresHandlerAndForwardsPermission(t *testing.T) {
+	noopResolve := func(context.Context, string, string, string) (*server.MCPServer, error) {
+		return server.NewMCPServer("unused", "1"), nil
+	}
+	noopList := func(context.Context) (any, error) {
+		return map[string]any{"connections": []any{}}, nil
+	}
+
+	// Without JoinLocal handler, operation=join must be refused.
+	remoteOnly := RegistryMCPServer("remote-prof", noopList, noopResolve)
+	res, err := remoteOnly.ListTools()["gossip_projects"].Handler(context.Background(), mcp.CallToolRequest{
+		Params: mcp.CallToolParams{Arguments: map[string]any{"operation": "join", "project": "p1", "user_permission": true}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.IsError || !strings.Contains(res.Content[0].(mcp.TextContent).Text, "LAN and FRP") {
+		t.Fatalf("expected LAN/FRP rejection without JoinLocal, got %#v", res.Content)
+	}
+
+	var gotProfile, gotProject, gotAgent, gotNote string
+	var gotPerm bool
+	localSrv := RegistryMCPServerWithOptions(RegistryMCPOptions{
+		DefaultProfile: "gesture",
+		Projects:       noopList,
+		Resolve:        noopResolve,
+		JoinLocal: func(_ context.Context, profile, project, agentName, permissionNote string, userPermission bool) (any, error) {
+			gotProfile, gotProject, gotAgent, gotNote, gotPerm = profile, project, agentName, permissionNote, userPermission
+			return map[string]string{"status": "joined", "project_id": project}, nil
+		},
+	})
+	res, err = localSrv.ListTools()["gossip_projects"].Handler(context.Background(), mcp.CallToolRequest{
+		Params: mcp.CallToolParams{Arguments: map[string]any{
+			"operation":       "join",
+			"project":         "gossip",
+			"agent_name":      "antigravity",
+			"user_permission": true,
+			"permission_note": "User approved",
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError || gotProfile != "gesture" || gotProject != "gossip" || gotAgent != "antigravity" || gotNote != "User approved" || !gotPerm {
+		t.Fatalf("unexpected join forwarding: isErr=%v profile=%q project=%q agent=%q note=%q perm=%v content=%#v", res.IsError, gotProfile, gotProject, gotAgent, gotNote, gotPerm, res.Content)
+	}
+}
+
+func TestStoreEnrollLocalWorkerRequiresLocalAuthorityAndEnrollsWorker(t *testing.T) {
+	store, err := Open(filepath.Join(t.TempDir(), "coord.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	proj, ownerCred, err := store.CreateProject(context.Background(), "gesture", "owner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Mismatched home authority context must be rejected.
+	badCtx := withLocalOwnerAuthority(context.Background(), "node_foreign")
+	if _, err := store.EnrollLocalWorker(badCtx, proj.ID, "antigravity", "ok"); err != ErrUnauthorized {
+		t.Fatalf("expected ErrUnauthorized for non-local context, got %v", err)
+	}
+
+	cred, err := store.EnrollLocalWorker(context.Background(), proj.ID, "antigravity", "User approved join")
+	if err != nil {
+		t.Fatalf("EnrollLocalWorker: %v", err)
+	}
+	if cred.PrincipalID == "" || cred.Token == "" {
+		t.Fatalf("expected non-empty worker credential, got %+v", cred)
+	}
+	actor, err := store.WhoAmI(context.Background(), proj.ID, cred.Token)
+	if err != nil {
+		t.Fatalf("WhoAmI: %v", err)
+	}
+	if actor.Role != "worker" || actor.Name != "antigravity" {
+		t.Fatalf("expected worker role, got %+v", actor)
+	}
+	// Worker cannot manage membership (must remain worker, not owner).
+	if _, err := store.AddPrincipal(context.Background(), proj.ID, cred.Token, "extra", "worker"); err != ErrUnauthorized {
+		t.Fatalf("worker must not gain membership.manage/owner rights, got %v", err)
+	}
+	// Owner remains intact.
+	if valid, err := store.CredentialValid(context.Background(), proj.ID, ownerCred.Token); err != nil || !valid {
+		t.Fatalf("owner credential broke: valid=%v err=%v", valid, err)
 	}
 }

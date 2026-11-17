@@ -237,6 +237,96 @@ func (s *Store) SelectLocalDashboardOwner(ctx context.Context, projectID, princi
 	return p, nil
 }
 
+// EnrollLocalWorker enrolls a new local worker principal inside the local home
+// database so an explicitly approved local MCP session can join conversations
+// and coordination workflows without sharing or returning owner credentials.
+func (s *Store) EnrollLocalWorker(ctx context.Context, projectID, workerName, permissionNote string) (Credential, error) {
+	if err := s.verifyLocalAuthorityContext(ctx); err != nil {
+		return Credential{}, err
+	}
+	projectID = strings.TrimSpace(projectID)
+	if projectID == "" {
+		return Credential{}, errors.New("project_id is required")
+	}
+	workerName = strings.TrimSpace(workerName)
+	if workerName == "" {
+		workerName = "local-agent"
+	}
+	if len(workerName) > 128 {
+		workerName = workerName[:128]
+	}
+	permissionNote = strings.TrimSpace(permissionNote)
+	if len(permissionNote) > 256 {
+		permissionNote = permissionNote[:256]
+	}
+
+	var cred Credential
+	var err error
+	if cred.PrincipalID, err = randomID("principal_"); err != nil {
+		return Credential{}, err
+	}
+	var hash []byte
+	if cred.Token, hash, err = newToken(); err != nil {
+		return Credential{}, err
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Credential{}, err
+	}
+	defer tx.Rollback()
+
+	var exists string
+	if err = tx.QueryRowContext(ctx, `SELECT id FROM projects WHERE id=?`, projectID).Scan(&exists); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return Credential{}, ErrNotFound
+		}
+		return Credential{}, err
+	}
+
+	var ownerID string
+	err = tx.QueryRowContext(ctx, `
+		SELECT p.id
+		FROM local_dashboard_owners l
+		JOIN principals p ON p.project_id = l.project_id AND p.id = l.principal_id
+		WHERE l.project_id=? AND p.role='owner' AND p.revoked=0`, projectID).Scan(&ownerID)
+	if errors.Is(err, sql.ErrNoRows) {
+		err = tx.QueryRowContext(ctx, `
+			SELECT id
+			FROM principals
+			WHERE project_id=? AND role='owner' AND revoked=0
+			ORDER BY name ASC, id ASC LIMIT 1`, projectID).Scan(&ownerID)
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		return Credential{}, ErrUnauthorized
+	}
+	if err != nil {
+		return Credential{}, err
+	}
+
+	if _, err = tx.ExecContext(ctx, `INSERT INTO principals(id,project_id,name,role,token_hash) VALUES(?,?,?,?,?)`, cred.PrincipalID, projectID, workerName, "worker", hash); err != nil {
+		return Credential{}, err
+	}
+	if err = grantInitialPermissions(ctx, tx, projectID, ownerID, cred.PrincipalID, "worker"); err != nil {
+		return Credential{}, err
+	}
+	meta := map[string]string{
+		"name":   workerName,
+		"role":   "worker",
+		"source": "local_mcp_join",
+	}
+	if permissionNote != "" {
+		meta["permission_note"] = permissionNote
+	}
+	if err = event(ctx, tx, projectID, ownerID, "principal.enrolled", cred.PrincipalID, meta); err != nil {
+		return Credential{}, err
+	}
+	if err = tx.Commit(); err != nil {
+		return Credential{}, err
+	}
+	return cred, nil
+}
+
 // FindLocalProjectsByCheckout checks whether any local project already tracks
 // the inspected checkout path or any of its normalized Git remotes.
 func (s *Store) FindLocalProjectsByCheckout(ctx context.Context, localPath string, remoteHints []string) ([]ProjectSuggestion, error) {

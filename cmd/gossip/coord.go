@@ -508,14 +508,17 @@ func runRegistryCoordMCP(dbPath, defaultProfile string, hostCapabilities []strin
 	if err != nil {
 		return err
 	}
-	if len(connections) == 0 {
-		return errors.New("no project connections are configured; add one in the Gossip dashboard or import with `gossip coord-connection add`")
-	}
 	local, err := coord.Open(dbPath)
 	if err != nil {
 		return err
 	}
 	defer local.Close()
+	if len(connections) == 0 {
+		localProjects, lerr := local.ListLocalDashboardProjects(context.Background())
+		if lerr != nil || len(localProjects) == 0 {
+			return errors.New("no project connections or local projects are configured; add one in the Gossip dashboard or import with `gossip coord-connection add`")
+		}
+	}
 	type registryBackend interface {
 		coord.Backend
 		WhoAmI(context.Context, string, string) (coord.Principal, error)
@@ -601,36 +604,13 @@ func runRegistryCoordMCP(dbPath, defaultProfile string, hostCapabilities []strin
 		return v.adapter.Server, nil
 	}
 	projects := func(ctx context.Context) (any, error) {
-		items, e := registry.List(ctx)
-		if e != nil {
-			return nil, e
-		}
-		type status struct {
-			coord.DeviceConnection
-			State string            `json:"state"`
-			Inbox coord.InboxStatus `json:"inbox"`
-		}
-		out := make([]status, 0, len(items))
-		for _, c := range items {
-			token, te := registry.Token(c)
-			state := "unavailable"
-			if te == nil {
-				_, oe := open(c, token)
-				if oe == nil {
-					state = "ready"
-				}
-			}
-			c.SecretID = ""
-			entry := status{DeviceConnection: c, State: state}
-			if state == "ready" {
-				entry.Inbox, e = registry.InboxStatus(ctx, c)
-				if e != nil {
-					return nil, e
-				}
-			}
-			out = append(out, entry)
-		}
-		return out, nil
+		return listRegistryProjectsSnapshot(ctx, registry, local, defaultProfile, func(c coord.DeviceConnection, token string) error {
+			_, oe := open(c, token)
+			return oe
+		})
+	}
+	joinLocal := func(ctx context.Context, profile, project, agentName, permissionNote string, userPermission bool) (any, error) {
+		return joinLocalRegistryProject(ctx, registry, local, defaultProfile, profile, project, agentName, permissionNote, userPermission)
 	}
 	inbox := func(ctx context.Context, profile, project, checkout, dismiss string) (any, error) {
 		c, token, err := registry.Resolve(ctx, profile, project, checkout)
@@ -650,7 +630,13 @@ func runRegistryCoordMCP(dbPath, defaultProfile string, hostCapabilities []strin
 		}
 		return registry.ServiceInbox(ctx, c, dismiss)
 	}
-	srv := coord.RegistryMCPServer(defaultProfile, projects, resolve, inbox)
+	srv := coord.RegistryMCPServerWithOptions(coord.RegistryMCPOptions{
+		DefaultProfile: defaultProfile,
+		Projects:       projects,
+		Resolve:        resolve,
+		Inbox:          inbox,
+		JoinLocal:      joinLocal,
+	})
 	coord.AddFileReservationTool(srv, defaultProfile, func(ctx context.Context, profile, project, checkout, op, handle string, paths []string) ([]coord.FileReservation, error) {
 		c, token, err := registry.Resolve(ctx, profile, project, checkout)
 		if err != nil {
@@ -662,6 +648,234 @@ func runRegistryCoordMCP(dbPath, defaultProfile string, hostCapabilities []strin
 		return registry.FileReservations(ctx, c, op, handle, paths)
 	})
 	return server.ServeStdio(srv)
+}
+
+func profileAllowsLocalDiscovery(connections []coord.DeviceConnection, profile string) bool {
+	if strings.TrimSpace(profile) == "" {
+		profile = "default"
+	}
+	hasLocal := false
+	hasRemote := false
+	for _, c := range connections {
+		if c.Profile != profile {
+			continue
+		}
+		if c.Endpoint != "" {
+			hasRemote = true
+		} else {
+			hasLocal = true
+		}
+	}
+	// If a profile is explicitly configured for remote LAN/FRP access and has no
+	// local endpoints, keep it strictly confined to its explicit remote grant(s).
+	if hasRemote && !hasLocal {
+		return false
+	}
+	return true
+}
+
+func listRegistryProjectsSnapshot(ctx context.Context, registry *coord.DeviceRegistry, local *coord.Store, defaultProfile string, probe func(coord.DeviceConnection, string) error) (any, error) {
+	items, err := registry.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	type connectionStatus struct {
+		coord.DeviceConnection
+		Scope string            `json:"scope"`
+		State string            `json:"state"`
+		Inbox coord.InboxStatus `json:"inbox"`
+	}
+	connections := make([]connectionStatus, 0, len(items))
+	joinedByProject := map[string][]string{}
+	joinedInDefault := map[string]bool{}
+	for _, c := range items {
+		token, te := registry.Token(c)
+		state := "unavailable"
+		if te == nil && probe(c, token) == nil {
+			state = "ready"
+		}
+		scope := "local"
+		if c.Endpoint != "" {
+			scope = "remote_lan_or_frp"
+		}
+		c.SecretID = ""
+		entry := connectionStatus{DeviceConnection: c, Scope: scope, State: state}
+		if state == "ready" {
+			entry.Inbox, err = registry.InboxStatus(ctx, c)
+			if err != nil {
+				return nil, err
+			}
+		}
+		connections = append(connections, entry)
+		joinedByProject[c.ProjectID] = append(joinedByProject[c.ProjectID], c.Profile)
+		if c.Profile == defaultProfile && c.Endpoint == "" {
+			joinedInDefault[c.ProjectID] = true
+		}
+	}
+
+	type localProjectChoice struct {
+		ProjectID            string   `json:"project_id"`
+		Name                 string   `json:"name"`
+		Scope                string   `json:"scope"`
+		Status               string   `json:"status"`
+		PlanRevision         int      `json:"plan_revision"`
+		JoinedProfiles       []string `json:"joined_profiles,omitempty"`
+		JoinRequiresApproval bool     `json:"join_requires_user_permission"`
+	}
+	localAllowed := profileAllowsLocalDiscovery(items, defaultProfile)
+	var localAvailable []localProjectChoice
+	if localAllowed && local != nil {
+		localProjects, lerr := local.ListLocalDashboardProjects(ctx)
+		if lerr == nil {
+			for _, lp := range localProjects {
+				if joinedInDefault[lp.ProjectID] {
+					continue
+				}
+				localAvailable = append(localAvailable, localProjectChoice{
+					ProjectID:            lp.ProjectID,
+					Name:                 lp.ProjectName,
+					Scope:                "local",
+					Status:               lp.Status,
+					PlanRevision:         lp.PlanRevision,
+					JoinedProfiles:       joinedByProject[lp.ProjectID],
+					JoinRequiresApproval: true,
+				})
+			}
+		}
+	}
+	return map[string]any{
+		"default_profile":         defaultProfile,
+		"local_discovery_allowed": localAllowed,
+		"connections":             connections,
+		"local_available":         localAvailable,
+		"note":                    "Only local projects on this machine can be listed in local_available or joined via operation=join after explicit user confirmation. LAN and FRP peers stay pinned to explicitly granted remote projects.",
+	}, nil
+}
+
+func matchLocalProjectBySelector(projects []coord.LocalProjectStatus, selector string) (coord.LocalProjectStatus, error) {
+	selector = strings.TrimSpace(selector)
+	if selector == "" {
+		return coord.LocalProjectStatus{}, errors.New("project ID or name is required")
+	}
+	for _, p := range projects {
+		if p.ProjectID == selector {
+			return p, nil
+		}
+	}
+	var exact []coord.LocalProjectStatus
+	var fold []coord.LocalProjectStatus
+	for _, p := range projects {
+		if p.ProjectName == selector {
+			exact = append(exact, p)
+		} else if strings.EqualFold(p.ProjectName, selector) {
+			fold = append(fold, p)
+		}
+	}
+	candidates := exact
+	if len(candidates) == 0 {
+		candidates = fold
+	}
+	if len(candidates) == 1 {
+		return candidates[0], nil
+	}
+	if len(candidates) > 1 {
+		return coord.LocalProjectStatus{}, fmt.Errorf("local project name %q is ambiguous; specify the project_id", selector)
+	}
+	return coord.LocalProjectStatus{}, fmt.Errorf("local project %q was not found on this machine; LAN/FRP projects cannot be self-joined without explicit owner pairing", selector)
+}
+
+func joinLocalRegistryProject(ctx context.Context, registry *coord.DeviceRegistry, local *coord.Store, defaultProfile, profile, projectSelector, agentName, permissionNote string, userPermission bool) (any, error) {
+	if !userPermission {
+		return nil, errors.New("explicit user permission is required before joining a local project; ask the user for confirmation and retry with user_permission=true")
+	}
+	targetProfile := strings.TrimSpace(profile)
+	if targetProfile == "" {
+		targetProfile = defaultProfile
+	}
+	if targetProfile == "" {
+		targetProfile = "default"
+	}
+	items, err := registry.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if !profileAllowsLocalDiscovery(items, targetProfile) {
+		return nil, errors.New("only local profiles can list or join local projects; LAN and FRP profiles stay restricted to explicitly paired remote projects")
+	}
+	if local == nil {
+		return nil, errors.New("local project store is unavailable")
+	}
+	trimmed := strings.TrimSpace(projectSelector)
+	for _, c := range items {
+		if c.Endpoint != "" && (c.ProjectID == trimmed || strings.EqualFold(c.Name, trimmed)) {
+			localProjects, _ := local.ListLocalDashboardProjects(ctx)
+			foundLocal := false
+			for _, lp := range localProjects {
+				if lp.ProjectID == c.ProjectID {
+					foundLocal = true
+					break
+				}
+			}
+			if !foundLocal {
+				return nil, errors.New("only local projects on this machine can be joined after explicit user permission; LAN and FRP projects require explicit owner pairing or a project credential")
+			}
+		}
+	}
+	localProjects, err := local.ListLocalDashboardProjects(ctx)
+	if err != nil {
+		return nil, err
+	}
+	matched, err := matchLocalProjectBySelector(localProjects, projectSelector)
+	if err != nil {
+		return nil, err
+	}
+	homeID := local.InstanceID()
+	for _, c := range items {
+		if c.Profile == targetProfile && c.HomeID == homeID && c.ProjectID == matched.ProjectID && c.Endpoint == "" {
+			if tok, tokErr := registry.Token(c); tokErr == nil {
+				if valid, vErr := local.CredentialValid(ctx, c.ProjectID, tok); vErr == nil && valid {
+					return map[string]any{
+						"status":       "already_joined",
+						"scope":        "local",
+						"profile":      c.Profile,
+						"home_id":      c.HomeID,
+						"project_id":   c.ProjectID,
+						"name":         c.Name,
+						"principal_id": c.PrincipalID,
+					}, nil
+				}
+			}
+		}
+	}
+	workerName := strings.TrimSpace(agentName)
+	if workerName == "" {
+		workerName = targetProfile
+	}
+	cred, err := local.EnrollLocalWorker(ctx, matched.ProjectID, workerName, permissionNote)
+	if err != nil {
+		return nil, fmt.Errorf("join local project %q: %w", matched.ProjectName, err)
+	}
+	conn := coord.DeviceConnection{
+		Profile:     targetProfile,
+		HomeID:      homeID,
+		ProjectID:   matched.ProjectID,
+		PrincipalID: cred.PrincipalID,
+		Name:        matched.ProjectName,
+	}
+	if err := registry.Put(ctx, conn, cred.Token); err != nil {
+		return nil, err
+	}
+	return map[string]any{
+		"status":       "joined",
+		"scope":        "local",
+		"profile":      targetProfile,
+		"home_id":      homeID,
+		"project_id":   matched.ProjectID,
+		"name":         matched.ProjectName,
+		"principal_id": cred.PrincipalID,
+		"role":         "worker",
+		"agent_name":   workerName,
+	}, nil
 }
 
 func runCoordBootstrapKey(args []string) error {
