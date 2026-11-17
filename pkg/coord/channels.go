@@ -541,3 +541,41 @@ func (s *Store) ChannelMessages(ctx context.Context, project, token, channelID s
 	}
 	return queryRoomMessagesTx(ctx, tx, actor.ID, `project_id=? AND recipient IS NULL AND thread_id=?`, []any{project, channelThreadID(channelID)}, after, before, limit, recent)
 }
+
+// ChannelMessagesSinceHash returns the channel message matching lastReadHash
+// (1 previous context anchor) plus all newer messages in that channel in
+// ascending sequence order. When lastReadHash is empty, recent history is returned.
+func (s *Store) ChannelMessagesSinceHash(ctx context.Context, project, token, channelID, lastReadHash string, limit int) ([]Message, error) {
+	if limit < 1 || limit > 200 {
+		return nil, errors.New("invalid channel limit")
+	}
+	if strings.TrimSpace(lastReadHash) == "" {
+		return s.ChannelMessages(ctx, project, token, channelID, 0, 0, limit, true)
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	actor, err := authorizeProjectRead(ctx, tx, project, token)
+	if err != nil {
+		return nil, err
+	}
+	exists, allowed, _, err := isChannelParticipantTx(ctx, tx, project, channelID, actor.ID, actor.Role)
+	if err != nil {
+		return nil, err
+	}
+	if !exists {
+		return nil, ErrNotFound
+	}
+	if !allowed {
+		return nil, ErrUnauthorized
+	}
+	whereSQL := `project_id=? AND recipient IS NULL AND thread_id=?`
+	baseArgs := []any{project, channelThreadID(channelID)}
+	anchorSeq, err := resolveVisibleMessageSeqByHashTx(ctx, tx, lastReadHash, whereSQL, baseArgs)
+	if err != nil {
+		return nil, err
+	}
+	return queryRoomMessagesTx(ctx, tx, actor.ID, whereSQL, baseArgs, anchorSeq-1, 0, limit, false)
+}

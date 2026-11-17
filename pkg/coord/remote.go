@@ -64,6 +64,7 @@ type rpcRequest struct {
 	After               int64                  `json:"after,omitempty"`
 	Before              int64                  `json:"before,omitempty"`
 	MessageAfter        int64                  `json:"message_after,omitempty"`
+	LastReadHash        string                 `json:"last_read_hash,omitempty"`
 	PruneThrough        int64                  `json:"prune_through,omitempty"`
 	Limit               int                    `json:"limit,omitempty"`
 	MaxChars            int                    `json:"max_chars,omitempty"`
@@ -630,7 +631,11 @@ func rpcHandler(s *Store, requireTLS bool, pins map[[32]byte]map[string]bool, ce
 		case "message.send":
 			v, err = s.SendMessageWithID(ctx, q.Project, token, q.Recipient, q.Thread, q.Subject, q.Body, q.RequestID)
 		case "message.list":
-			v, err = s.ListMessages(ctx, q.Project, token, q.After, q.Limit)
+			if strings.TrimSpace(q.LastReadHash) != "" {
+				v, err = s.ListMessagesSinceHash(ctx, q.Project, token, q.LastReadHash, q.Limit)
+			} else {
+				v, err = s.ListMessages(ctx, q.Project, token, q.After, q.Limit)
+			}
 		case "context.links", "context.link":
 			if q.ContextLink == nil {
 				err = errors.New("context link required")
@@ -682,7 +687,11 @@ func rpcHandler(s *Store, requireTLS bool, pins map[[32]byte]map[string]bool, ce
 				err = ErrUnauthorized
 			} else {
 				fingerprint := sha256.Sum256(r.TLS.PeerCertificates[0].Raw)
-				v, err = s.SyncInboxFromReplica(ctx, q.Project, token, q.ReplicaID, hex.EncodeToString(fingerprint[:]), q.After, q.MessageAfter, q.Limit)
+				if strings.TrimSpace(q.LastReadHash) != "" {
+					v, err = s.SyncInboxFromReplicaSinceHash(ctx, q.Project, token, q.ReplicaID, hex.EncodeToString(fingerprint[:]), q.After, q.LastReadHash, q.Limit)
+				} else {
+					v, err = s.SyncInboxFromReplica(ctx, q.Project, token, q.ReplicaID, hex.EncodeToString(fingerprint[:]), q.After, q.MessageAfter, q.Limit)
+				}
 			}
 		case "replica.list":
 			v, err = s.ListProjectReplicas(ctx, q.Project, token)

@@ -203,6 +203,9 @@ func (r *Remote) SendMessageWithID(c context.Context, p, t, to, thread, subject,
 func (r *Remote) ListMessages(c context.Context, p, t string, after int64, n int) ([]Message, error) {
 	return remoteCall[[]Message](c, r, t, rpcRequest{Operation: "message.list", Project: p, After: after, Limit: n})
 }
+func (r *Remote) ListMessagesSinceHash(c context.Context, p, t, lastReadHash string, n int) ([]Message, error) {
+	return remoteCall[[]Message](c, r, t, rpcRequest{Operation: "message.list", Project: p, LastReadHash: lastReadHash, Limit: n})
+}
 func (r *Remote) ConversationMessages(c context.Context, p, t, recipient string, after, before int64, n int, recent bool) ([]Message, error) {
 	return remoteCall[[]Message](c, r, t, rpcRequest{Operation: "message.conversation", Project: p, Recipient: recipient, After: after, Before: before, Limit: n, Recent: recent})
 }
@@ -214,6 +217,9 @@ func (r *Remote) SyncProject(c context.Context, p, t string, after int64, n int)
 }
 func (r *Remote) SyncInbox(c context.Context, p, t string, eventAfter, messageAfter int64, n int) (ProjectSyncFrame, error) {
 	return remoteCall[ProjectSyncFrame](c, r, t, rpcRequest{Operation: "project.inbox", Project: p, ReplicaID: r.replicaID, After: eventAfter, MessageAfter: messageAfter, Limit: n})
+}
+func (r *Remote) SyncInboxSinceHash(c context.Context, p, t string, eventAfter int64, lastReadHash string, n int) (ProjectSyncFrame, error) {
+	return remoteCall[ProjectSyncFrame](c, r, t, rpcRequest{Operation: "project.inbox", Project: p, ReplicaID: r.replicaID, After: eventAfter, LastReadHash: lastReadHash, Limit: n})
 }
 func (r *Remote) ListProjectReplicas(c context.Context, p, t string) ([]ProjectReplica, error) {
 	return remoteCall[[]ProjectReplica](c, r, t, rpcRequest{Operation: "replica.list", Project: p})

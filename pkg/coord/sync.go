@@ -36,6 +36,7 @@ type ProjectSyncFrame struct {
 	InboxMessages        []InboxMessage `json:"inbox_messages,omitempty"`
 	NextInboxCursor      int64          `json:"next_inbox_cursor,omitempty"`
 	InboxHasMore         bool           `json:"inbox_has_more,omitempty"`
+	LatestMessageHash    string         `json:"latest_message_hash,omitempty"`
 }
 
 // InboxMessage carries a bounded preview; full authorized bodies remain
@@ -43,6 +44,7 @@ type ProjectSyncFrame struct {
 type InboxMessage struct {
 	Sequence  int64  `json:"sequence"`
 	ID        string `json:"id"`
+	Hash      string `json:"hash,omitempty"`
 	Sender    string `json:"sender"`
 	Recipient string `json:"recipient,omitempty"`
 	ThreadID  string `json:"thread_id"`
@@ -68,33 +70,39 @@ type ProjectReplica struct {
 // delta. It is a read protocol for reconnecting caches; it does not grant a
 // replica authority to accept writes or complete attempts.
 func (s *Store) SyncProject(ctx context.Context, project, token string, after int64, limit int) (ProjectSyncFrame, error) {
-	return s.syncProject(ctx, project, token, "", "", after, limit, nil)
+	return s.syncProject(ctx, project, token, "", "", after, limit, nil, "")
 }
 
 // SyncInbox combines project snapshot, visible events, and bounded message
 // previews in one home transaction for low-token routine check-ins.
 func (s *Store) SyncInbox(ctx context.Context, project, token string, eventAfter, messageAfter int64, limit int) (ProjectSyncFrame, error) {
-	return s.syncProject(ctx, project, token, "", "", eventAfter, limit, &messageAfter)
+	return s.syncProject(ctx, project, token, "", "", eventAfter, limit, &messageAfter, "")
+}
+
+// SyncInboxSinceHash combines project snapshot, visible events, and bounded
+// message previews starting at lastReadHash (1 previous message + newer ones).
+func (s *Store) SyncInboxSinceHash(ctx context.Context, project, token string, eventAfter int64, lastReadHash string, limit int) (ProjectSyncFrame, error) {
+	zero := int64(0)
+	return s.syncProject(ctx, project, token, "", "", eventAfter, limit, &zero, lastReadHash)
 }
 
 // SyncProjectFromReplica records a receipt in the same transaction as the
 // authorized snapshot. The replica identity is bound to one project member
 // and one currently granted client certificate.
 func (s *Store) SyncProjectFromReplica(ctx context.Context, project, token, replicaID, fingerprint string, after int64, limit int) (ProjectSyncFrame, error) {
-	if !strings.HasPrefix(replicaID, "replica_") || len(replicaID) != len("replica_")+32 {
-		return ProjectSyncFrame{}, errors.New("invalid replica identity")
-	}
-	if _, err := hex.DecodeString(strings.TrimPrefix(replicaID, "replica_")); err != nil {
-		return ProjectSyncFrame{}, errors.New("invalid replica identity")
-	}
-	fingerprint, err := NormalizeCertificateFingerprint(fingerprint)
-	if err != nil {
-		return ProjectSyncFrame{}, err
-	}
-	return s.syncProject(ctx, project, token, replicaID, fingerprint, after, limit, nil)
+	return s.syncProjectFromReplica(ctx, project, token, replicaID, fingerprint, after, limit, nil, "")
 }
 
 func (s *Store) SyncInboxFromReplica(ctx context.Context, project, token, replicaID, fingerprint string, eventAfter, messageAfter int64, limit int) (ProjectSyncFrame, error) {
+	return s.syncProjectFromReplica(ctx, project, token, replicaID, fingerprint, eventAfter, limit, &messageAfter, "")
+}
+
+func (s *Store) SyncInboxFromReplicaSinceHash(ctx context.Context, project, token, replicaID, fingerprint string, eventAfter int64, lastReadHash string, limit int) (ProjectSyncFrame, error) {
+	zero := int64(0)
+	return s.syncProjectFromReplica(ctx, project, token, replicaID, fingerprint, eventAfter, limit, &zero, lastReadHash)
+}
+
+func (s *Store) syncProjectFromReplica(ctx context.Context, project, token, replicaID, fingerprint string, after int64, limit int, messageAfter *int64, lastReadHash string) (ProjectSyncFrame, error) {
 	if !strings.HasPrefix(replicaID, "replica_") || len(replicaID) != len("replica_")+32 {
 		return ProjectSyncFrame{}, errors.New("invalid replica identity")
 	}
@@ -105,10 +113,10 @@ func (s *Store) SyncInboxFromReplica(ctx context.Context, project, token, replic
 	if err != nil {
 		return ProjectSyncFrame{}, err
 	}
-	return s.syncProject(ctx, project, token, replicaID, fingerprint, eventAfter, limit, &messageAfter)
+	return s.syncProject(ctx, project, token, replicaID, fingerprint, after, limit, messageAfter, lastReadHash)
 }
 
-func (s *Store) syncProject(ctx context.Context, project, token, replicaID, fingerprint string, after int64, limit int, messageAfter *int64) (ProjectSyncFrame, error) {
+func (s *Store) syncProject(ctx context.Context, project, token, replicaID, fingerprint string, after int64, limit int, messageAfter *int64, lastReadHash string) (ProjectSyncFrame, error) {
 	frame := ProjectSyncFrame{Tasks: TaskPage{Tasks: []Task{}}, Counts: map[string]int{}, Events: []Event{}, EventsAfter: after, HomeInstanceID: s.instanceID}
 	if after < 0 || limit < 1 || limit > 200 {
 		return frame, errors.New("invalid sync cursor or limit")
@@ -140,13 +148,27 @@ func (s *Store) syncProject(ctx context.Context, project, token, replicaID, fing
 			return frame, ErrConflict
 		}
 	}
-	includeSnapshot := messageAfter == nil || (after == 0 && *messageAfter == 0)
+	includeSnapshot := messageAfter == nil || (after == 0 && *messageAfter == 0 && strings.TrimSpace(lastReadHash) == "")
 	if messageAfter != nil {
 		if *messageAfter < 0 {
 			return frame, errors.New("invalid inbox message cursor")
 		}
 		frame.InboxMessages = []InboxMessage{}
-		rows, e := tx.QueryContext(ctx, `SELECT seq,id,sender,COALESCE(recipient,''),thread_id,subject,body,created_at FROM messages WHERE project_id=? AND seq>? AND (recipient IS NULL OR recipient=? OR sender=?) ORDER BY seq LIMIT ?`, project, *messageAfter, actor.ID, actor.ID, limit+1)
+		visWhere := `project_id=? AND ` + visibleMessageSQL("messages")
+		visArgs := []any{project, actor.Role, actor.ID, actor.ID, actor.ID, actor.ID}
+		seqOp := `seq>?`
+		seqVal := *messageAfter
+		if strings.TrimSpace(lastReadHash) != "" {
+			anchorSeq, aErr := resolveVisibleMessageSeqByHashTx(ctx, tx, lastReadHash, visWhere, visArgs)
+			if aErr != nil {
+				return frame, aErr
+			}
+			seqOp = `seq>=?`
+			seqVal = anchorSeq
+		}
+		queryArgs := append([]any{project, seqVal}, visArgs[1:]...)
+		queryArgs = append(queryArgs, limit+1)
+		rows, e := tx.QueryContext(ctx, `SELECT seq,id,sender,COALESCE(recipient,''),thread_id,subject,body,created_at FROM messages WHERE project_id=? AND `+seqOp+` AND `+visibleMessageSQL("messages")+` ORDER BY seq LIMIT ?`, queryArgs...)
 		if e != nil {
 			return frame, e
 		}
@@ -161,6 +183,16 @@ func (s *Store) syncProject(ctx context.Context, project, token, replicaID, fing
 				frame.InboxHasMore = true
 				break
 			}
+			m.Hash = MessageHash(Message{
+				Sequence:  m.Sequence,
+				ID:        m.ID,
+				Sender:    m.Sender,
+				Recipient: m.Recipient,
+				ThreadID:  m.ThreadID,
+				Subject:   m.Subject,
+				Body:      body,
+				CreatedAt: m.CreatedAt,
+			})
 			runes := []rune(body)
 			if len(runes) > 240 {
 				body = string(runes[:240]) + "…"
@@ -168,6 +200,7 @@ func (s *Store) syncProject(ctx context.Context, project, token, replicaID, fing
 			m.Preview = body
 			frame.InboxMessages = append(frame.InboxMessages, m)
 			frame.NextInboxCursor = m.Sequence
+			frame.LatestMessageHash = m.Hash
 		}
 		if e = rows.Err(); e != nil {
 			rows.Close()

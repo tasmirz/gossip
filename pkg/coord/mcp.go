@@ -297,6 +297,12 @@ func mcpServer(store Backend, project, token string, keeper *leaseKeeper, outbox
 	}
 	channelBackend, _ := store.(ChannelBackend)
 	str := func(a map[string]any, k string) string { v, _ := a[k].(string); return v }
+	lastHashArg := func(a map[string]any) string {
+		if v := strings.TrimSpace(str(a, "last_read_hash")); v != "" {
+			return v
+		}
+		return strings.TrimSpace(str(a, "last_msg_hash"))
+	}
 	flag := func(a map[string]any, k string, defaultVal bool) bool {
 		if v, ok := a[k].(bool); ok {
 			return v
@@ -1066,12 +1072,23 @@ func mcpServer(store Backend, project, token string, keeper *leaseKeeper, outbox
 				return result(nil, fmt.Errorf("unknown send operation"))
 			}
 		})
-	srv.AddTool(mcp.NewTool("gossip_read", mcp.WithDescription("Read an authorized report or messages, explicitly acknowledge a received message, or inspect acknowledgments."),
+	srv.AddTool(mcp.NewTool("gossip_read", mcp.WithDescription("Read an authorized report or messages, explicitly acknowledge a received message, or inspect acknowledgments. Pass last_read_hash when reading messages to receive only 1 previous anchor message plus newer messages; omit it to fetch all visible messages."),
 		mcp.WithString("operation", mcp.Description("report (default), messages, acknowledge, or acknowledgments")),
-		mcp.WithString("report_id"), mcp.WithString("message_id"), mcp.WithInteger("after"), mcp.WithInteger("limit"), mcp.WithInteger("offset", mcp.Description("Report offset in Unicode code points")), mcp.WithInteger("max_chars", mcp.Description("Report excerpt size, 1 to 16384; defaults to 2048"))),
+		mcp.WithString("report_id"), mcp.WithString("message_id"),
+		mcp.WithString("last_read_hash", mcp.Description("Hash of the last read message; returns that 1 previous message plus all newer ones. Omit to deliver all visible messages.")),
+		mcp.WithString("last_msg_hash", mcp.Description("Alias for last_read_hash")),
+		mcp.WithInteger("after"), mcp.WithInteger("limit"), mcp.WithInteger("offset", mcp.Description("Report offset in Unicode code points")), mcp.WithInteger("max_chars", mcp.Description("Report excerpt size, 1 to 16384; defaults to 2048"))),
 		func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			a := args(r)
 			if str(a, "operation") == "messages" {
+				if lastHash := lastHashArg(a); lastHash != "" {
+					if hs, ok := store.(interface {
+						ListMessagesSinceHash(context.Context, string, string, string, int) ([]Message, error)
+					}); ok {
+						messages, err := hs.ListMessagesSinceHash(ctx, project, token, lastHash, num(a, "limit", 50))
+						return result(messages, err)
+					}
+				}
 				messages, err := store.ListMessages(ctx, project, token, int64(num(a, "after", 0)), num(a, "limit", 50))
 				return result(messages, err)
 			}
@@ -1091,7 +1108,10 @@ func mcpServer(store Backend, project, token string, keeper *leaseKeeper, outbox
 		})
 	srv.AddTool(mcp.NewTool("gossip_sync", mcp.WithDescription("Use inbox for one bounded routine check-in containing the project snapshot, visible deltas, and message previews; use events or wait for event-only reads."),
 		mcp.WithString("operation", mcp.Description("inbox, events (default), wait, cached, refresh_cache, clear_cache, checkpoint, acknowledge, or owner-only prune_events")),
-		mcp.WithInteger("after", mcp.Description("Last event sequence read or processed for acknowledgment")), mcp.WithInteger("message_after", mcp.Description("Inbox message cursor returned by the previous inbox call")), mcp.WithInteger("through_sequence", mcp.Description("For prune_events only: permanently remove project event rows through this sequence; stale replicas will be forced to refresh their snapshots")), mcp.WithInteger("limit", mcp.Description("Maximum results, 1 to 200")), mcp.WithInteger("wait_seconds", mcp.Description("For wait only; bounded to 25 seconds"))),
+		mcp.WithInteger("after", mcp.Description("Last event sequence read or processed for acknowledgment")), mcp.WithInteger("message_after", mcp.Description("Inbox message cursor returned by the previous inbox call")),
+		mcp.WithString("last_read_hash", mcp.Description("Optional last read message hash for inbox; returns that 1 previous message preview plus newer ones")),
+		mcp.WithString("last_msg_hash", mcp.Description("Alias for last_read_hash")),
+		mcp.WithInteger("through_sequence", mcp.Description("For prune_events only: permanently remove project event rows through this sequence; stale replicas will be forced to refresh their snapshots")), mcp.WithInteger("limit", mcp.Description("Maximum results, 1 to 200")), mcp.WithInteger("wait_seconds", mcp.Description("For wait only; bounded to 25 seconds"))),
 		func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			a := args(r)
 			switch str(a, "operation") {
@@ -1099,6 +1119,14 @@ func mcpServer(store Backend, project, token string, keeper *leaseKeeper, outbox
 				limit := num(a, "limit", 25)
 				if limit == 0 {
 					limit = 25
+				}
+				if lastHash := lastHashArg(a); lastHash != "" {
+					if hs, ok := store.(interface {
+						SyncInboxSinceHash(context.Context, string, string, int64, string, int) (ProjectSyncFrame, error)
+					}); ok {
+						v, err := hs.SyncInboxSinceHash(ctx, project, token, int64(num(a, "after", 0)), lastHash, limit)
+						return result(v, err)
+					}
 				}
 				messageAfter := int64(num(a, "message_after", 0))
 				if inbox, ok := store.(interface {
@@ -1161,7 +1189,10 @@ func mcpServer(store Backend, project, token string, keeper *leaseKeeper, outbox
 		mcp.WithString("members", mcp.Description("Comma-separated principal IDs or JSON array of initial members")),
 		mcp.WithBoolean("auto_suffix", mcp.Description("Append a short suffix to the channel slug to avoid name collisions")),
 		mcp.WithBoolean("announce", mcp.Description("Post a short invitation or announcement into # general (defaults true for create/ask_join/invite)")),
-		mcp.WithString("note"), mcp.WithString("subject"), mcp.WithString("body"), mcp.WithString("request_id"), mcp.WithInteger("after"), mcp.WithInteger("limit")),
+		mcp.WithString("note"), mcp.WithString("subject"), mcp.WithString("body"), mcp.WithString("request_id"),
+		mcp.WithString("last_read_hash", mcp.Description("For operation=messages: hash of the last read message; returns that 1 previous message plus newer ones. Omit to fetch all recent messages.")),
+		mcp.WithString("last_msg_hash", mcp.Description("Alias for last_read_hash")),
+		mcp.WithInteger("after"), mcp.WithInteger("limit")),
 		func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			if channelBackend == nil {
 				return result(nil, errors.New("group channels are unavailable on this backend"))
@@ -1187,6 +1218,14 @@ func mcpServer(store Backend, project, token string, keeper *leaseKeeper, outbox
 				v, err := store.SendMessageWithID(ctx, project, token, "", channelThreadID(str(a, "channel_id")), str(a, "subject"), str(a, "body"), str(a, "request_id"))
 				return result(v, err)
 			case "messages":
+				if lastHash := lastHashArg(a); lastHash != "" {
+					if hs, ok := channelBackend.(interface {
+						ChannelMessagesSinceHash(context.Context, string, string, string, string, int) ([]Message, error)
+					}); ok {
+						v, err := hs.ChannelMessagesSinceHash(ctx, project, token, str(a, "channel_id"), lastHash, num(a, "limit", 50))
+						return result(v, err)
+					}
+				}
 				v, err := channelBackend.ChannelMessages(ctx, project, token, str(a, "channel_id"), int64(num(a, "after", 0)), 0, num(a, "limit", 50), num(a, "after", 0) == 0)
 				return result(v, err)
 			default:

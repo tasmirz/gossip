@@ -303,3 +303,71 @@ func TestGroupChannelsHTTPAndMCP(t *testing.T) {
 		t.Fatalf("expected 1 DM message, got %+v err=%v", dmMsgs, err)
 	}
 }
+
+func TestChannelMessagesLastReadHashReturnsOnePrevPlusNew(t *testing.T) {
+	s, _, p, owner, worker := setup(t)
+	ctx := context.Background()
+
+	ch, err := s.CreateChannel(ctx, p.ID, owner.Token, "impl", "Implementation room", []string{worker.PrincipalID}, false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	generalMsg, err := s.SendMessageWithID(ctx, p.ID, owner.Token, "", "", "", "General noise", "ch-gen-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	c1, err := s.SendMessageWithID(ctx, p.ID, owner.Token, "", "channel:"+ch.ID, "", "Channel 1", "ch-m-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	c2, err := s.SendMessageWithID(ctx, p.ID, worker.Token, "", "channel:"+ch.ID, "", "Channel 2", "ch-m-2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	c3, err := s.SendMessageWithID(ctx, p.ID, owner.Token, "", "channel:"+ch.ID, "", "Channel 3", "ch-m-3")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	workerMCP := coord.MCPServer(s, p.ID, worker.Token)
+	chTool := workerMCP.GetTool("gossip_channel")
+
+	// Omitting last_read_hash returns full recent channel messages [c1, c2, c3].
+	res, err := chTool.Handler(ctx, mcp.CallToolRequest{Params: mcp.CallToolParams{
+		Name:      "gossip_channel",
+		Arguments: map[string]any{"operation": "messages", "channel_id": ch.ID},
+	}})
+	if err != nil || res.IsError {
+		t.Fatalf("channel read all: err=%v res=%+v", err, res)
+	}
+	var all []coord.Message
+	if err := json.Unmarshal([]byte(res.Content[0].(mcp.TextContent).Text), &all); err != nil {
+		t.Fatal(err)
+	}
+	if len(all) != 3 || all[0].Hash != c1.Hash || all[2].Hash != c3.Hash {
+		t.Fatalf("expected 3 channel messages, got %+v", all)
+	}
+
+	// Passing last_read_hash=c2.Hash returns [c2, c3] (1 prev + new ones).
+	res, err = chTool.Handler(ctx, mcp.CallToolRequest{Params: mcp.CallToolParams{
+		Name:      "gossip_channel",
+		Arguments: map[string]any{"operation": "messages", "channel_id": ch.ID, "last_read_hash": c2.Hash},
+	}})
+	if err != nil || res.IsError {
+		t.Fatalf("channel read from hash c2: err=%v res=%+v", err, res)
+	}
+	var delta []coord.Message
+	_ = json.Unmarshal([]byte(res.Content[0].(mcp.TextContent).Text), &delta)
+	if len(delta) != 2 || delta[0].ID != c2.ID || delta[1].ID != c3.ID {
+		t.Fatalf("expected [c2, c3] (1 prev + new), got %+v", delta)
+	}
+
+	// Hash from #general must not resolve inside channel scope.
+	res, err = chTool.Handler(ctx, mcp.CallToolRequest{Params: mcp.CallToolParams{
+		Name:      "gossip_channel",
+		Arguments: map[string]any{"operation": "messages", "channel_id": ch.ID, "last_read_hash": generalMsg.Hash},
+	}})
+	if err != nil || !res.IsError {
+		t.Fatalf("expected error for non-channel hash, got res=%+v err=%v", res, err)
+	}
+}

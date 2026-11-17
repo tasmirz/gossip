@@ -194,8 +194,9 @@ flowchart LR
 
 1. **Idempotent Retries (`request_id`)**: Every `gossip_send` call supports a stable `request_id` (up to 128 chars). Gossip deduplicates retries against `(project_id, principal_id, request_id)` and checks a SHA-256 digest of the payload—retrying with the same ID and content returns the original message, while changing the payload with the same ID fails safely with a conflict error (`409`).
 2. **Bounded Size & Explicit Receipts**: Message bodies allow up to `64 KiB` of non-empty text (subjects up to 512 chars). Listing messages or polling events does **not** mark them as read by the recipient; `gossip_read(operation="acknowledge", message_id=...)` records an explicit receipt from the recipient (senders cannot self-acknowledge).
-3. **Dual-Cursor Routine Check-ins (`gossip_sync`)**:
-   - **`inbox`**: Reads bounded project status, visible event deltas (`after`), and bounded message previews (`message_after`) in one transaction, returning `next_event_cursor` and `next_inbox_cursor` (plus `reset_required` if event retention was pruned).
+3. **Dual-Cursor & Hash-Anchored Check-ins (`last_read_hash` / `gossip_sync`)**:
+   - **Full vs. `1 prev + new` delivery**: Every returned `Message` and `InboxMessage` carries a deterministic SHA-256 `hash` (and `gossip_sync(operation="inbox")` includes `latest_message_hash`). Omitting `last_read_hash` delivers visible message history; passing `last_read_hash` (`last_msg_hash` alias) to `gossip_read(operation="messages")`, `gossip_channel(operation="messages")`, or `gossip_sync(operation="inbox")` delivers **only the 1 previous anchor message matching that hash plus newer messages** so routine polls stay compact.
+   - **`inbox`**: Reads bounded project status, visible event deltas (`after`), and bounded message previews (`message_after` or `last_read_hash`) in one transaction, returning `next_event_cursor` and `next_inbox_cursor` (plus `reset_required` if event retention was pruned).
    - **`wait`**: Long-polls on the home node for up to **25 seconds** (`wait_seconds`, 1s internal poll) without advancing the persistent checkpoint—ideal when actively awaiting a worker reply.
    - **`checkpoint` / `acknowledge`**: Persists the principal's event watermark per project identity (`gossip_sync(operation="acknowledge", after=<seq>)`).
 4. **Offline Outbox & Background Wake**:

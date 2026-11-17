@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"strings"
@@ -16,12 +17,20 @@ type Message struct {
 	AcknowledgedByMe bool   `json:"acknowledged_by_me,omitempty"`
 	Sequence         int64  `json:"sequence"`
 	ID               string `json:"id"`
+	Hash             string `json:"hash,omitempty"`
 	Sender           string `json:"sender"`
 	Recipient        string `json:"recipient,omitempty"`
 	ThreadID         string `json:"thread_id"`
 	Subject          string `json:"subject"`
 	Body             string `json:"body"`
 	CreatedAt        int64  `json:"created_at"`
+}
+
+// MessageHash returns a stable SHA-256 hex digest identifying an immutable message record.
+func MessageHash(m Message) string {
+	payload, _ := json.Marshal([]any{m.ID, m.Sequence, m.Sender, m.Recipient, m.ThreadID, m.Subject, m.Body, m.CreatedAt})
+	sum := sha256.Sum256(payload)
+	return hex.EncodeToString(sum[:])
 }
 
 type MessageAcknowledgment struct {
@@ -157,6 +166,9 @@ func (s *Store) SendMessageWithID(ctx context.Context, project, token, recipient
 				return m, ErrConflict
 			}
 			err = tx.QueryRowContext(ctx, `SELECT m.seq,m.id,m.sender,COALESCE(m.recipient,''),m.thread_id,m.subject,m.body,m.created_at FROM message_requests r JOIN messages m ON m.id=r.message_id WHERE r.project_id=? AND r.principal_id=? AND r.request_id=?`, project, actor.ID, requestID).Scan(&m.Sequence, &m.ID, &m.Sender, &m.Recipient, &m.ThreadID, &m.Subject, &m.Body, &m.CreatedAt)
+			if err == nil {
+				m.Hash = MessageHash(m)
+			}
 			return m, err
 		}
 		if !errors.Is(err, sql.ErrNoRows) {
@@ -206,6 +218,7 @@ func (s *Store) SendMessageWithID(ctx context.Context, project, token, recipient
 		return m, err
 	}
 	m = Message{Sequence: seq, ID: id, Sender: actor.ID, Recipient: recipient, ThreadID: thread, Subject: subject, Body: body, CreatedAt: now}
+	m.Hash = MessageHash(m)
 	// Event omits message contents so a project's other principals cannot read a direct message.
 	if err = event(ctx, tx, project, actor.ID, "message.sent", id, map[string]any{"sequence": seq}); err != nil {
 		return Message{}, err
@@ -221,7 +234,44 @@ func (s *Store) SendMessageWithID(ctx context.Context, project, token, recipient
 	return m, nil
 }
 
+func resolveVisibleMessageSeqByHashTx(ctx context.Context, tx *sql.Tx, targetHash, whereSQL string, baseArgs []any) (int64, error) {
+	targetHash = strings.ToLower(strings.TrimSpace(targetHash))
+	if len(targetHash) != 64 {
+		return 0, errors.New("unknown or invalid last_read_hash; omit it to fetch visible messages and obtain the latest message hash")
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT seq,id,sender,COALESCE(recipient,''),thread_id,subject,body,created_at FROM messages WHERE `+whereSQL+` ORDER BY seq ASC`, baseArgs...)
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var m Message
+		if err = rows.Scan(&m.Sequence, &m.ID, &m.Sender, &m.Recipient, &m.ThreadID, &m.Subject, &m.Body, &m.CreatedAt); err != nil {
+			return 0, err
+		}
+		if MessageHash(m) == targetHash {
+			return m.Sequence, nil
+		}
+	}
+	if err = rows.Err(); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return 0, err
+	}
+	return 0, errors.New("unknown last_read_hash in visible messages; omit it to fetch history and obtain the latest message hash")
+}
+
 func (s *Store) ListMessages(ctx context.Context, project, token string, after int64, limit int) ([]Message, error) {
+	return s.listMessages(ctx, project, token, after, "", limit)
+}
+
+// ListMessagesSinceHash returns visible project messages starting at the
+// message matching lastReadHash (1 previous context anchor) plus all newer
+// messages in ascending sequence order. When lastReadHash is empty, all
+// visible messages from seq > 0 (up to limit) are returned.
+func (s *Store) ListMessagesSinceHash(ctx context.Context, project, token, lastReadHash string, limit int) ([]Message, error) {
+	return s.listMessages(ctx, project, token, 0, lastReadHash, limit)
+}
+
+func (s *Store) listMessages(ctx context.Context, project, token string, after int64, lastReadHash string, limit int) ([]Message, error) {
 	if after < 0 || limit < 1 || limit > 200 {
 		return nil, errors.New("invalid cursor or limit")
 	}
@@ -234,7 +284,24 @@ func (s *Store) ListMessages(ctx context.Context, project, token string, after i
 	if err != nil {
 		return nil, err
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT seq,id,sender,COALESCE(recipient,''),thread_id,subject,body,created_at FROM messages WHERE project_id=? AND seq>? AND `+visibleMessageSQL("messages")+` ORDER BY seq LIMIT ?`, project, after, actor.Role, actor.ID, actor.ID, actor.ID, actor.ID, limit)
+	visArgs := []any{project, actor.Role, actor.ID, actor.ID, actor.ID, actor.ID}
+	visWhere := `project_id=? AND ` + visibleMessageSQL("messages")
+	var seqOp string
+	var seqVal int64
+	if strings.TrimSpace(lastReadHash) != "" {
+		anchorSeq, aErr := resolveVisibleMessageSeqByHashTx(ctx, tx, lastReadHash, visWhere, visArgs)
+		if aErr != nil {
+			return nil, aErr
+		}
+		seqOp = `seq>=?`
+		seqVal = anchorSeq
+	} else {
+		seqOp = `seq>?`
+		seqVal = after
+	}
+	queryArgs := append([]any{seqVal}, visArgs[1:]...)
+	queryArgs = append(queryArgs, limit)
+	rows, err := tx.QueryContext(ctx, `SELECT seq,id,sender,COALESCE(recipient,''),thread_id,subject,body,created_at FROM messages WHERE project_id=? AND `+seqOp+` AND `+visibleMessageSQL("messages")+` ORDER BY seq LIMIT ?`, append([]any{project}, queryArgs...)...)
 	if err != nil {
 		return nil, err
 	}
@@ -245,6 +312,7 @@ func (s *Store) ListMessages(ctx context.Context, project, token string, after i
 		if err = rows.Scan(&m.Sequence, &m.ID, &m.Sender, &m.Recipient, &m.ThreadID, &m.Subject, &m.Body, &m.CreatedAt); err != nil {
 			return nil, err
 		}
+		m.Hash = MessageHash(m)
 		messages = append(messages, m)
 	}
 	if err = rows.Err(); err != nil && !errors.Is(err, sql.ErrNoRows) {
@@ -278,6 +346,7 @@ func (s *Store) RecentMessages(ctx context.Context, project, token string, limit
 		if err = rows.Scan(&m.Sequence, &m.ID, &m.Sender, &m.Recipient, &m.ThreadID, &m.Subject, &m.Body, &m.CreatedAt); err != nil {
 			return nil, err
 		}
+		m.Hash = MessageHash(m)
 		out = append(out, m)
 	}
 	if err = rows.Err(); err != nil {
@@ -363,6 +432,7 @@ func queryRoomMessagesTx(ctx context.Context, tx *sql.Tx, principal, whereSQL st
 		if err = rows.Scan(&m.Sequence, &m.ID, &m.Sender, &m.Recipient, &m.ThreadID, &m.Subject, &m.Body, &m.CreatedAt, &m.AcknowledgedByMe); err != nil {
 			return nil, err
 		}
+		m.Hash = MessageHash(m)
 		out = append(out, m)
 	}
 	if err = rows.Err(); err != nil {
