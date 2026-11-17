@@ -315,6 +315,8 @@ func mcpServer(store Backend, project, token string, keeper *leaseKeeper, outbox
 			return int(v)
 		case int:
 			return v
+		case int64:
+			return int(v)
 		case json.Number:
 			n, _ := strconv.Atoi(string(v))
 			return n
@@ -1111,6 +1113,7 @@ func mcpServer(store Backend, project, token string, keeper *leaseKeeper, outbox
 		mcp.WithInteger("after", mcp.Description("Last event sequence read or processed for acknowledgment")), mcp.WithInteger("message_after", mcp.Description("Inbox message cursor returned by the previous inbox call")),
 		mcp.WithString("last_read_hash", mcp.Description("Optional last read message hash for inbox; returns that 1 previous message preview plus newer ones")),
 		mcp.WithString("last_msg_hash", mcp.Description("Alias for last_read_hash")),
+		mcp.WithInteger("idle_polls", mcp.Description("Consecutive checks without new activity/acknowledgment; used to compute dynamic recommended_poll_seconds (30s min -> 900s max after 3 idle polls)")),
 		mcp.WithInteger("through_sequence", mcp.Description("For prune_events only: permanently remove project event rows through this sequence; stale replicas will be forced to refresh their snapshots")), mcp.WithInteger("limit", mcp.Description("Maximum results, 1 to 200")), mcp.WithInteger("wait_seconds", mcp.Description("For wait only; bounded to 25 seconds"))),
 		func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			a := args(r)
@@ -1120,22 +1123,35 @@ func mcpServer(store Backend, project, token string, keeper *leaseKeeper, outbox
 				if limit == 0 {
 					limit = 25
 				}
-				if lastHash := lastHashArg(a); lastHash != "" {
+				lastHash := lastHashArg(a)
+				var (
+					v   ProjectSyncFrame
+					err error
+				)
+				if lastHash != "" {
 					if hs, ok := store.(interface {
 						SyncInboxSinceHash(context.Context, string, string, int64, string, int) (ProjectSyncFrame, error)
 					}); ok {
-						v, err := hs.SyncInboxSinceHash(ctx, project, token, int64(num(a, "after", 0)), lastHash, limit)
-						return result(v, err)
+						v, err = hs.SyncInboxSinceHash(ctx, project, token, int64(num(a, "after", 0)), lastHash, limit)
+					} else {
+						return result(nil, errors.New("hash-anchored inbox synchronization is unavailable on this backend"))
 					}
+				} else {
+					messageAfter := int64(num(a, "message_after", 0))
+					inbox, ok := store.(interface {
+						SyncInbox(context.Context, string, string, int64, int64, int) (ProjectSyncFrame, error)
+					})
+					if !ok {
+						return result(nil, errors.New("inbox synchronization is unavailable on this backend"))
+					}
+					v, err = inbox.SyncInbox(ctx, project, token, int64(num(a, "after", 0)), messageAfter, limit)
 				}
-				messageAfter := int64(num(a, "message_after", 0))
-				if inbox, ok := store.(interface {
-					SyncInbox(context.Context, string, string, int64, int64, int) (ProjectSyncFrame, error)
-				}); ok {
-					v, err := inbox.SyncInbox(ctx, project, token, int64(num(a, "after", 0)), messageAfter, limit)
-					return result(v, err)
+				if err == nil {
+					hasNewMsg := len(v.InboxMessages) > 0 && !(lastHash != "" && len(v.InboxMessages) == 1 && strings.EqualFold(v.InboxMessages[0].Hash, lastHash))
+					hadActivity := len(v.Events) > 0 || hasNewMsg
+					v.NextIdlePolls, v.RecommendedPollSeconds = RecommendedPollInterval(num(a, "idle_polls", 0), hadActivity)
 				}
-				return result(nil, errors.New("inbox synchronization is unavailable on this backend"))
+				return result(v, err)
 			case "", "events":
 				events, err := store.ReadEvents(ctx, project, token, int64(num(a, "after", 0)), num(a, "limit", 50))
 				if err == nil && outbox != nil {

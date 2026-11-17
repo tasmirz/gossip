@@ -11,20 +11,21 @@ Configure one local `coord-mcp` process per host (or run `gossip install` to reg
 
 Before migrating legacy `.local/gossip` data, run `gossip coord-migrate --legacy-dir <path>`. Import supported history into an existing project with `--apply --db <coord.db> --credential-file <owner.json>`; pass `--accept-warnings` only after reviewing reported warnings. The import preserves old identities and roles as unverified history; it does not grant permissions or activate old work. It does not cut over the legacy store.
 
-## Automatic Message & Inbox Polling (Set Up on Join)
+## Automatic Message & Inbox Polling (Dynamic Adaptive Timer on Join)
 
-As soon as you join an active Gossip project or start multi-agent collaboration, **automatically create a recurring check-in cron/schedule** using your host's native scheduler tool (do not wait to be asked twice if your runtime supports timers/cron):
+As soon as you join an active Gossip project or start multi-agent collaboration, **automatically start an adaptive check-in timer/cron** using your host's native scheduler tool (do not wait to be asked twice if your runtime supports timers/cron):
 
 1. **Initial baseline read (omit `last_read_hash`)**:
    - Call `gossip_sync(operation="inbox")` (or `gossip_read(operation="messages")` / `gossip_channel(operation="messages", channel_id=...)`) without `last_read_hash` to fetch visible history once.
-   - Record `next_event_cursor` and the latest message SHA-256 `hash` (`latest_message_hash` or the final item's `hash`).
-2. **Schedule the recurring poll (`*/2 * * * *` default, or every `X` minutes if requested)**:
-   - Use your host's native cron/schedule tool (for example, `schedule` with `CronExpression: "*/2 * * * *"` and `IsDaemon: false` in Antigravity, or your client's native cron/loop tool).
-   - If your host has **no** recurring scheduler tool, fall back to `gossip_sync(operation="wait", after=<seq>, wait_seconds=25)` while actively waiting on a handoff, or mention that the host relies on manual check-ins / `gossip_sync(operation="queued")`.
-3. **Always pass `last_read_hash` in the scheduled check**:
-   - Have each scheduled trigger run `gossip_sync(operation="inbox", after=<seq>, last_read_hash="<hash>")` (and `gossip_read` / `gossip_channel` with `last_read_hash="<hash>"` when reading full threads).
-   - Passing `last_read_hash` (`last_msg_hash` alias) tells the server to return **only the 1 previous anchor message plus new messages**, keeping every poll compact.
-   - Acknowledge handled messages with `gossip_read(operation="acknowledge", message_id=...)`, advance your saved `hash` + `after` cursor, and cancel the schedule when your collaboration session ends.
+   - Record `next_event_cursor`, `idle_polls = 0`, and the latest message SHA-256 `hash` (`latest_message_hash` or the final item's `hash`).
+2. **Schedule dynamically from `30s` min up to `15m` (`900s`) max**:
+   - Start at **`30s`** (`min = 30s`). Use one-shot dynamic timers when available (`schedule(DurationSeconds=recommended_poll_seconds, IsDaemon=false)` in Antigravity), or a `*/1 * * * *`..`*/15 * * * *` cron fallback if your host scheduler only accepts 1-minute crons.
+   - **Adaptive backoff on 3 consecutive no-ack / idle polls**: pass `idle_polls` into `gossip_sync(operation="inbox", after=<seq>, last_read_hash="<hash>", idle_polls=<N>)`. After **3 consecutive checks** with no new message/ack/event activity, gradually double the wait up to `15m` max: **`30s -> 30s -> 30s -> 60s -> 120s -> 240s -> 480s -> 900s (15m max)`** (directly follow `recommended_poll_seconds` and `next_idle_polls` returned in the frame).
+   - **Reset immediately on activity**: whenever any new message arrives, an ack is recorded, or you send a message/handoff, reset `idle_polls = 0` back to **`30s`**.
+   - If your host has **no** timer/cron tool, fall back to `gossip_sync(operation="wait", after=<seq>, wait_seconds=25)` while actively awaiting a handoff, or notify the user.
+3. **Always pass `last_read_hash` in each poll**:
+   - Passing `last_read_hash` (`last_msg_hash` alias) to `gossip_sync(operation="inbox")`, `gossip_read(operation="messages")`, or `gossip_channel(operation="messages")` returns **only the 1 previous anchor message plus new messages**, keeping every check compact.
+   - Acknowledge handled messages with `gossip_read(operation="acknowledge", message_id=...)`, advance your saved `hash` + `after` cursor, and cancel any active timer when collaboration ends.
 
 ## Coordination preview
 

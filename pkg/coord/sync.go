@@ -33,10 +33,41 @@ type ProjectSyncFrame struct {
 	HomeInstanceID       string         `json:"home_instance_id"`
 	EventsMayContinue    bool           `json:"events_may_continue"`
 	ResetRequired        bool           `json:"reset_required"`
-	InboxMessages        []InboxMessage `json:"inbox_messages,omitempty"`
-	NextInboxCursor      int64          `json:"next_inbox_cursor,omitempty"`
-	InboxHasMore         bool           `json:"inbox_has_more,omitempty"`
-	LatestMessageHash    string         `json:"latest_message_hash,omitempty"`
+	InboxMessages          []InboxMessage `json:"inbox_messages,omitempty"`
+	NextInboxCursor        int64          `json:"next_inbox_cursor,omitempty"`
+	InboxHasMore           bool           `json:"inbox_has_more,omitempty"`
+	LatestMessageHash      string         `json:"latest_message_hash,omitempty"`
+	NextIdlePolls          int            `json:"next_idle_polls,omitempty"`
+	RecommendedPollSeconds int            `json:"recommended_poll_seconds,omitempty"`
+}
+
+const (
+	minPollIntervalSeconds = 30
+	maxPollIntervalSeconds = 15 * 60
+	idleBackoffThreshold   = 3
+)
+
+// RecommendedPollInterval computes dynamic polling backoff for coding agents:
+// start at 30s, hold through <3 consecutive idle/no-ack checks, then double
+// on the 3rd+ idle check up to a 15-minute (900s) ceiling, resetting to 30s
+// immediately on any new message, ack, or event activity.
+func RecommendedPollInterval(idlePolls int, hadActivity bool) (nextIdle int, seconds int) {
+	if hadActivity {
+		return 0, minPollIntervalSeconds
+	}
+	if idlePolls < 0 {
+		idlePolls = 0
+	}
+	nextIdle = idlePolls + 1
+	if nextIdle < idleBackoffThreshold {
+		return nextIdle, minPollIntervalSeconds
+	}
+	shift := nextIdle - idleBackoffThreshold + 1
+	seconds = minPollIntervalSeconds << shift
+	if seconds > maxPollIntervalSeconds || seconds <= 0 {
+		seconds = maxPollIntervalSeconds
+	}
+	return nextIdle, seconds
 }
 
 // InboxMessage carries a bounded preview; full authorized bodies remain

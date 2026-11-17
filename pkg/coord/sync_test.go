@@ -8,6 +8,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/tasmirz/gossip/pkg/coord"
 )
 
@@ -212,5 +213,84 @@ func TestProjectSyncSnapshotMatchesEventWatermarkDuringWrites(t *testing.T) {
 	case err := <-writeErr:
 		t.Fatal(err)
 	default:
+	}
+}
+
+func TestRecommendedPollIntervalBackoffAndReset(t *testing.T) {
+	expected := []int{30, 30, 60, 120, 240, 480, 900, 900}
+	idle := 0
+	for step, want := range expected {
+		var got int
+		idle, got = coord.RecommendedPollInterval(idle, false)
+		if got != want {
+			t.Fatalf("step %d: got %ds (idle=%d), want %ds", step+1, got, idle, want)
+		}
+	}
+	if idle, got := coord.RecommendedPollInterval(idle, true); idle != 0 || got != 30 {
+		t.Fatalf("activity reset failed: idle=%d got=%d", idle, got)
+	}
+
+	// Verify gossip_sync(operation="inbox") dynamically backs off on idle polls
+	// even when 1 previous anchor message is returned via last_read_hash.
+	s, _, project, owner, worker := setup(t)
+	ctx := context.Background()
+	m1, err := s.SendMessageWithID(ctx, project.ID, owner.Token, "", "", "ping", "initial message", "adapt-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	workerMCP := coord.MCPServer(s, project.ID, worker.Token)
+	syncTool := workerMCP.GetTool("gossip_sync")
+
+	// First check sees initial activity -> resets to idle_polls=0, 30s.
+	res, err := syncTool.Handler(ctx, mcp.CallToolRequest{Params: mcp.CallToolParams{
+		Name:      "gossip_sync",
+		Arguments: map[string]any{"operation": "inbox"},
+	}})
+	if err != nil || res.IsError {
+		t.Fatalf("baseline inbox: err=%v res=%+v", err, res)
+	}
+	var f1 coord.ProjectSyncFrame
+	_ = json.Unmarshal([]byte(res.Content[0].(mcp.TextContent).Text), &f1)
+	if f1.NextIdlePolls != 0 || f1.RecommendedPollSeconds != 30 || f1.LatestMessageHash != m1.Hash {
+		t.Fatalf("unexpected baseline backoff frame: %+v", f1)
+	}
+
+	// Simulate 3 consecutive no-ack/empty polls anchored at last_read_hash=m1.Hash.
+	after := f1.NextEventCursor
+	idlePolls := f1.NextIdlePolls
+	var seconds int
+	for i := 0; i < 3; i++ {
+		res, err = syncTool.Handler(ctx, mcp.CallToolRequest{Params: mcp.CallToolParams{
+			Name:      "gossip_sync",
+			Arguments: map[string]any{"operation": "inbox", "after": after, "last_read_hash": m1.Hash, "idle_polls": idlePolls},
+		}})
+		if err != nil || res.IsError {
+			t.Fatalf("idle poll %d: err=%v res=%+v", i+1, err, res)
+		}
+		var fi coord.ProjectSyncFrame
+		_ = json.Unmarshal([]byte(res.Content[0].(mcp.TextContent).Text), &fi)
+		after = fi.NextEventCursor
+		idlePolls = fi.NextIdlePolls
+		seconds = fi.RecommendedPollSeconds
+	}
+	if idlePolls != 3 || seconds != 60 {
+		t.Fatalf("expected backoff to 60s on 3rd idle poll, got idle=%d seconds=%d", idlePolls, seconds)
+	}
+
+	// New message resets immediately back to 30s.
+	if _, err := s.SendMessageWithID(ctx, project.ID, owner.Token, "", "", "ping2", "wake up", "adapt-2"); err != nil {
+		t.Fatal(err)
+	}
+	res, err = syncTool.Handler(ctx, mcp.CallToolRequest{Params: mcp.CallToolParams{
+		Name:      "gossip_sync",
+		Arguments: map[string]any{"operation": "inbox", "after": after, "last_read_hash": m1.Hash, "idle_polls": idlePolls},
+	}})
+	if err != nil || res.IsError {
+		t.Fatalf("active poll: err=%v res=%+v", err, res)
+	}
+	var fReset coord.ProjectSyncFrame
+	_ = json.Unmarshal([]byte(res.Content[0].(mcp.TextContent).Text), &fReset)
+	if fReset.NextIdlePolls != 0 || fReset.RecommendedPollSeconds != 30 {
+		t.Fatalf("expected immediate reset to 30s on new message, got idle=%d seconds=%d", fReset.NextIdlePolls, fReset.RecommendedPollSeconds)
 	}
 }
