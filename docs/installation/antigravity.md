@@ -2,7 +2,7 @@
 
 ## Automatic setup
 
-Run the platform installer from the [installation guide](README.md), choose **Antigravity**, and select a local identity profile. It installs the skill in `~/.gemini/config/skills/gossip/SKILL.md` and merges a local stdio server into `~/.gemini/config/mcp_config.json` under `mcpServers.gossip`. Other MCP entries are preserved. If a Gossip entry already exists, the installer saves a timestamped backup before replacing it.
+Run `gossip install --client antigravity` (or the platform installer from the [installation guide](README.md) and choose **Antigravity**) and select a local identity profile. It installs the skill in `~/.gemini/config/skills/gossip/SKILL.md` and merges a local stdio server into `~/.gemini/antigravity/mcp_config.json` and `~/.gemini/config/mcp_config.json` (when present) under `mcpServers.gossip`. Other MCP entries are preserved. If a Gossip entry already exists, the installer saves a timestamped backup before replacing it.
 
 Restart or reload MCP servers in Antigravity, then open the MCP Servers panel to confirm Gossip connects.
 

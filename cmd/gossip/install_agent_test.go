@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -190,5 +191,90 @@ func TestExecuteInstallAutoDetectsOnlyPresentCLIsAndRespectsDryRun(t *testing.T)
 	}
 	if _, err := os.Stat(filepath.Join(home, ".claude", "skills", "gossip", "SKILL.md")); err != nil {
 		t.Fatalf("expected claude SKILL.md written: %v", err)
+	}
+}
+
+func TestExecuteInstallUpdatesAntigravityAppDirAndReplacesExistingClaudeEntry(t *testing.T) {
+	home := t.TempDir()
+	cwd := t.TempDir()
+	out := &bytes.Buffer{}
+
+	// Seed Antigravity appData mcp_config.json AND ~/.gemini/config/mcp_config.json with stale testing credential files.
+	agyAppDir := filepath.Join(home, ".gemini", "antigravity")
+	agyCfgDir := filepath.Join(home, ".gemini", "config")
+	for _, dir := range []string{agyAppDir, agyCfgDir} {
+		if err := os.MkdirAll(dir, 0700); err != nil {
+			t.Fatal(err)
+		}
+		stale := `{"mcpServers":{"keep":{"command":"keep-srv"},"gossip":{"command":"/tmp/gossip","args":["coord-mcp","--credential-file","/tmp/batasha.json"]}}}`
+		if err := os.WriteFile(filepath.Join(dir, "mcp_config.json"), []byte(stale), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	var cmds [][]string
+	addAttempts := 0
+	opts := installOptions{
+		home:      home,
+		cwd:       cwd,
+		xdgConfig: filepath.Join(home, ".config"),
+		codexHome: filepath.Join(home, ".codex"),
+		geminiCfg: agyCfgDir,
+		binPath:   "/usr/local/bin/gossip",
+		profile:   "gesture",
+		clients:   []string{"antigravity", "claude"},
+		lookPath: func(name string) (string, error) {
+			if name == "claude" {
+				return "/usr/local/bin/claude", nil
+			}
+			return "", os.ErrNotExist
+		},
+		runCmd: func(name string, args ...string) error {
+			cmds = append(cmds, append([]string{name}, args...))
+			if name == "claude" && len(args) >= 2 && args[1] == "add" {
+				addAttempts++
+				if addAttempts == 1 {
+					return errors.New("exit status 1: MCP server gossip already exists in user config")
+				}
+			}
+			return nil
+		},
+		out:    out,
+		errOut: out,
+	}
+	if err := executeInstall(opts); err != nil {
+		t.Fatalf("executeInstall: %v\n%s", err, out.String())
+	}
+
+	// Both Antigravity MCP config files must drop --credential-file and use --profile gesture.
+	for _, cfgPath := range []string{
+		filepath.Join(agyAppDir, "mcp_config.json"),
+		filepath.Join(agyCfgDir, "mcp_config.json"),
+	} {
+		raw, err := os.ReadFile(cfgPath)
+		if err != nil {
+			t.Fatalf("read %s: %v", cfgPath, err)
+		}
+		var doc struct {
+			MCPServers map[string]struct {
+				Command string   `json:"command"`
+				Args    []string `json:"args"`
+			} `json:"mcpServers"`
+		}
+		if err := json.Unmarshal(raw, &doc); err != nil {
+			t.Fatalf("parse %s: %v", cfgPath, err)
+		}
+		if doc.MCPServers["keep"].Command != "keep-srv" {
+			t.Fatalf("lost unrelated server in %s: %+v", cfgPath, doc)
+		}
+		g := doc.MCPServers["gossip"]
+		if g.Command != "/usr/local/bin/gossip" || len(g.Args) != 3 || g.Args[0] != "coord-mcp" || g.Args[1] != "--profile" || g.Args[2] != "gesture" {
+			t.Fatalf("unexpected gossip config in %s: %+v", cfgPath, g)
+		}
+	}
+
+	// Verify claude retried via remove -> add when already exists.
+	if len(cmds) != 3 || cmds[0][1] != "mcp" || cmds[0][2] != "add" || cmds[1][2] != "remove" || cmds[2][2] != "add" {
+		t.Fatalf("expected add -> remove -> add sequence for existing claude entry, got %v", cmds)
 	}
 }

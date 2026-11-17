@@ -19,7 +19,7 @@ Use [`examples/mcp-clients/`](../../examples/mcp-clients) for raw checked-in JSO
 | :--- | :--- | :--- | :--- |
 | **Codex CLI** | `--client codex` | `~/.agents/skills/gossip/SKILL.md` | `${CODEX_HOME:-~/.codex}/config.toml` (`codex mcp add`) |
 | **Claude Code** | `--client claude` | `~/.claude/skills/gossip/SKILL.md` | `claude mcp add --scope user` |
-| **Antigravity** | `--client antigravity` | `${GEMINI_CONFIG_DIR:-~/.gemini/config}/skills/gossip/SKILL.md` | `${GEMINI_CONFIG_DIR:-~/.gemini/config}/mcp_config.json` |
+| **Antigravity** | `--client antigravity` | `${GEMINI_CONFIG_DIR:-~/.gemini/config}/skills/gossip/SKILL.md` | `~/.gemini/antigravity/mcp_config.json` & `${GEMINI_CONFIG_DIR:-~/.gemini/config}/mcp_config.json` |
 | **OpenCode** | `--client opencode` | `${XDG_CONFIG_HOME:-~/.config}/opencode/skills/gossip/SKILL.md` | `${XDG_CONFIG_HOME:-~/.config}/opencode/opencode.json` |
 | **Gemini CLI** | `--client gemini` | `~/.gemini/skills/gossip/SKILL.md` | `gemini mcp add --scope user` |
 | **Cursor** | `--client cursor` | `~/.cursor/skills/gossip/SKILL.md` | `~/.cursor/mcp.json` |
@@ -95,7 +95,7 @@ With a named local identity profile (for running multiple separate agents on the
 
 - **Auto-configure**: `gossip install --client antigravity`
 - **Skill path**: `~/.gemini/config/skills/gossip/SKILL.md` (respects `GEMINI_CONFIG_DIR`)
-- **Config file (`~/.gemini/config/mcp_config.json`)**: uses the standard `mcpServers` JSON snippet above.
+- **Config file**: `~/.gemini/antigravity/mcp_config.json` (and `~/.gemini/config/mcp_config.json` when present) — uses the standard `mcpServers` JSON snippet above.
 - Detailed guide: [`antigravity.md`](antigravity.md)
 
 ### 4. OpenCode (`--client opencode`)

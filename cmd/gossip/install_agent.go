@@ -276,7 +276,12 @@ func isClientDetected(opts installOptions, client string) bool {
 	case "claude":
 		return hasCLI("claude") || dirExists(filepath.Join(opts.home, ".claude"))
 	case "antigravity":
-		return dirExists(opts.geminiCfg) || fileExists(filepath.Join(opts.geminiCfg, "mcp_config.json"))
+		for _, p := range antigravityMCPConfigPaths(opts, false) {
+			if dirExists(filepath.Dir(p)) || fileExists(p) {
+				return true
+			}
+		}
+		return dirExists(opts.geminiCfg) || dirExists(filepath.Join(opts.home, ".gemini", "antigravity"))
 	case "opencode":
 		return hasCLI("opencode") || dirExists(filepath.Join(opts.xdgConfig, "opencode"))
 	case "gemini":
@@ -391,7 +396,13 @@ func installForClient(opts installOptions, client, binForMCP string, strictCLI b
 			return nil
 		}
 		if err := opts.runCmd("claude", cmdArgs...); err != nil {
-			return fmt.Errorf("claude mcp add: %w", err)
+			if !strings.Contains(strings.ToLower(err.Error()), "already exists") {
+				return fmt.Errorf("claude mcp add: %w", err)
+			}
+			_ = opts.runCmd("claude", "mcp", "remove", "--scope", "user", "gossip")
+			if err := opts.runCmd("claude", cmdArgs...); err != nil {
+				return fmt.Errorf("claude mcp add: %w", err)
+			}
 		}
 		fmt.Fprintln(opts.out, "    - MCP registered via `claude mcp add --scope user`")
 	case "gemini":
@@ -408,11 +419,22 @@ func installForClient(opts installOptions, client, binForMCP string, strictCLI b
 			return nil
 		}
 		if err := opts.runCmd("gemini", cmdArgs...); err != nil {
-			return fmt.Errorf("gemini mcp add: %w", err)
+			if !strings.Contains(strings.ToLower(err.Error()), "already exists") {
+				return fmt.Errorf("gemini mcp add: %w", err)
+			}
+			_ = opts.runCmd("gemini", "mcp", "remove", "--scope", "user", "gossip")
+			if err := opts.runCmd("gemini", cmdArgs...); err != nil {
+				return fmt.Errorf("gemini mcp add: %w", err)
+			}
 		}
 		fmt.Fprintln(opts.out, "    - MCP registered via `gemini mcp add --scope user`")
 	case "antigravity":
-		return upsertStandardJSONServer(opts, filepath.Join(opts.geminiCfg, "mcp_config.json"), "mcpServers", binForMCP, args)
+		for _, cfgPath := range antigravityMCPConfigPaths(opts, true) {
+			if err := upsertStandardJSONServer(opts, cfgPath, "mcpServers", binForMCP, args); err != nil {
+				return err
+			}
+		}
+		return nil
 	case "cursor":
 		return upsertStandardJSONServer(opts, filepath.Join(opts.home, ".cursor", "mcp.json"), "mcpServers", binForMCP, args)
 	case "claude-desktop":
@@ -423,6 +445,32 @@ func installForClient(opts installOptions, client, binForMCP string, strictCLI b
 		return upsertOpenCodeServer(opts, filepath.Join(opts.xdgConfig, "opencode", "opencode.json"), binForMCP, args)
 	}
 	return nil
+}
+
+func antigravityMCPConfigPaths(opts installOptions, fallback bool) []string {
+	var paths []string
+	seen := map[string]bool{}
+	add := func(dir string) {
+		if strings.TrimSpace(dir) == "" {
+			return
+		}
+		p := filepath.Clean(filepath.Join(dir, "mcp_config.json"))
+		if !seen[p] {
+			seen[p] = true
+			paths = append(paths, p)
+		}
+	}
+	agyAppDir := filepath.Join(opts.home, ".gemini", "antigravity")
+	if dirExists(agyAppDir) || fileExists(filepath.Join(agyAppDir, "mcp_config.json")) {
+		add(agyAppDir)
+	}
+	if dirExists(opts.geminiCfg) || fileExists(filepath.Join(opts.geminiCfg, "mcp_config.json")) {
+		add(opts.geminiCfg)
+	}
+	if fallback && len(paths) == 0 {
+		add(opts.geminiCfg)
+	}
+	return paths
 }
 
 func backupConfigFile(opts installOptions, path string) error {

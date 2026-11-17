@@ -99,7 +99,7 @@ gossip install --skill-only
 | :--- | :--- | :--- | :--- | :--- |
 | **`codex`** | `codex-cli` | `codex` on `PATH` or `${CODEX_HOME:-~/.codex}` dir | `~/.agents/skills/gossip/SKILL.md` | Runs `codex mcp add gossip -- <bin> coord-mcp --profile <profile>` → `${CODEX_HOME:-~/.codex}/config.toml` (`[mcp_servers.gossip]`) |
 | **`claude`** | `claude-code` | `claude` on `PATH` or `~/.claude` dir | `~/.claude/skills/gossip/SKILL.md` | Runs `claude mcp add --scope user gossip -- <bin> coord-mcp --profile <profile>` |
-| **`antigravity`** | `agy` | `${GEMINI_CONFIG_DIR:-~/.gemini/config}` dir or `mcp_config.json` | `${GEMINI_CONFIG_DIR:-~/.gemini/config}/skills/gossip/SKILL.md` | Merges `mcpServers.gossip` into `${GEMINI_CONFIG_DIR:-~/.gemini/config}/mcp_config.json` |
+| **`antigravity`** | `agy` | `~/.gemini/antigravity` or `${GEMINI_CONFIG_DIR:-~/.gemini/config}` | `${GEMINI_CONFIG_DIR:-~/.gemini/config}/skills/gossip/SKILL.md` | Merges `mcpServers.gossip` into `~/.gemini/antigravity/mcp_config.json` and `${GEMINI_CONFIG_DIR:-~/.gemini/config}/mcp_config.json` (when present) |
 | **`opencode`** | — | `opencode` on `PATH` or `${XDG_CONFIG_HOME:-~/.config}/opencode` dir | `${XDG_CONFIG_HOME:-~/.config}/opencode/skills/gossip/SKILL.md` | Parses JSON/JSONC & merges `mcp.servers.gossip` (`"type": "local"`, `"command": [...]`) into `${XDG_CONFIG_HOME:-~/.config}/opencode/opencode.json` |
 | **`gemini`** | `gemini-cli` | `gemini` on `PATH` or `~/.gemini` dir | `~/.gemini/skills/gossip/SKILL.md` | Runs `gemini mcp add --scope user gossip <bin> coord-mcp --profile <profile>` |
 | **`cursor`** | — | `~/.cursor` dir | `~/.cursor/skills/gossip/SKILL.md` | Merges `mcpServers.gossip` into `~/.cursor/mcp.json` |
