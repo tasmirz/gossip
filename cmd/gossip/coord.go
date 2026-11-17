@@ -1574,6 +1574,17 @@ func runCoordMigrate(args []string) error {
 	}{Import: imported, Audit: audit})
 }
 
+func runCoordOpenAPI(args []string) error {
+	fs := flag.NewFlagSet("openapi", flag.ContinueOnError)
+	toolFilter := fs.String("tool", "", "Optional MCP tool name filter (e.g. gossip_send, gossip_sync)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetIndent("", "  ")
+	return enc.Encode(coord.BuildOpenAPISpec(*toolFilter))
+}
+
 type stringListFlag []string
 
 func (v *stringListFlag) String() string         { return strings.Join(*v, ",") }

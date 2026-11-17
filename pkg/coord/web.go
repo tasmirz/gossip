@@ -329,6 +329,8 @@ func (h *WebHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "text/css; charset=utf-8")
 		}
 		_, _ = w.Write(data)
+	case (r.URL.Path == "/openapi.json" || r.URL.Path == "/api/openapi.json" || r.URL.Path == "/v1/openapi.json") && r.Method == http.MethodGet:
+		serveOpenAPIHTTP(w, r)
 	case r.URL.Path == "/api/login" && r.Method == "POST":
 		h.login(w, r)
 	case r.URL.Path == "/api/remote-access" && r.Method == http.MethodGet:

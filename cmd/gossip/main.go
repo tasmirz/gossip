@@ -46,7 +46,7 @@ func main() {
 
 	cmd := os.Args[1]
 	switch cmd {
-	case "coord-init", "coord-add", "coord-access", "coord-pair", "coord-connect", "coord-frp", "coord-mcp", "coord-mcp-bootstrap", "coord-bootstrap-key", "coord-ui", "coord-serve", "coord-daemon", "coord-migrate", "coord-remote", "coord-connection", "file-edit":
+	case "coord-init", "coord-add", "coord-access", "coord-pair", "coord-connect", "coord-frp", "coord-mcp", "coord-mcp-bootstrap", "coord-bootstrap-key", "coord-ui", "coord-serve", "coord-daemon", "coord-migrate", "coord-remote", "coord-connection", "file-edit", "openapi", "coord-openapi":
 		var err error
 		switch cmd {
 		case "coord-init":
@@ -81,6 +81,8 @@ func main() {
 			err = runFileEdit(os.Args[2:])
 		case "coord-connection":
 			err = runCoordConnection(os.Args[2:])
+		case "openapi", "coord-openapi":
+			err = runCoordOpenAPI(os.Args[2:])
 		}
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Coordination error: %v\n", err)

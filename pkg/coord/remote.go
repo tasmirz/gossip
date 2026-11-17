@@ -264,6 +264,21 @@ func RPCHandlerWithProjectPins(s *Store, access map[string][]string) (http.Handl
 
 func rpcHandler(s *Store, requireTLS bool, pins map[[32]byte]map[string]bool, certificateGrants bool, bootstrapKey string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && (r.URL.Path == "/openapi.json" || r.URL.Path == "/api/openapi.json" || r.URL.Path == "/v1/openapi.json") {
+			if requireTLS && (r.TLS == nil || len(r.TLS.VerifiedChains) == 0) {
+				http.Error(w, "mutual TLS required", http.StatusUnauthorized)
+				return
+			}
+			if requireTLS {
+				enabled, err := s.RemoteAccessEnabled(r.Context())
+				if err != nil || !enabled {
+					http.Error(w, "remote coordination is disabled by the local kill switch", http.StatusServiceUnavailable)
+					return
+				}
+			}
+			serveOpenAPIHTTP(w, r)
+			return
+		}
 		if r.Method != http.MethodPost || r.URL.Path != "/v1/call" {
 			http.NotFound(w, r)
 			return
@@ -689,6 +704,8 @@ func rpcHandler(s *Store, requireTLS bool, pins map[[32]byte]map[string]bool, ce
 			v, err = s.SetPeerMode(ctx, q.Project, token, q.Mode, q.CheckAfterSeconds, q.TTLSeconds, q.RTOSeconds)
 		case "agent.modes":
 			v, err = s.ListPeerModes(ctx, q.Project, token)
+		case "tools.openapi":
+			v = BuildOpenAPISpec(q.Name)
 		case "event.list":
 			v, err = s.ReadEvents(ctx, q.Project, token, q.After, q.Limit)
 		case "project.sync":
